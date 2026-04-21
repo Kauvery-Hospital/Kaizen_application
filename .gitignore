@@ -1,0 +1,13 @@
+﻿node_modules/
+dist/
+.vite/
+coverage/
+.DS_Store
+.env
+backend/.env
+frontend/.env
+frontend/.env.*
+backend/uploads/
+backend/uploads/**
+uploads/
+*.log

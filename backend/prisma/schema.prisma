@@ -1,0 +1,231 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id           String            @id @default(cuid()) @db.VarChar(50)
+  employeeCode String            @unique @map("employee_code") @db.VarChar(30)
+  email        String            @unique @db.VarChar(120)
+  name         String            @db.VarChar(120)
+  department   String?           @db.VarChar(80)
+  designation  String?           @db.VarChar(80)
+  isActive     Boolean           @default(true) @map("is_active")
+  lastLoginAt  DateTime?         @map("last_login_at") @db.Timestamp(6)
+  createdAt    DateTime          @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt    DateTime          @default(now()) @map("updated_at") @db.Timestamp(6)
+  password     String?
+  roles        UserRoleMapping[]
+
+  @@index([department], map: "idx_users_department")
+  @@index([employeeCode], map: "idx_users_employee_code")
+  @@map("users")
+}
+
+model Role {
+  id          String            @id @default(cuid()) @db.VarChar(50)
+  code        RoleCode          @unique
+  name        String            @db.VarChar(80)
+  description String?
+  createdAt   DateTime          @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt   DateTime          @default(now()) @map("updated_at") @db.Timestamp(6)
+  users       UserRoleMapping[]
+
+  @@map("roles")
+}
+
+model UserRoleMapping {
+  id         String   @id @default(cuid()) @db.VarChar(50)
+  userId     String   @map("user_id") @db.VarChar(50)
+  roleId     String   @map("role_id") @db.VarChar(50)
+  assignedBy String?  @map("assigned_by") @db.VarChar(120)
+  assignedAt DateTime @default(now()) @map("assigned_at") @db.Timestamp(6)
+  role       Role     @relation(fields: [roleId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_user_role_role")
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_user_role_user")
+
+  @@unique([userId, roleId], map: "uq_user_role")
+  @@index([roleId], map: "idx_user_role_role_id")
+  @@index([userId], map: "idx_user_role_user_id")
+  @@map("user_role_mapping")
+}
+
+model HrmsEmployeeStaging {
+  id           String   @id @default(cuid()) @db.VarChar(50)
+  employeeCode String   @unique @map("employee_code") @db.VarChar(30)
+  email        String   @db.VarChar(120)
+  name         String   @db.VarChar(120)
+  department   String?  @db.VarChar(80)
+  designation  String?  @db.VarChar(80)
+  isActive     Boolean  @default(true) @map("is_active")
+  source       String   @default("HRMS") @db.VarChar(40)
+  syncedAt     DateTime @default(now()) @map("synced_at") @db.Timestamp(6)
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt    DateTime @default(now()) @map("updated_at") @db.Timestamp(6)
+
+  @@map("hrms_employee_staging")
+}
+
+model HrmsSyncLog {
+  id            String     @id @default(cuid()) @db.VarChar(50)
+  syncStartedAt DateTime   @default(now()) @map("sync_started_at") @db.Timestamp(6)
+  syncEndedAt   DateTime?  @map("sync_ended_at") @db.Timestamp(6)
+  status        SyncStatus
+  insertedCount Int        @default(0) @map("inserted_count")
+  updatedCount  Int        @default(0) @map("updated_count")
+  errorMessage  String?    @map("error_message")
+
+  @@index([syncStartedAt(sort: Desc)], map: "idx_hrms_sync_log_started_at")
+  @@map("hrms_sync_log")
+}
+
+model Suggestion {
+  id                         String   @id @default(cuid()) @db.VarChar(50)
+  code                       String   @unique @db.VarChar(30)
+  theme                      String   @db.VarChar(255)
+  unit                       String   @db.VarChar(120)
+  area                       String   @db.VarChar(120)
+  department                 String   @db.VarChar(120)
+  dateSubmitted              String   @map("date_submitted") @db.VarChar(20)
+  employeeName               String   @map("employee_name") @db.VarChar(120)
+  description                String
+  status                     String   @db.VarChar(80)
+  /// Primary workflow role that owns the next action (denormalized for filtering; mirrors AppRole display strings).
+  currentStageRole           String   @map("current_stage_role") @db.VarChar(80)
+  expectedBenefits           Json     @map("expected_benefits")
+  assignedImplementer        String?  @map("assigned_implementer") @db.VarChar(120)
+  assignedImplementerCode    String?  @map("assigned_implementer_code") @db.VarChar(30)
+  assignedUnit               String?  @map("assigned_unit") @db.VarChar(120)
+  assignedDepartment         String?  @map("assigned_department") @db.VarChar(120)
+  implementationDeadline     String?  @map("implementation_deadline") @db.VarChar(20)
+  implementationAssignedDate String?  @map("implementation_assigned_date") @db.VarChar(20)
+  deadlineChangeRemark       String?  @map("deadline_change_remark")
+  implementationStage        String?  @map("implementation_stage") @db.VarChar(30)
+  implementationProgress     Int?     @map("implementation_progress")
+  implementationUpdate       String?  @map("implementation_update")
+  implementationUpdateDate   String?  @map("implementation_update_date") @db.VarChar(20)
+  screeningNotes             String?  @map("screening_notes")
+  coordinatorSuggestion      String?  @map("coordinator_suggestion")
+  requiredApprovals          Json?    @map("required_approvals")
+  hodApproverNames           Json?    @map("hod_approver_names")
+  approvals                  Json?
+  rewardEvaluation           Json?    @map("reward_evaluation")
+  beReviewNotes              String?  @map("be_review_notes")
+  beEditedFields             Json?    @map("be_edited_fields")
+  workflowThread             Json?    @map("workflow_thread")
+  comments                   Json?
+  /// Draft storage for implementer template (saved via "Save Draft")
+  implementationDraft        Json?    @map("implementation_draft")
+  /// Relative folder under upload root, e.g. kaizen/EMP001/kaizen_idea
+  ideaAttachmentsFolder      String?  @map("idea_attachments_folder") @db.VarChar(500)
+  /// Relative file paths from upload root for idea submission attachments
+  ideaAttachmentPaths        Json?    @map("idea_attachment_paths")
+  /// Relative folder for Kaizen template files: kaizen/EMP001/kaizen_template
+  templateAttachmentsFolder  String?  @map("template_attachments_folder") @db.VarChar(500)
+  templateAttachmentPaths  Json?    @map("template_attachment_paths")
+  createdAt                  DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt                  DateTime @default(now()) @map("updated_at") @db.Timestamp(6)
+  implementedKaizen          ImplementedKaizen?
+
+  @@index([department], map: "idx_suggestions_department")
+  @@index([employeeName], map: "idx_suggestions_employee_name")
+  @@index([status], map: "idx_suggestions_status")
+  @@index([currentStageRole], map: "idx_suggestions_current_stage_role")
+  @@map("suggestions")
+}
+
+model CodeCounter {
+  id     String @id @default(cuid()) @db.VarChar(50)
+  prefix String @db.VarChar(20)
+  year   Int
+  next   Int    @default(1)
+
+  @@unique([prefix, year], map: "uq_code_counter_prefix_year")
+  @@map("code_counters")
+}
+
+model ImplementedKaizen {
+  id             String   @id @default(cuid()) @db.VarChar(50)
+  suggestionId   String   @unique @map("suggestion_id") @db.VarChar(50)
+  ideaCode       String   @map("idea_code") @db.VarChar(30)
+  implementedCode String  @unique @map("implemented_code") @db.VarChar(40)
+  dataSnapshot   Json?    @map("data_snapshot")
+  implementedAt  DateTime @default(now()) @map("implemented_at") @db.Timestamp(6)
+
+  suggestion     Suggestion @relation(fields: [suggestionId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_implemented_kaizen_suggestion")
+
+  @@index([implementedAt(sort: Desc)], map: "idx_implemented_kaizen_implemented_at")
+  @@map("implemented_kaizen")
+}
+
+model HrmsUnit {
+  id        String   @id @default(cuid()) @db.VarChar(50)
+  code      String   @unique @db.VarChar(30)
+  name      String   @db.VarChar(120)
+  address   String?  @db.VarChar(255)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  @@map("hrms_units")
+}
+
+model HrmsDepartment {
+  id        String   @id @default(cuid()) @db.VarChar(50)
+  name      String   @unique @db.VarChar(120)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  @@map("hrms_departments")
+}
+
+model hrms_employees {
+  id            String   @id @default(uuid()) @db.Uuid
+  employee_id   String   @unique @db.VarChar(30)
+  first_name    String   @db.VarChar(120)
+  last_name     String   @db.VarChar(120)
+  email         String?  @unique @db.VarChar(120)
+  password      String?  @db.VarChar(255)
+  phone         String   @db.VarChar(30)
+  date_of_birth DateTime @db.Date
+  joining_date  DateTime @db.Date
+  department    String?  @db.Text
+  unit          String?  @db.Text
+  manager       String?  @db.Text
+  hod           String?  @db.Text
+  jobtitle      String?  @db.Text
+  is_active     Boolean  @default(true)
+  created_at    DateTime @default(now()) @db.Timestamp(6)
+  updated_at    DateTime @default(now()) @db.Timestamp(6)
+
+  @@index([employee_id], map: "idx_hrms_employees_employee_id")
+  @@index([is_active], map: "idx_hrms_employees_is_active")
+  @@index([unit], map: "idx_hrms_employees_unit")
+  @@index([department], map: "idx_hrms_employees_department")
+}
+
+enum RoleCode {
+  EMPLOYEE
+  UNIT_COORDINATOR
+  SELECTION_COMMITTEE
+  IMPLEMENTER
+  BUSINESS_EXCELLENCE
+  BUSINESS_EXCELLENCE_HEAD
+  HOD_FINANCE
+  HOD_HR
+  HOD_QUALITY
+  ADMIN
+  SUPER_ADMIN
+  BE_MEMBER
+  BE_HEAD
+
+  @@map("role_code_enum")
+}
+
+enum SyncStatus {
+  SUCCESS
+  FAILED
+
+  @@map("sync_status_enum")
+}
