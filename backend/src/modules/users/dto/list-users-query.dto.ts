@@ -4,4 +4,8 @@ export class ListUsersQueryDto {
   @IsOptional()
   @IsString()
   search?: string;
+
+  @IsOptional()
+  @IsString()
+  department?: string;
 }

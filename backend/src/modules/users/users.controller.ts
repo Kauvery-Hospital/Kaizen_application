@@ -43,7 +43,7 @@ export class UsersController {
   @Get()
   @RequireTokenRoles('ADMIN', 'SUPER_ADMIN')
   list(@Query() query: ListUsersQueryDto) {
-    return this.usersService.listEmployees(query.search);
+    return this.usersService.listEmployees(query.search, query.department);
   }
 
   @Post(':userId/roles')

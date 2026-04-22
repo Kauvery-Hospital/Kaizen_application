@@ -90,6 +90,8 @@ export const UserManagement: React.FC<{
   authHeaders: () => Record<string, string>;
 }> = ({ apiBase, authHeaders }) => {
   const [query, setQuery] = useState('');
+  const [department, setDepartment] = useState<string>('');
+  const [departments, setDepartments] = useState<string[]>([]);
   const [rows, setRows] = useState<UsersApiRow[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -101,8 +103,10 @@ export const UserManagement: React.FC<{
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return rows;
-    return rows.filter((u) => {
+    const dept = department.trim().toLowerCase();
+    const base = dept ? rows.filter((u) => String(u.department || '').toLowerCase() === dept) : rows;
+    if (!q) return base;
+    return base.filter((u) => {
       const hay = [
         u.employeeCode,
         u.name,
@@ -115,7 +119,23 @@ export const UserManagement: React.FC<{
         .toLowerCase();
       return hay.includes(q);
     });
-  }, [query, rows]);
+  }, [department, query, rows]);
+
+  const loadDepartments = async () => {
+    try {
+      const res = await fetch(`${apiBase}/hrms/departments`, {
+        headers: authHeaders(),
+      });
+      if (!res.ok) return;
+      const data = (await res.json()) as Array<{ name?: string }>;
+      const names = (Array.isArray(data) ? data : [])
+        .map((d) => String(d?.name || '').trim())
+        .filter(Boolean);
+      setDepartments(Array.from(new Set(names)).sort((a, b) => a.localeCompare(b)));
+    } catch {
+      // non-blocking
+    }
+  };
 
   const load = async () => {
     setIsLoading(true);
@@ -123,6 +143,7 @@ export const UserManagement: React.FC<{
     try {
       const params = new URLSearchParams();
       if (query.trim()) params.set('search', query.trim());
+      if (department.trim()) params.set('department', department.trim());
       const res = await fetch(`${apiBase}/users?${params.toString()}`, {
         headers: authHeaders(),
       });
@@ -138,6 +159,7 @@ export const UserManagement: React.FC<{
 
   useEffect(() => {
     void load();
+    void loadDepartments();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -202,6 +224,24 @@ export const UserManagement: React.FC<{
         </div>
 
         <div className="flex items-center gap-2">
+          <div className="relative">
+            <span className="material-icons-round absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-lg">
+              apartment
+            </span>
+            <select
+              value={department}
+              onChange={(e) => setDepartment(e.target.value)}
+              className="w-[260px] max-w-[70vw] pl-10 pr-3 py-2.5 rounded-xl border border-gray-300 bg-white text-sm font-semibold text-gray-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-purple-200 focus:border-purple-300"
+              aria-label="Filter by department"
+            >
+              <option value="">All departments</option>
+              {departments.map((d) => (
+                <option key={d} value={d}>
+                  {d}
+                </option>
+              ))}
+            </select>
+          </div>
           <div className="relative">
             <span className="material-icons-round absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-lg">
               search

@@ -123,19 +123,25 @@ export class UsersService {
     }));
   }
 
-  async listEmployees(search?: string) {
+  async listEmployees(search?: string, department?: string) {
     const q = search?.trim();
+    const dept = department?.trim();
     const users = await this.prisma.user.findMany({
-      where: q
-        ? {
-            OR: [
-              { employeeCode: { contains: q, mode: 'insensitive' } },
-              { name: { contains: q, mode: 'insensitive' } },
-              { email: { contains: q, mode: 'insensitive' } },
-              { department: { contains: q, mode: 'insensitive' } },
-            ],
-          }
-        : undefined,
+      where: {
+        ...(dept
+          ? { department: { equals: dept, mode: 'insensitive' } }
+          : {}),
+        ...(q
+          ? {
+              OR: [
+                { employeeCode: { contains: q, mode: 'insensitive' } },
+                { name: { contains: q, mode: 'insensitive' } },
+                { email: { contains: q, mode: 'insensitive' } },
+                { department: { contains: q, mode: 'insensitive' } },
+              ],
+            }
+          : {}),
+      },
       include: {
         roles: {
           include: {
