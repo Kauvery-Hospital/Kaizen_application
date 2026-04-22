@@ -6,7 +6,7 @@ function trimStr(v: unknown): string {
 }
 
 export class LoginDto {
-  @Transform(({ value }) => trimStr(value))
+  @Transform(({ value }: { value: unknown }) => trimStr(value))
   @IsString()
   @MinLength(1, { message: 'Employee ID is required' })
   employeeCode!: string;

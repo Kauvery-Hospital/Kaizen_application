@@ -23,7 +23,7 @@ export class TokenRolesGuard implements CanActivate {
       .switchToHttp()
       .getRequest<{ user?: JwtAccessPayload }>();
     const tokenRoles = req.user?.roles ?? [];
-    const hasRole = required.some((r) => tokenRoles.includes(r));
+    const hasRole = required.some((r: string) => tokenRoles.includes(r));
     if (!hasRole) {
       throw new ForbiddenException('Insufficient role permissions');
     }
