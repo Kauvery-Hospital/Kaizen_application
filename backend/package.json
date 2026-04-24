@@ -22,12 +22,14 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio",
     "prisma:seed": "prisma db seed",
+    "prisma:backfill:implemented": "ts-node prisma/backfill-implemented-kaizen.ts",
     "postinstall": "prisma generate"
   },
   "prisma": {
     "seed": "ts-node prisma/seed.ts"
   },
   "dependencies": {
+    "@google/genai": "^1.50.1",
     "@nestjs/common": "^11.0.1",
     "@nestjs/config": "^4.0.3",
     "@nestjs/core": "^11.0.1",
@@ -39,6 +41,7 @@
     "bcrypt": "^6.0.0",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.15.1",
+    "dotenv": "^16.4.5",
     "multer": "^2.1.1",
     "pdf-lib": "^1.17.1",
     "pg": "^8.20.0",

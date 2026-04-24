@@ -139,6 +139,14 @@ export class SuggestionsService {
   async list(role?: AppRole, currentUserName?: string) {
     const suggestions = await this.prisma.suggestion.findMany({
       orderBy: { createdAt: 'desc' },
+      include: {
+        implementedKaizen: {
+          select: {
+            implementedCode: true,
+            ideaCode: true,
+          },
+        },
+      },
     });
     if (!role) return suggestions;
     return suggestions.filter((s) =>
@@ -147,7 +155,17 @@ export class SuggestionsService {
   }
 
   findOne(id: string) {
-    return this.prisma.suggestion.findUnique({ where: { id } });
+    return this.prisma.suggestion.findUnique({
+      where: { id },
+      include: {
+        implementedKaizen: {
+          select: {
+            implementedCode: true,
+            ideaCode: true,
+          },
+        },
+      },
+    });
   }
 
   async updateStatus(id: string, dto: UpdateSuggestionStatusDto) {
@@ -187,6 +205,52 @@ export class SuggestionsService {
     const currentStageRole = this.deriveCurrentStageRole(dto.status, merged);
 
     return this.prisma.$transaction(async (tx) => {
+      // --- Mandatory remarks on rejection paths ---
+      // 1) Unit Coordinator reject at idea screening
+      if (dto.status === AppStatus.IDEA_REJECTED) {
+        const remark = String((safeExtra as any).screeningNotes ?? '').trim();
+        if (!remark) {
+          throw new BadRequestException('Remarks are required when rejecting an idea.');
+        }
+      }
+      // 2) BE member sends back to implementer
+      if (dto.status === AppStatus.ASSIGNED_FOR_IMPLEMENTATION) {
+        const remark = String((safeExtra as any).beReviewNotes ?? '').trim();
+        if (!remark) {
+          throw new BadRequestException('Remarks are required when marking as not approved.');
+        }
+      }
+      // 3) Unit Coordinator sends back after BE review
+      if (dto.status === AppStatus.IMPLEMENTATION_DONE) {
+        const remark = String((safeExtra as any).coordinatorSuggestion ?? '').trim();
+        if (!remark) {
+          throw new BadRequestException('Remarks are required when marking as not approved.');
+        }
+      }
+      // 4) Finance/HOD sends back during approvals
+      if (dto.status === AppStatus.BE_EVALUATION_PENDING) {
+        const remark = String((safeExtra as any).beReviewNotes ?? '').trim();
+        if (!remark) {
+          throw new BadRequestException('Remarks are required when marking as not approved.');
+        }
+      }
+
+      // --- Finance approval rule ---
+      // If BE Head recommends voucher > 2000, route through Finance Head approval before HR reward processing.
+      // We enforce requiredApprovals includes FINANCE_HOD when moving into VERIFIED_PENDING_APPROVAL with such voucher.
+      if (dto.status === AppStatus.VERIFIED_PENDING_APPROVAL) {
+        const voucher = Number((merged as any)?.rewardEvaluation?.voucherValue ?? 0);
+        if (voucher > 2000) {
+          const existingReq = Array.isArray((merged as any).requiredApprovals)
+            ? ((merged as any).requiredApprovals as string[])
+            : [];
+          if (!existingReq.includes(AppRole.FINANCE_HOD)) {
+            (safeExtra as any).requiredApprovals = [...existingReq, AppRole.FINANCE_HOD];
+            (merged as any).requiredApprovals = (safeExtra as any).requiredApprovals;
+          }
+        }
+      }
+
       const updated = await tx.suggestion.update({
         where: { id },
         data: {
@@ -242,14 +306,19 @@ export class SuggestionsService {
         }
       }
 
-      // When implementer submits the completed template, store a separate implemented-kaizen record.
-      if (
-        current.status !== dto.status &&
-        dto.status === AppStatus.IMPLEMENTATION_DONE
-      ) {
+      // Implemented-kaizen series should represent fully closed ideas.
+      // Create the implemented record when the workflow reaches REWARDED (final),
+      // and never change an existing implementedCode (preserves history).
+      if (current.status !== dto.status && dto.status === AppStatus.REWARDED) {
+        const existing = await tx.implementedKaizen.findUnique({
+          where: { suggestionId: updated.id },
+          select: { implementedCode: true },
+        });
+
         const year = new Date().getFullYear();
-        const seq = await this.nextSequence(IMPLEMENTED_PREFIX, year, tx);
-        const implementedCode = `${IMPLEMENTED_PREFIX}-${year}-${String(seq).padStart(4, '0')}`;
+        const implementedCode =
+          existing?.implementedCode ||
+          `${IMPLEMENTED_PREFIX}-${year}-${String(await this.nextSequence(IMPLEMENTED_PREFIX, year, tx)).padStart(4, '0')}`;
 
         await tx.implementedKaizen.upsert({
           where: { suggestionId: updated.id },
@@ -433,13 +502,15 @@ export class SuggestionsService {
           AppStatus.ASSIGNED_FOR_IMPLEMENTATION,
           AppStatus.IMPLEMENTATION_DONE,
           AppStatus.BE_REVIEW_DONE,
+          AppStatus.BE_EVALUATION_PENDING,
+          AppStatus.VERIFIED_PENDING_APPROVAL,
+          AppStatus.REWARD_PENDING,
+          AppStatus.REWARDED,
         ].includes(suggestion.status)
       );
     }
     if (role === AppRole.BUSINESS_EXCELLENCE)
-      return [AppStatus.IMPLEMENTATION_DONE, AppStatus.BE_REVIEW_DONE].includes(
-        suggestion.status,
-      );
+      return true;
     if (role === AppRole.BUSINESS_EXCELLENCE_HEAD)
       return [
         AppStatus.BE_EVALUATION_PENDING,
@@ -485,6 +556,15 @@ export class SuggestionsService {
         AppRole.UNIT_COORDINATOR,
         AppRole.ADMIN,
       ],
+      // Send-back paths ("Not approved" -> previous stage)
+      [`${AppStatus.IMPLEMENTATION_DONE}->${AppStatus.ASSIGNED_FOR_IMPLEMENTATION}`]: [
+        AppRole.BUSINESS_EXCELLENCE,
+        AppRole.ADMIN,
+      ],
+      [`${AppStatus.BE_REVIEW_DONE}->${AppStatus.IMPLEMENTATION_DONE}`]: [
+        AppRole.UNIT_COORDINATOR,
+        AppRole.ADMIN,
+      ],
       [`${AppStatus.APPROVED_FOR_ASSIGNMENT}->${AppStatus.ASSIGNED_FOR_IMPLEMENTATION}`]:
         [AppRole.SELECTION_COMMITTEE, AppRole.ADMIN],
       [`${AppStatus.ASSIGNED_FOR_IMPLEMENTATION}->${AppStatus.IMPLEMENTATION_DONE}`]:
@@ -497,8 +577,22 @@ export class SuggestionsService {
         AppRole.UNIT_COORDINATOR,
         AppRole.ADMIN,
       ],
+      [`${AppStatus.VERIFIED_PENDING_APPROVAL}->${AppStatus.BE_EVALUATION_PENDING}`]: [
+        AppRole.FINANCE_HOD,
+        AppRole.QUALITY_HOD,
+        AppRole.HR_HEAD,
+        AppRole.ADMIN,
+      ],
+      [`${AppStatus.BE_EVALUATION_PENDING}->${AppStatus.VERIFIED_PENDING_APPROVAL}`]: [
+        AppRole.BUSINESS_EXCELLENCE_HEAD,
+        AppRole.ADMIN,
+      ],
       [`${AppStatus.BE_EVALUATION_PENDING}->${AppStatus.REWARD_PENDING}`]: [
         AppRole.BUSINESS_EXCELLENCE_HEAD,
+        AppRole.ADMIN,
+      ],
+      [`${AppStatus.VERIFIED_PENDING_APPROVAL}->${AppStatus.REWARD_PENDING}`]: [
+        AppRole.FINANCE_HOD,
         AppRole.ADMIN,
       ],
       [`${AppStatus.REWARD_PENDING}->${AppStatus.REWARDED}`]: [

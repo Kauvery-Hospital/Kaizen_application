@@ -190,7 +190,12 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
           ? `Problem: ${suggestion.problem.what} Root Cause: ${suggestion.analysis?.rootCause} Solution: ${suggestion.counterMeasure}`
           : `Idea: ${suggestion.description}`;
           
-      const result = await analyzeSuggestion(suggestion.theme, context); 
+      const result = await analyzeSuggestion(
+        apiBase,
+        () => ({ Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' }),
+        suggestion.theme,
+        context,
+      );
       setAiAnalysis(result);
     } finally {
       setIsAnalyzing(false);
@@ -202,6 +207,10 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
   // 1. Coordinator: Approve Idea -> Send to Committee
   const handleIdeaApproval = async (approved: boolean) => {
     try {
+      if (!approved && !String(notes || '').trim()) {
+        showToast('error', 'Remarks are required to reject.');
+        return;
+      }
       await onUpdateStatus(
         suggestion.id,
         approved ? Status.APPROVED_FOR_ASSIGNMENT : Status.IDEA_REJECTED,
@@ -396,6 +405,79 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
     });
   };
 
+  const handleBEReviewNotApproved = async () => {
+    const remark = String(notes || '').trim();
+    if (!remark) {
+      showToast('error', 'Remarks are required for Not approved.');
+      return;
+    }
+    try {
+      await onUpdateStatus(suggestion.id, Status.ASSIGNED_FOR_IMPLEMENTATION, {
+        beReviewNotes: remark,
+      });
+      showToast('success', 'Sent back to implementer');
+    } catch (e: any) {
+      showToast('error', e?.message || 'Failed to send back');
+    }
+  };
+
+  const handleCoordinatorNotApproved = async () => {
+    const remark = String(coordinatorSuggestion || '').trim();
+    if (!remark) {
+      showToast('error', 'Remarks are required for Not approved.');
+      return;
+    }
+    try {
+      await onUpdateStatus(suggestion.id, Status.IMPLEMENTATION_DONE, {
+        coordinatorSuggestion: remark,
+      });
+      showToast('success', 'Sent back to BE review');
+    } catch (e: any) {
+      showToast('error', e?.message || 'Failed to send back');
+    }
+  };
+
+  const [approvalRemarks, setApprovalRemarks] = useState('');
+  const handleFunctionalApprove = async () => {
+    const r = role;
+    if (![Role.FINANCE_HOD, Role.QUALITY_HOD, Role.HR_HEAD].includes(r)) return;
+    try {
+      const nextApprovals = { ...(suggestion.approvals || {}), [r]: true };
+      const req = suggestion.requiredApprovals || [];
+      const allDone = req.every((x) => nextApprovals?.[x]);
+      if (r === Role.FINANCE_HOD && allDone) {
+        await onUpdateStatus(suggestion.id, Status.REWARD_PENDING, {
+          approvals: nextApprovals,
+        });
+      } else {
+        await onUpdateStatus(suggestion.id, Status.VERIFIED_PENDING_APPROVAL, {
+          approvals: nextApprovals,
+        });
+      }
+      showToast('success', 'Approval recorded');
+      setApprovalRemarks('');
+    } catch (e: any) {
+      showToast('error', e?.message || 'Failed to approve');
+    }
+  };
+
+  const handleFunctionalNotApproved = async () => {
+    const remark = String(approvalRemarks || '').trim();
+    if (!remark) {
+      showToast('error', 'Remarks are required for Not approved.');
+      return;
+    }
+    try {
+      await onUpdateStatus(suggestion.id, Status.BE_EVALUATION_PENDING, {
+        beReviewNotes: remark,
+      });
+      showToast('success', 'Sent back to BE Head');
+      setApprovalRemarks('');
+    } catch (e: any) {
+      showToast('error', e?.message || 'Failed to send back');
+    }
+  };
+
   const addHodFromPicker = () => {
     if (!selectedDeptForHod || !selectedHodUserName) {
       alert('Select a department and an HOD user to assign.');
@@ -427,9 +509,17 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
 
   // 6. BE: Evaluate
   const handleRewardSave = (evaluation: RewardEvaluation) => {
-    onUpdateStatus(suggestion.id, Status.REWARD_PENDING, {
-      rewardEvaluation: evaluation,
-    });
+    const voucher = Number((evaluation as any)?.voucherValue ?? 0);
+    // If voucher > 2000, require Finance Head approval before moving to HR reward processing.
+    if (voucher > 2000) {
+      onUpdateStatus(suggestion.id, Status.VERIFIED_PENDING_APPROVAL, {
+        rewardEvaluation: evaluation,
+        approvals: {},
+        requiredApprovals: [Role.FINANCE_HOD],
+      });
+      return;
+    }
+    onUpdateStatus(suggestion.id, Status.REWARD_PENDING, { rewardEvaluation: evaluation });
   };
 
   // 7. HR: Process Reward
@@ -1739,6 +1829,16 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
                   <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
                     <h4 className="text-sm font-black text-gray-900 mb-2">Business Excellence Template Review</h4>
                     <p className="text-xs text-gray-600 mb-4 font-semibold">Review submitted template, edit if needed, then approve to Unit Coordinator.</p>
+                    <div className="mb-4">
+                      <label className="text-xs font-extrabold text-gray-700 block mb-1">Remarks</label>
+                      <textarea
+                        value={notes}
+                        onChange={(e) => setNotes(e.target.value)}
+                        rows={2}
+                        placeholder="If not approved, remarks are mandatory..."
+                        className="w-full border border-gray-300 bg-white rounded-lg p-3 text-sm outline-none focus:ring-2 focus:ring-kauvery-purple text-gray-900 font-medium"
+                      />
+                    </div>
                     {suggestion.beEditedFields && suggestion.beEditedFields.length > 0 && (
                       <div className="mb-3 text-xs bg-amber-50 border border-amber-200 rounded p-2.5 text-amber-900">
                         <span className="font-bold">Already edited fields:</span> {suggestion.beEditedFields.join(', ')}
@@ -1766,6 +1866,12 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
                       </button>
                       <button onClick={handleBEReviewApproval} className="bg-kauvery-purple text-white px-6 py-2 rounded-lg text-sm font-bold hover:bg-kauvery-violet shadow-sm">
                         Approve & Send to Unit Coordinator
+                      </button>
+                      <button
+                        onClick={handleBEReviewNotApproved}
+                        className="bg-white text-gray-800 px-6 py-2 rounded-lg text-sm font-bold hover:bg-gray-100 border border-gray-300"
+                      >
+                        Not approved
                       </button>
                     </div>
                   </div>
@@ -1828,16 +1934,66 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
                         </button>
                       </div>
                     </div>
-                    <button onClick={handleVerification} className="bg-kauvery-purple text-white px-6 py-2 rounded-lg text-sm font-bold hover:bg-kauvery-violet shadow-sm">Approve & Send to BE Final Evaluation</button>
+                    <div className="flex flex-wrap gap-2">
+                      <button onClick={handleVerification} className="bg-kauvery-purple text-white px-6 py-2 rounded-lg text-sm font-bold hover:bg-kauvery-violet shadow-sm">
+                        Approve & Send to BE Final Evaluation
+                      </button>
+                      <button
+                        onClick={handleCoordinatorNotApproved}
+                        className="bg-white text-gray-800 px-6 py-2 rounded-lg text-sm font-bold hover:bg-gray-100 border border-gray-300"
+                      >
+                        Not approved
+                      </button>
+                    </div>
                   </div>
                 )}
+
+                {/* Functional approvals (Finance/Quality/HR) */}
+                {[Role.FINANCE_HOD, Role.QUALITY_HOD, Role.HR_HEAD].includes(role) &&
+                  suggestion.status === Status.VERIFIED_PENDING_APPROVAL &&
+                  (suggestion.requiredApprovals || []).includes(role) &&
+                  !suggestion.approvals?.[role] && (
+                    <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
+                      <h4 className="text-sm font-black text-gray-900 mb-2">Approval</h4>
+                      <p className="text-xs text-gray-600 mb-3 font-semibold">
+                        Approve this idea, or mark as not approved with mandatory remarks (it will go back to previous stage).
+                      </p>
+                      <label className="text-xs font-extrabold text-gray-700 block mb-1">Remarks (required for Not approved)</label>
+                      <textarea
+                        value={approvalRemarks}
+                        onChange={(e) => setApprovalRemarks(e.target.value)}
+                        rows={2}
+                        placeholder="Enter remarks..."
+                        className="w-full border border-gray-300 bg-white rounded-lg p-3 text-sm outline-none focus:ring-2 focus:ring-kauvery-purple text-gray-900 font-medium mb-3"
+                      />
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          onClick={handleFunctionalApprove}
+                          className="bg-kauvery-purple text-white px-6 py-2 rounded-lg text-sm font-bold hover:bg-kauvery-violet shadow-sm"
+                        >
+                          Approve
+                        </button>
+                        <button
+                          onClick={handleFunctionalNotApproved}
+                          className="bg-white text-gray-800 px-6 py-2 rounded-lg text-sm font-bold hover:bg-gray-100 border border-gray-300"
+                        >
+                          Not approved
+                        </button>
+                      </div>
+                    </div>
+                  )}
 
                 {/* 6. BUSINESS EXCELLENCE ADMIN: Evaluation */}
                 {role === Role.BUSINESS_EXCELLENCE_HEAD && suggestion.status === Status.BE_EVALUATION_PENDING && (
                   <div className="space-y-3">
                     <h4 className="text-sm font-black text-gray-900">Business Excellence Head Evaluation</h4>
                     <p className="text-xs text-gray-600 font-semibold">Final review, scoring, and reward recommendation before HR processing.</p>
-                    <RewardEvaluationForm suggestion={suggestion} onSave={handleRewardSave} />
+                    <RewardEvaluationForm
+                      suggestion={suggestion}
+                      apiBase={apiBase}
+                      authHeaders={() => ({ Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' })}
+                      onSave={handleRewardSave}
+                    />
                   </div>
                 )}
 

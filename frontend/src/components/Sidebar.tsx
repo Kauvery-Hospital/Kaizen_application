@@ -90,6 +90,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const menuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: 'dashboard' },
     { id: 'pipeline', label: 'Pipeline', icon: 'view_column' },
+    ...(currentRole === Role.BUSINESS_EXCELLENCE ||
+    currentRole === Role.BUSINESS_EXCELLENCE_HEAD
+      ? [{ id: 'be-overview', label: 'BE Overview', icon: 'manage_search' }]
+      : []),
     { id: 'list', label: 'All Suggestions', icon: 'format_list_bulleted' },
     ...(currentRole === Role.ADMIN
       ? [{ id: 'users', label: 'User Management', icon: 'manage_accounts' }]
@@ -191,9 +195,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
       )}
 
-      <aside className="w-64 bg-white/80 backdrop-blur-xl border-r border-gray-200 h-screen flex flex-col fixed left-0 top-0 z-40 shadow-[12px_0_32px_rgba(15,23,42,0.06)]">
+      <aside className="w-64 bg-gradient-to-b from-white via-white to-purple-50/50 backdrop-blur-xl border-r border-gray-200 h-screen flex flex-col fixed left-0 top-0 z-40 shadow-[12px_0_32px_rgba(15,23,42,0.06)]">
         {/* Brand */}
-        <div className="h-16 flex items-center px-5 border-b border-gray-200/70 bg-white/40">
+        <div className="h-16 flex items-center px-5 border-b border-gray-200/70 bg-white/60">
           <div className="w-9 h-9 bg-gradient-to-br from-kauvery-purple to-kauvery-violet rounded-2xl flex items-center justify-center text-white font-black mr-3 shadow-md shadow-purple-200 ring-1 ring-purple-200">
             K
           </div>
@@ -221,8 +225,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   onClick={() => onViewChange(item.id as ViewType)}
                   className={`group relative w-full flex items-center gap-3 px-3.5 py-2.5 text-sm font-extrabold rounded-xl transition-all ${
                     active
-                      ? 'text-kauvery-purple bg-purple-50 border border-purple-200 shadow-sm shadow-purple-100'
-                      : 'text-gray-800 hover:bg-gray-100/80'
+                      ? 'text-kauvery-purple bg-gradient-to-r from-purple-50 to-white border border-purple-200 shadow-sm shadow-purple-100'
+                      : 'text-gray-800 hover:bg-white/70 hover:shadow-sm hover:shadow-slate-200/60'
                   }`}
                 >
                   {active && (
@@ -243,8 +247,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
 
         {/* Footer / Profile */}
-        <div className="p-4 mt-auto border-t border-gray-200/70 bg-white/40">
-          <div className="bg-gradient-to-br from-white to-purple-50 border border-gray-200 rounded-2xl p-4 shadow-sm">
+        <div className="p-4 mt-auto border-t border-gray-200/70 bg-white/60">
+          <div className="bg-gradient-to-br from-white via-white to-purple-50 border border-gray-200 rounded-2xl p-4 shadow-sm">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-purple-100 to-purple-50 flex items-center justify-center text-kauvery-purple font-black border border-purple-200 shadow-sm">
                 {currentRole.charAt(0)}
@@ -268,7 +272,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             {canSwitchRole && (
               <button
                 onClick={() => setIsRoleSwitcherOpen(true)}
-                className="mt-3 w-full px-3 py-2.5 rounded-xl bg-white border border-gray-200 text-gray-900 hover:bg-gray-50 font-extrabold text-xs flex items-center justify-between shadow-sm"
+                className="mt-3 w-full px-3 py-2.5 rounded-xl bg-white border border-gray-200 text-gray-900 hover:bg-gray-50 font-extrabold text-xs flex items-center justify-between shadow-sm hover:shadow-md hover:shadow-slate-200/60 transition-shadow"
               >
                 <span className="flex items-center gap-2">
                   <span className="material-icons-round text-base text-gray-700">

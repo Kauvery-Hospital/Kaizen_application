@@ -6,10 +6,17 @@ interface PipelineViewProps {
   suggestions: Suggestion[];
   role: Role;
   currentUserName?: string;
+  currentUserEmployeeCode?: string;
   onSelect: (s: Suggestion) => void;
 }
 
-const filterByRole = (role: Role, s: Suggestion, currentUserName?: string) => {
+const filterByRole = (
+  role: Role,
+  s: Suggestion,
+  ctx?: { currentUserName?: string; currentUserEmployeeCode?: string },
+) => {
+  const currentUserName = ctx?.currentUserName;
+  const currentUserEmployeeCode = ctx?.currentUserEmployeeCode;
   if (role === Role.ADMIN) return true;
 
   if (role === Role.EMPLOYEE) {
@@ -31,8 +38,27 @@ const filterByRole = (role: Role, s: Suggestion, currentUserName?: string) => {
   }
 
   if (role === Role.IMPLEMENTER) {
-    const isAssignedToMe = currentUserName ? s.assignedImplementer === currentUserName : true;
-    return isAssignedToMe && s.status === Status.ASSIGNED_FOR_IMPLEMENTATION;
+    // Implementer should be able to track their ideas even after submission/review/reward.
+    const myCode = (currentUserEmployeeCode || '').trim().toLowerCase();
+    const assignedCode = String(s.assignedImplementerCode || '').trim().toLowerCase();
+    const isAssignedToMe =
+      myCode && assignedCode
+        ? assignedCode === myCode
+        : currentUserName
+          ? s.assignedImplementer === currentUserName
+          : true;
+    return (
+      isAssignedToMe &&
+      [
+        Status.ASSIGNED_FOR_IMPLEMENTATION,
+        Status.IMPLEMENTATION_DONE,
+        Status.BE_REVIEW_DONE,
+        Status.BE_EVALUATION_PENDING,
+        Status.VERIFIED_PENDING_APPROVAL,
+        Status.REWARD_PENDING,
+        Status.REWARDED,
+      ].includes(s.status)
+    );
   }
 
   if (role === Role.BUSINESS_EXCELLENCE) {
@@ -69,17 +95,40 @@ export const PipelineView: React.FC<PipelineViewProps> = ({
   suggestions,
   role,
   currentUserName,
+  currentUserEmployeeCode,
   onSelect,
 }) => {
   const [search, setSearch] = useState('');
   const [deptFilter, setDeptFilter] = useState<string>('all');
-  const [includeImplemented, setIncludeImplemented] = useState(false);
+  // For implementers, default to showing all ideas they were assigned to implement (including completed/approved).
+  const [includeImplemented, setIncludeImplemented] = useState(true);
+  const [implementerStageFilter, setImplementerStageFilter] = useState<
+    'all' | 'started' | 'in_progress' | 'completed'
+  >('all');
 
   const isImplementer = role === Role.IMPLEMENTER;
   const implementerNameNorm = (currentUserName || '').trim().toLowerCase();
+  const implementerCodeNorm = (currentUserEmployeeCode || '').trim().toLowerCase();
   const isInvolvedAsImplementer = (s: Suggestion) => {
+    if (implementerCodeNorm) {
+      return (
+        String(s.assignedImplementerCode || '').trim().toLowerCase() ===
+        implementerCodeNorm
+      );
+    }
     if (!implementerNameNorm) return false;
-    return String(s.assignedImplementer || '').trim().toLowerCase() === implementerNameNorm;
+    return (
+      String(s.assignedImplementer || '').trim().toLowerCase() === implementerNameNorm
+    );
+  };
+
+  const passesImplementerStage = (s: Suggestion) => {
+    if (role !== Role.IMPLEMENTER) return true;
+    if (implementerStageFilter === 'all') return true;
+    const stage = String((s as any).implementationStage || '').trim().toLowerCase();
+    if (implementerStageFilter === 'started') return stage === 'started';
+    if (implementerStageFilter === 'in_progress') return stage === 'in progress';
+    return stage === 'completed';
   };
 
   const departments = useMemo(
@@ -98,12 +147,17 @@ export const PipelineView: React.FC<PipelineViewProps> = ({
     () =>
       suggestions
         .filter((s) => {
-          // Implementer: default view is "Assigned" only. Toggle can include ideas they implemented / were assigned on.
+          // Implementer: default view is all ideas assigned to them.
+          // Toggle can restrict to only those currently pending implementation action.
           if (role === Role.IMPLEMENTER && includeImplemented) {
             return isInvolvedAsImplementer(s);
           }
-          return filterByRole(role, s, currentUserName);
+          return filterByRole(role, s, {
+            currentUserName,
+            currentUserEmployeeCode,
+          });
         })
+        .filter((s) => passesImplementerStage(s))
         .filter(s =>
           deptFilter === 'all' ? true : s.department === deptFilter
         )
@@ -116,7 +170,18 @@ export const PipelineView: React.FC<PipelineViewProps> = ({
             s.employeeName.toLowerCase().includes(q)
           );
         }),
-    [suggestions, role, currentUserName, deptFilter, search, includeImplemented, implementerNameNorm]
+    [
+      suggestions,
+      role,
+      currentUserName,
+      currentUserEmployeeCode,
+      deptFilter,
+      search,
+      includeImplemented,
+      implementerNameNorm,
+      implementerCodeNorm,
+      implementerStageFilter,
+    ]
   );
 
   const pipelineStats = useMemo(() => {
@@ -199,7 +264,45 @@ export const PipelineView: React.FC<PipelineViewProps> = ({
 
         {/* Implementer filter */}
         {isImplementer && (
-          <div className="flex items-center justify-end">
+          <div className="flex items-center justify-end gap-2 flex-wrap">
+            <div className="inline-flex rounded-lg border border-gray-300 bg-white overflow-hidden">
+              <button
+                type="button"
+                onClick={() => setImplementerStageFilter('all')}
+                className={`px-3 py-2 text-xs font-extrabold ${
+                  implementerStageFilter === 'all'
+                    ? 'bg-kauvery-purple text-white'
+                    : 'text-gray-900 hover:bg-gray-50'
+                }`}
+                title="Show all stages"
+              >
+                All
+              </button>
+              <button
+                type="button"
+                onClick={() => setImplementerStageFilter('in_progress')}
+                className={`px-3 py-2 text-xs font-extrabold border-l border-gray-200 ${
+                  implementerStageFilter === 'in_progress'
+                    ? 'bg-kauvery-purple text-white'
+                    : 'text-gray-900 hover:bg-gray-50'
+                }`}
+                title="Show ideas in progress"
+              >
+                In Progress
+              </button>
+              <button
+                type="button"
+                onClick={() => setImplementerStageFilter('completed')}
+                className={`px-3 py-2 text-xs font-extrabold border-l border-gray-200 ${
+                  implementerStageFilter === 'completed'
+                    ? 'bg-kauvery-purple text-white'
+                    : 'text-gray-900 hover:bg-gray-50'
+                }`}
+                title="Show completed ideas"
+              >
+                Completed
+              </button>
+            </div>
             <button
               type="button"
               onClick={() => setIncludeImplemented((v) => !v)}
@@ -208,12 +311,12 @@ export const PipelineView: React.FC<PipelineViewProps> = ({
                   ? 'bg-kauvery-purple text-white border-purple-900 hover:bg-kauvery-violet'
                   : 'bg-white text-gray-900 border-gray-300 hover:bg-gray-50'
               }`}
-              title="Toggle to include ideas you were assigned to implement (even after submission/review)"
+              title="Toggle between all assigned ideas and only pending implementation"
             >
               <span className="material-icons-round text-base">
                 {includeImplemented ? 'filter_alt' : 'filter_alt_off'}
               </span>
-              {includeImplemented ? 'Showing: All involved' : 'Showing: Assigned only'}
+              {includeImplemented ? 'Showing: All assigned' : 'Showing: Pending only'}
             </button>
           </div>
         )}

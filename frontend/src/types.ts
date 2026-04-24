@@ -198,6 +198,12 @@ export interface Suggestion {
   // Internal Notes
   screeningNotes?: string;
   rewardEvaluation?: RewardEvaluation;
+
+  /** Present when an idea is fully closed (series KH-KZ-YYYY-0001, etc.) */
+  implementedKaizen?: {
+    implementedCode: string;
+    ideaCode: string;
+  } | null;
 }
 
 export interface DashboardStats {
@@ -215,6 +221,7 @@ export type ViewType =
   | 'analytics'
   | 'create'
   | 'pipeline'
+  | 'be-overview'
   | 'users'
   | 'template';
 

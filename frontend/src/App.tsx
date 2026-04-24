@@ -8,6 +8,7 @@ import { SuggestionForm } from './components/SuggestionForm';
 import { SuggestionDetailModal } from './components/SuggestionDetailModal';
 import { PipelineView } from './screens/PipelineView';
 import { UserManagement } from './screens/UserManagement';
+import { BeOverview } from './screens/BeOverview';
 import { Role, Suggestion, Status, ViewType, User } from './types';
 import { clearSession, loadSession, saveSession } from './auth/session';
 
@@ -50,9 +51,7 @@ const getRoleScopedSuggestions = (
   }
 
   if (role === Role.BUSINESS_EXCELLENCE) {
-    return allSuggestions.filter(s =>
-      [Status.IMPLEMENTATION_DONE, Status.BE_REVIEW_DONE].includes(s.status)
-    );
+    return allSuggestions;
   }
 
   if (role === Role.BUSINESS_EXCELLENCE_HEAD) {
@@ -300,12 +299,29 @@ const App: React.FC = () => {
           suggestions={suggestions}
           role={currentRole}
           currentUserName={currentUser.name}
+          currentUserEmployeeCode={currentUser.employeeCode}
           onSelect={(s) => {
             setDetailViewMode('default');
             setSelectedSuggestion(s);
             setIsDetailModalOpen(true);
           }}
         />
+      );
+    }
+    if (currentView === 'be-overview') {
+      return (
+        <div className="animate-fade-in">
+          <BeOverview
+            suggestions={suggestions}
+            apiBase={apiBase}
+            accessToken={currentUser.accessToken}
+            onOpenIdea={(s) => {
+              setDetailViewMode('default');
+              setSelectedSuggestion(s);
+              setIsDetailModalOpen(true);
+            }}
+          />
+        </div>
       );
     }
     if (currentView === 'create') {
@@ -467,6 +483,8 @@ const App: React.FC = () => {
                 ? 'Executive Overview'
                 : currentView === 'pipeline'
                   ? 'Pipeline Workspace'
+                  : currentView === 'be-overview'
+                    ? 'BE Overview'
                   : currentView === 'list'
                     ? 'All Suggestions'
                     : currentView === 'users'

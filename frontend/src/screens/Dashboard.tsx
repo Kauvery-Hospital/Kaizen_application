@@ -8,6 +8,23 @@ interface DashboardProps {
   userName?: string;
 }
 
+function normalizeText(v?: string | null): string {
+  return String(v ?? '').trim();
+}
+
+function statusPillClass(status: Status): string {
+  if (status === Status.IDEA_SUBMITTED) return 'bg-slate-50 text-slate-800 border-slate-200';
+  if (status === Status.APPROVED_FOR_ASSIGNMENT) return 'bg-blue-50 text-blue-800 border-blue-200';
+  if (status === Status.ASSIGNED_FOR_IMPLEMENTATION) return 'bg-indigo-50 text-indigo-800 border-indigo-200';
+  if (status === Status.IMPLEMENTATION_DONE) return 'bg-amber-50 text-amber-900 border-amber-200';
+  if (status === Status.BE_REVIEW_DONE) return 'bg-purple-50 text-purple-800 border-purple-200';
+  if (status === Status.VERIFIED_PENDING_APPROVAL) return 'bg-sky-50 text-sky-900 border-sky-200';
+  if (status === Status.BE_EVALUATION_PENDING) return 'bg-fuchsia-50 text-fuchsia-800 border-fuchsia-200';
+  if (status === Status.REWARD_PENDING) return 'bg-orange-50 text-orange-900 border-orange-200';
+  if (status === Status.REWARDED) return 'bg-emerald-50 text-emerald-900 border-emerald-200';
+  return 'bg-gray-50 text-gray-800 border-gray-200';
+}
+
 export const Dashboard: React.FC<DashboardProps> = ({ suggestions: allSuggestions, role, userName }) => {
   const [showAllParticipants, setShowAllParticipants] = useState(false);
   const [showFilterMenu, setShowFilterMenu] = useState(false);
@@ -230,6 +247,103 @@ export const Dashboard: React.FC<DashboardProps> = ({ suggestions: allSuggestion
       .map((p, index) => ({ ...p, rank: index + 1 }));
   }, [suggestions]);
 
+  const actionQueue = useMemo(() => {
+    const byNewest = [...suggestions].sort((a, b) => {
+      const da = new Date(a.implementationUpdateDate || a.dateSubmitted || '').getTime();
+      const db = new Date(b.implementationUpdateDate || b.dateSubmitted || '').getTime();
+      return (Number.isNaN(db) ? 0 : db) - (Number.isNaN(da) ? 0 : da);
+    });
+
+    const take = (items: Suggestion[], n = 6) => items.slice(0, n);
+
+    if (role === Role.EMPLOYEE) {
+      return {
+        title: 'My ideas (tracking)',
+        hint: 'Recent updates across your submissions.',
+        items: take(byNewest),
+      };
+    }
+
+    if (role === Role.SELECTION_COMMITTEE) {
+      return {
+        title: 'Ideas to assign implementer',
+        hint: 'Approve → assign implementer to move work forward.',
+        items: take(byNewest.filter((s) => s.status === Status.APPROVED_FOR_ASSIGNMENT)),
+      };
+    }
+
+    if (role === Role.IMPLEMENTER) {
+      return {
+        title: 'My implementation queue',
+        hint: 'Track assigned work and submitted templates.',
+        items: take(
+          byNewest.filter((s) =>
+            [
+              Status.ASSIGNED_FOR_IMPLEMENTATION,
+              Status.IMPLEMENTATION_DONE,
+              Status.BE_REVIEW_DONE,
+              Status.BE_EVALUATION_PENDING,
+              Status.VERIFIED_PENDING_APPROVAL,
+              Status.REWARD_PENDING,
+              Status.REWARDED,
+            ].includes(s.status),
+          ),
+        ),
+      };
+    }
+
+    if (role === Role.UNIT_COORDINATOR) {
+      return {
+        title: 'Coordinator actions',
+        hint: 'Approve new ideas and verify implemented templates.',
+        items: take(
+          byNewest.filter((s) =>
+            [Status.IDEA_SUBMITTED, Status.BE_REVIEW_DONE, Status.IMPLEMENTATION_DONE].includes(
+              s.status,
+            ),
+          ),
+        ),
+      };
+    }
+
+    if (role === Role.BUSINESS_EXCELLENCE) {
+      return {
+        title: 'BE member review queue',
+        hint: 'Review implementation templates and route forward.',
+        items: take(byNewest.filter((s) => s.status === Status.IMPLEMENTATION_DONE)),
+      };
+    }
+
+    if (role === Role.BUSINESS_EXCELLENCE_HEAD) {
+      return {
+        title: 'BE Head evaluation queue',
+        hint: 'Score and recommend reward split.',
+        items: take(byNewest.filter((s) => s.status === Status.BE_EVALUATION_PENDING)),
+      };
+    }
+
+    if (role === Role.HR_HEAD || role === Role.QUALITY_HOD || role === Role.FINANCE_HOD) {
+      return {
+        title: 'Pending approvals',
+        hint: 'Approve verified ideas assigned to your function.',
+        items: take(byNewest.filter((s) => s.status === Status.VERIFIED_PENDING_APPROVAL)),
+      };
+    }
+
+    return {
+      title: 'Recent ideas',
+      hint: 'Latest ideas across the system.',
+      items: take(byNewest),
+    };
+  }, [suggestions, role]);
+
+  const showInsightsCharts = useMemo(() => {
+    // Charts are most useful for Admin / Coordinator / BE roles; keep employee/implementer dashboards focused.
+    if (role === Role.EMPLOYEE) return false;
+    if (role === Role.IMPLEMENTER) return false;
+    return true;
+  }, [role]);
+
   return (
     <div className="space-y-6 animate-fade-in">
       <div className="bg-white border border-gray-200 rounded-2xl p-6 shadow-sm">
@@ -389,52 +503,136 @@ export const Dashboard: React.FC<DashboardProps> = ({ suggestions: allSuggestion
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Main Chart */}
-        <div className="lg:col-span-2 bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
-          <h3 className="text-lg font-bold text-gray-900 mb-6">Department Participation</h3>
-          <div className="h-72">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={departmentData}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#cbd5e1" />
-                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#1e293b', fontSize: 12, fontWeight: 700}} />
-                <YAxis axisLine={false} tickLine={false} tick={{fill: '#1e293b', fontSize: 12, fontWeight: 700}} />
-                <Tooltip 
-                    cursor={{fill: '#f1f5f9'}}
-                    contentStyle={{borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)', color: '#0f172a', fontWeight: 'bold'}}
-                    itemStyle={{color: '#0f172a'}}
-                />
-                <Bar dataKey="value" fill="#962067" radius={[4, 4, 0, 0]} barSize={40} />
-              </BarChart>
-            </ResponsiveContainer>
+        {/* Action Queue */}
+        <div className="lg:col-span-2 bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
+          <div className="p-6 border-b border-gray-200 flex items-start justify-between gap-4">
+            <div>
+              <h3 className="text-lg font-black text-gray-900">{actionQueue.title}</h3>
+              <p className="text-xs text-gray-600 font-semibold mt-1">{actionQueue.hint}</p>
+            </div>
+            <div className="text-[11px] font-black text-gray-500 uppercase tracking-wide">
+              Showing {Math.min(actionQueue.items.length, 6)} / {actionQueue.items.length}
+            </div>
+          </div>
+          <div className="divide-y divide-gray-100">
+            {actionQueue.items.slice(0, 6).map((s) => (
+              <div key={s.id} className="px-6 py-4 flex items-start justify-between gap-4 hover:bg-gray-50/60">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className={`inline-flex items-center px-2 py-0.5 rounded-full border text-[11px] font-extrabold ${statusPillClass(s.status)}`}>
+                      {s.status}
+                    </span>
+                    <span className="text-[11px] font-mono text-gray-500">{s.code || s.id}</span>
+                  </div>
+                  <div className="mt-1 font-extrabold text-gray-900 line-clamp-1">{s.theme}</div>
+                  <div className="mt-1 text-xs text-gray-600 font-semibold line-clamp-1">
+                    {normalizeText(s.department)} • {normalizeText(s.unit)} • Originator: {normalizeText(s.employeeName)}
+                  </div>
+                </div>
+                <div className="shrink-0 text-right">
+                  <div className="text-xs font-black text-gray-900">
+                    {normalizeText(s.implementationDeadline) || normalizeText(s.dateSubmitted) || '—'}
+                  </div>
+                  <div className="text-[10px] text-gray-500 font-bold uppercase tracking-wide">
+                    {s.implementationDeadline ? 'Deadline' : 'Submitted'}
+                  </div>
+                  <div className="mt-2 w-28">
+                    <div className="flex items-center justify-between text-[10px] text-gray-500 font-bold uppercase mb-1">
+                      <span>Progress</span>
+                      <span>{s.implementationProgress || 0}%</span>
+                    </div>
+                    <div className="w-full h-1.5 bg-gray-200 rounded overflow-hidden">
+                      <div className="h-full bg-kauvery-purple" style={{ width: `${s.implementationProgress || 0}%` }} />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))}
+            {actionQueue.items.length === 0 && (
+              <div className="px-6 py-14 text-center text-sm text-gray-600 font-semibold">
+                No items for this role right now.
+              </div>
+            )}
           </div>
         </div>
 
-        {/* Pie Chart */}
-        <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
-          <h3 className="text-lg font-bold text-gray-900 mb-6">Impact Categories</h3>
-          <div className="h-72">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie
-                  data={categoryData}
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={60}
-                  outerRadius={80}
-                  paddingAngle={5}
-                  dataKey="value"
-                >
-                  {categoryData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                  ))}
-                </Pie>
-                <Tooltip contentStyle={{borderRadius: '8px', border: '1px solid #e2e8f0', color: '#0f172a', fontWeight: 'bold'}} />
-                <Legend verticalAlign="bottom" height={36} wrapperStyle={{color: '#0f172a', fontWeight: '600'}}/>
-              </PieChart>
-            </ResponsiveContainer>
+        {/* Quick insights (optional) */}
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
+          <div className="p-6 border-b border-gray-200 flex items-center justify-between">
+            <h3 className="text-lg font-black text-gray-900">Quick insights</h3>
+            <div className="text-[11px] text-gray-500 font-bold uppercase">{role}</div>
+          </div>
+          <div className="p-6 space-y-3">
+            <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">
+              <div className="text-[11px] font-extrabold uppercase text-gray-600">Implementation rate</div>
+              <div className="mt-1 text-3xl font-black text-kauvery-purple">{implementationRate}%</div>
+              <div className="mt-2 h-2 rounded-full bg-gray-200 overflow-hidden">
+                <div className="h-full bg-kauvery-purple" style={{ width: `${implementationRate}%` }} />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="rounded-xl border border-gray-200 bg-white p-4">
+                <div className="text-[11px] font-extrabold uppercase text-gray-600">Total</div>
+                <div className="mt-1 text-xl font-black text-gray-900">{stats.total}</div>
+              </div>
+              <div className="rounded-xl border border-gray-200 bg-white p-4">
+                <div className="text-[11px] font-extrabold uppercase text-gray-600">In progress</div>
+                <div className="mt-1 text-xl font-black text-gray-900">{stats.inProgress}</div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
+
+      {showInsightsCharts && (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Main Chart */}
+          <div className="lg:col-span-2 bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
+            <h3 className="text-lg font-bold text-gray-900 mb-6">Department Participation</h3>
+            <div className="h-72">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={departmentData}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#cbd5e1" />
+                  <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#1e293b', fontSize: 12, fontWeight: 700 }} />
+                  <YAxis axisLine={false} tickLine={false} tick={{ fill: '#1e293b', fontSize: 12, fontWeight: 700 }} />
+                  <Tooltip
+                    cursor={{ fill: '#f1f5f9' }}
+                    contentStyle={{ borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)', color: '#0f172a', fontWeight: 'bold' }}
+                    itemStyle={{ color: '#0f172a' }}
+                  />
+                  <Bar dataKey="value" fill="#962067" radius={[4, 4, 0, 0]} barSize={40} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          {/* Pie Chart */}
+          <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
+            <h3 className="text-lg font-bold text-gray-900 mb-6">Impact Categories</h3>
+            <div className="h-72">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={categoryData}
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={60}
+                    outerRadius={80}
+                    paddingAngle={5}
+                    dataKey="value"
+                  >
+                    {categoryData.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                    ))}
+                  </Pie>
+                  <Tooltip contentStyle={{ borderRadius: '8px', border: '1px solid #e2e8f0', color: '#0f172a', fontWeight: 'bold' }} />
+                  <Legend verticalAlign="bottom" height={36} wrapperStyle={{ color: '#0f172a', fontWeight: '600' }} />
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
         {/* Status Breakdown */}

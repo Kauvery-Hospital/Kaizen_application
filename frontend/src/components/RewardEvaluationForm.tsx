@@ -6,12 +6,21 @@ import { evaluateKaizen } from '../services/geminiService';
 
 interface Props {
   suggestion: Suggestion;
+  apiBase: string;
+  authHeaders: () => Record<string, string>;
   onSave: (evaluation: RewardEvaluation) => void;
   initialData?: RewardEvaluation;
   readOnly?: boolean;
 }
 
-export const RewardEvaluationForm: React.FC<Props> = ({ suggestion, onSave, initialData, readOnly = false }) => {
+export const RewardEvaluationForm: React.FC<Props> = ({
+  suggestion,
+  apiBase,
+  authHeaders,
+  onSave,
+  initialData,
+  readOnly = false,
+}) => {
   const [scores, setScores] = useState<EvaluationScore>({});
   const [aiScores, setAiScores] = useState<EvaluationScore | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -70,7 +79,7 @@ export const RewardEvaluationForm: React.FC<Props> = ({ suggestion, onSave, init
   const handleRunAiAnalysis = async () => {
     setIsAnalyzing(true);
     try {
-        const result = await evaluateKaizen(suggestion);
+        const result = await evaluateKaizen(apiBase, authHeaders, suggestion as any);
         if (result && result.scores) {
             setAiScores(result.scores);
         }

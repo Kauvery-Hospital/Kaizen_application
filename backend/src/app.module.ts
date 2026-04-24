@@ -12,6 +12,7 @@ import { SuggestionsModule } from './modules/suggestions/suggestions.module';
 import { WorkflowModule } from './modules/workflow/workflow.module';
 import { AttachmentsModule } from './modules/attachments/attachments.module';
 import { HrmsSyncModule } from './modules/hrms-sync/hrms-sync.module';
+import { AiModule } from './modules/ai/ai.module';
 
 @Module({
   imports: [
@@ -25,6 +26,7 @@ import { HrmsSyncModule } from './modules/hrms-sync/hrms-sync.module';
     WorkflowModule,
     AttachmentsModule,
     HrmsSyncModule,
+    AiModule,
   ],
   controllers: [AppController],
   providers: [AppService],

@@ -1,0 +1,73 @@
+# Full stack: PostgreSQL, NestJS API, Vite static frontend (nginx)
+#
+# From repo root:
+#   docker compose up -d --build
+#
+# UI:  http://localhost:8080
+# API: http://localhost:3000
+#
+# Rebuild the frontend with a public API URL (browser must reach this host):
+#   VITE_API_BASE_URL=http://your-server:3000 docker compose build frontend
+#
+# First-time DB seed (optional):
+#   docker compose exec backend npx prisma db seed
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-kaizen}
+    volumes:
+      - kaizen_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-kaizen}']
+      interval: 5s
+      timeout: 5s
+      retries: 8
+
+  backend:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: ${PORT:-3000}
+      DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@db:5432/kaizen?schema=public}
+      JWT_SECRET: ${JWT_SECRET:-dev-only-change-me}
+      KAIZEN_UPLOAD_ROOT: /app/uploads/kaizen_storage
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      # Optional: HRMS mirror / bootstrap (see backend/.env.example)
+      HRMS_DATABASE_URL: ${HRMS_DATABASE_URL:-}
+      HRMS_SYNC_CRON: ${HRMS_SYNC_CRON:-0 */30 * * * *}
+      # Create/ensure a SUPER_ADMIN user on startup (dev-friendly).
+      # Override in docker.env for production (or set to false and manage users manually).
+      SUPER_ADMIN_BOOTSTRAP_ENABLED: ${SUPER_ADMIN_BOOTSTRAP_ENABLED:-true}
+      SUPER_ADMIN_EMPLOYEE_CODE: ${SUPER_ADMIN_EMPLOYEE_CODE:-SUPERADMIN}
+      SUPER_ADMIN_PASSWORD: ${SUPER_ADMIN_PASSWORD:-SuperAdmin@123}
+      SUPER_ADMIN_EMAIL: ${SUPER_ADMIN_EMAIL:-superadmin@local}
+      SUPER_ADMIN_NAME: ${SUPER_ADMIN_NAME:-Super Admin}
+    ports:
+      - "${BACKEND_HOST_PORT:-3000}:3000"
+    volumes:
+      - kaizen_uploads:/app/uploads/kaizen_storage
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:3000}
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "${FRONTEND_HOST_PORT:-8080}:80"
+
+volumes:
+  kaizen_pgdata:
+  kaizen_uploads:

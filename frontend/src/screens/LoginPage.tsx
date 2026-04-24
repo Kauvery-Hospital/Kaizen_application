@@ -184,8 +184,45 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-gray-50 via-white to-purple-50 font-sans">
-      <div className="min-h-screen flex items-center justify-center px-4 py-10">
+    <div className="relative min-h-screen bg-gradient-to-b from-kauvery-pink/10 via-white to-purple-50 font-sans overflow-hidden">
+      {/* Decorative brand pattern (subtle, on-brand) */}
+      <div className="pointer-events-none absolute inset-0">
+        <div className="absolute inset-0 opacity-[0.2] [mask-image:radial-gradient(circle_at_50%_45%,black_0%,black_55%,transparent_88%)]">
+          {/* Smaller, repeated logos (keep subtle) */}
+          <div className="absolute -top-6 -left-6 w-[220px] h-[220px] rotate-[-16deg] blur-[0.2px]">
+            <BrandLogo className="w-full h-full object-contain" />
+          </div>
+          <div className="absolute top-[10%] left-[26%] w-[200px] h-[200px] rotate-[10deg] blur-[0.2px]">
+            <BrandLogo className="w-full h-full object-contain" />
+          </div>
+          <div className="absolute top-[6%] right-[10%] w-[210px] h-[210px] rotate-[-8deg] blur-[0.2px]">
+            <BrandLogo className="w-full h-full object-contain" />
+          </div>
+          <div className="absolute top-[34%] left-[8%] w-[210px] h-[210px] rotate-[14deg] blur-[0.2px]">
+            <BrandLogo className="w-full h-full object-contain" />
+          </div>
+          <div className="absolute top-[38%] left-[46%] w-[230px] h-[230px] rotate-[-10deg] blur-[0.2px]">
+            <BrandLogo className="w-full h-full object-contain" />
+          </div>
+          <div className="absolute top-[30%] right-[6%] w-[200px] h-[200px] rotate-[9deg] blur-[0.2px]">
+            <BrandLogo className="w-full h-full object-contain" />
+          </div>
+          <div className="absolute bottom-[18%] left-[18%] w-[220px] h-[220px] rotate-[-12deg] blur-[0.2px]">
+            <BrandLogo className="w-full h-full object-contain" />
+          </div>
+          <div className="absolute bottom-[10%] right-[12%] w-[240px] h-[240px] rotate-[12deg] blur-[0.2px]">
+            <BrandLogo className="w-full h-full object-contain" />
+          </div>
+          <div className="absolute -bottom-10 -left-10 w-[260px] h-[260px] rotate-[6deg] blur-[0.2px]">
+            <BrandLogo className="w-full h-full object-contain" />
+          </div>
+        </div>
+        {/* soft glow accents */}
+        <div className="absolute -top-24 -left-24 w-96 h-96 rounded-full bg-kauvery-purple/10 blur-3xl" />
+        <div className="absolute -bottom-24 -right-24 w-[420px] h-[420px] rounded-full bg-kauvery-violet/10 blur-3xl" />
+      </div>
+
+      <div className="relative min-h-screen flex items-center justify-center px-4 py-10">
         <div className="w-full max-w-md">
           <div className="relative overflow-hidden rounded-3xl border border-gray-200 bg-white shadow-2xl shadow-slate-200/50">
             <div className="absolute inset-x-0 top-0 h-1.5 bg-gradient-to-r from-kauvery-purple via-kauvery-violet to-kauvery-pink" />
