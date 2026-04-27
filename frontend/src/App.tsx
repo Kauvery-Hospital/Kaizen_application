@@ -6,6 +6,7 @@ import { Dashboard } from './screens/Dashboard';
 import { SuggestionList } from './screens/SuggestionList';
 import { SuggestionForm } from './components/SuggestionForm';
 import { SuggestionDetailModal } from './components/SuggestionDetailModal';
+import { NotificationsButton } from './components/NotificationsButton';
 import { PipelineView } from './screens/PipelineView';
 import { UserManagement } from './screens/UserManagement';
 import { BeOverview } from './screens/BeOverview';
@@ -497,13 +498,26 @@ const App: React.FC = () => {
                       : 'Create New Idea'}
             </div>
           </div>
-          <button 
-            onClick={() => setCurrentView('create')}
-            className="bg-gradient-to-r from-kauvery-purple to-kauvery-violet hover:opacity-95 text-white px-4 py-2 rounded-lg text-sm font-bold shadow-lg shadow-purple-200 transition-all flex items-center gap-2"
-          >
-            <span className="material-icons-round text-sm">add</span>
-            New Idea
-          </button>
+          <div className="flex items-center gap-3">
+            <NotificationsButton
+              suggestions={suggestions}
+              role={currentRole}
+              currentUserName={currentUser.name}
+              currentUserEmployeeCode={currentUser.employeeCode}
+              onOpenSuggestion={(s) => {
+                setDetailViewMode('tracking');
+                setSelectedSuggestion(s);
+                setIsDetailModalOpen(true);
+              }}
+            />
+            <button
+              onClick={() => setCurrentView('create')}
+              className="bg-gradient-to-r from-kauvery-purple to-kauvery-violet hover:opacity-95 text-white px-4 py-2 rounded-lg text-sm font-bold shadow-lg shadow-purple-200 transition-all flex items-center gap-2"
+            >
+              <span className="material-icons-round text-sm">add</span>
+              New Idea
+            </button>
+          </div>
         </header>
 
         <main className="flex-1 p-6 overflow-y-auto">
