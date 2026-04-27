@@ -2,30 +2,17 @@
  * UAT / single-host gateway:
  * - Serves Vite build from frontend/dist (PORT, default 5000)
  * - Proxies REST + uploaded files to NestJS on 127.0.0.1:BACKEND_PORT (default 3001)
- * - Spawns Nest from backend/dist (child cwd = backend so node_modules resolves)
  *
  * Before PM2: run `npm ci` at repo root, then `npm ci` inside backend + frontend,
  * then `npm run build:uat`. Set VITE_API_BASE_URL when building frontend (same host:PORT).
  */
 const fs = require('fs');
 const path = require('path');
-const { spawn } = require('child_process');
 const express = require('express');
 const { createProxyMiddleware } = require('http-proxy-middleware');
 
 const repoRoot = __dirname;
 const frontendDist = path.join(repoRoot, 'frontend', 'dist');
-const backendCwd = path.join(repoRoot, 'backend');
-
-function resolveBackendMainRelative() {
-  const a = path.join(backendCwd, 'dist', 'src', 'main.js');
-  const b = path.join(backendCwd, 'dist', 'main.js');
-  if (fs.existsSync(a)) return path.join('dist', 'src', 'main.js');
-  if (fs.existsSync(b)) return path.join('dist', 'main.js');
-  throw new Error(
-    'Backend build not found. Expected backend/dist/src/main.js or backend/dist/main.js — run `npm run build --prefix backend`.',
-  );
-}
 
 const PORT = Number(process.env.PORT || 5000);
 const BACKEND_PORT = Number(process.env.BACKEND_PORT || 3001);
@@ -80,31 +67,6 @@ app.get(/.*/, (req, res, next) => {
   return res.sendFile(indexFile);
 });
 
-let backendMainRel;
-try {
-  backendMainRel = resolveBackendMainRelative();
-} catch (e) {
-  console.error(String(e.message || e));
-  process.exit(1);
-}
-
-const backendProcess = spawn(process.execPath, [backendMainRel], {
-  cwd: backendCwd,
-  stdio: 'inherit',
-  env: {
-    ...process.env,
-    PORT: String(BACKEND_PORT),
-  },
-});
-
-backendProcess.on('close', (code) => {
-  console.error(`[uat] Nest backend exited with code ${code}`);
-});
-
-backendProcess.on('error', (err) => {
-  console.error('[uat] Failed to start Nest backend:', err);
-});
-
 const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`[uat] Frontend static + gateway on http://0.0.0.0:${PORT}`);
   console.log(`[uat] Nest backend proxy target ${BACKEND_URL}`);
@@ -112,11 +74,6 @@ const server = app.listen(PORT, '0.0.0.0', () => {
 
 function shutdown(signal) {
   console.log(`[uat] ${signal} — shutting down`);
-  try {
-    backendProcess.kill('SIGTERM');
-  } catch {
-    // ignore
-  }
   server.close(() => process.exit(0));
 }
 

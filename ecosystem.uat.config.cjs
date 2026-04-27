@@ -17,6 +17,20 @@
 module.exports = {
   apps: [
     {
+      name: 'kaizen-uat-backend',
+      script: 'dist/src/main.js',
+      cwd: `${__dirname}/backend`,
+      instances: 1,
+      exec_mode: 'fork',
+      autorestart: true,
+      max_restarts: 20,
+      min_uptime: '10s',
+      env: {
+        NODE_ENV: 'production',
+        PORT: 3001,
+      },
+    },
+    {
       name: 'kaizen-uat',
       script: 'server.js',
       cwd: __dirname,
