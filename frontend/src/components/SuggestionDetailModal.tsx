@@ -58,6 +58,7 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
   const [aiAnalysis, setAiAnalysis] = useState<any>(null);
   const [notes, setNotes] = useState('');
   const [commentDraft, setCommentDraft] = useState('');
+  const [approvalRemarks, setApprovalRemarks] = useState('');
 
   const handleAddNote = async () => {
     const text = String(commentDraft || '').trim();
@@ -246,8 +247,9 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
         implementationProgress: 0
       });
       showToast('success', 'Implementer assigned');
-    } catch {
-      showToast('error', 'Failed to assign implementer');
+    } catch (e: any) {
+      const msg = String(e?.message || '').trim();
+      showToast('error', msg || 'Failed to assign implementer');
     }
   };
 
@@ -437,7 +439,6 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
     }
   };
 
-  const [approvalRemarks, setApprovalRemarks] = useState('');
   const handleFunctionalApprove = async () => {
     const r = role;
     if (![Role.FINANCE_HOD, Role.QUALITY_HOD, Role.HR_HEAD].includes(r)) return;
@@ -691,7 +692,23 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
   const reportingTo =
     implementerOptions.find((x) => x.employeeCode === implementerEmployeeCode)
       ?.manager || 'Not mapped';
-  const workflowThread = suggestion.workflowThread || [];
+  const workflowThread = (Array.isArray((suggestion as any)?.workflowThread)
+    ? ((suggestion as any).workflowThread as any[])
+    : []
+  )
+    .map((item, idx) => {
+      const actor = String(item?.actor ?? '').trim();
+      const text = String(item?.text ?? '').trim();
+      const roleRaw = item?.role;
+      const roleSafe = (Object.values(Role) as string[]).includes(String(roleRaw))
+        ? (roleRaw as Role)
+        : (Role.EMPLOYEE as Role);
+      const date = String(item?.date ?? '').trim();
+      const id = String(item?.id ?? '').trim() || `${suggestion.id || 's'}-${idx}-${date || 't'}`;
+      if (!actor && !text && !date) return null;
+      return { id, actor: actor || 'System', role: roleSafe, text: text || '-', date: date || new Date().toISOString() };
+    })
+    .filter(Boolean) as { id: string; actor: string; role: Role; text: string; date: string }[];
   const templatePaths: string[] = Array.isArray(suggestion?.templateAttachmentPaths)
     ? (suggestion.templateAttachmentPaths as any)
     : [];
@@ -1427,7 +1444,7 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
                                 <div key={item.id} className="flex gap-3 relative">
                                   <div className="absolute left-[11px] top-7 bottom-[-14px] w-px bg-purple-100" />
                                   <div className="w-6 h-6 rounded-full bg-gradient-to-br from-purple-100 to-fuchsia-100 text-kauvery-purple flex items-center justify-center text-[10px] font-black border border-purple-200 z-10">
-                                    {item.actor.charAt(0)}
+                                    {String(item.actor || 'S').trim().charAt(0).toUpperCase()}
                                   </div>
                                   <div className="flex-1 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
                                     <div className="text-xs text-gray-900 font-semibold leading-relaxed">{item.text}</div>

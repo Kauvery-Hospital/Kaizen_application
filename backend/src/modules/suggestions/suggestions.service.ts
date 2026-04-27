@@ -213,8 +213,12 @@ export class SuggestionsService {
           throw new BadRequestException('Remarks are required when rejecting an idea.');
         }
       }
-      // 2) BE member sends back to implementer
-      if (dto.status === AppStatus.ASSIGNED_FOR_IMPLEMENTATION) {
+      // 2) BE member sends back to implementer (IMPLEMENTATION_DONE -> ASSIGNED_FOR_IMPLEMENTATION)
+      // Do not block Selection Committee assignment, which also sets ASSIGNED_FOR_IMPLEMENTATION.
+      if (
+        dto.status === AppStatus.ASSIGNED_FOR_IMPLEMENTATION &&
+        current.status === AppStatus.IMPLEMENTATION_DONE
+      ) {
         const remark = String((safeExtra as any).beReviewNotes ?? '').trim();
         if (!remark) {
           throw new BadRequestException('Remarks are required when marking as not approved.');

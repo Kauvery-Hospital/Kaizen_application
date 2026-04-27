@@ -1,0 +1,15 @@
+{
+  "name": "kaizen-application-uat",
+  "private": true,
+  "description": "UAT gateway: serves frontend/dist and proxies API routes to NestJS on BACKEND_PORT",
+  "scripts": {
+    "build:backend": "npm run build --prefix backend",
+    "build:frontend": "npm run build --prefix frontend",
+    "build:uat": "npm run build:backend && npm run build:frontend",
+    "start:uat": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "http-proxy-middleware": "^3.0.3"
+  }
+}
