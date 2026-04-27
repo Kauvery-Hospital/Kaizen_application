@@ -259,7 +259,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
                     <input
                       value={employeeId}
                       onChange={(e) => setEmployeeId(e.target.value)}
-                      placeholder="e.g. EMP1004"
+                      placeholder="Enter your employee ID"
                       autoComplete="username"
                       className="w-full pl-11 pr-3 py-3 rounded-xl border border-gray-300 text-sm text-gray-900 font-semibold bg-white focus:ring-2 focus:ring-kauvery-purple outline-none"
                     />
