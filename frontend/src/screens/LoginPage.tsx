@@ -109,7 +109,11 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
   const [error, setError] = useState<string | null>(null);
 
   const apiBase = useMemo(
-    () => normalizeApiBase(import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001'),
+    () =>
+      normalizeApiBase(
+        import.meta.env.VITE_API_BASE_URL ||
+          (import.meta.env.DEV ? 'http://localhost:3001' : window.location.origin),
+      ),
     [],
   );
 
