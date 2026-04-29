@@ -25,11 +25,15 @@ const filterByRole = (
   }
 
   if (role === Role.UNIT_COORDINATOR) {
+    const isOwn =
+      currentUserName &&
+      s.employeeName.trim().toLowerCase() === currentUserName.trim().toLowerCase();
+    if (isOwn) return false;
     return [
       Status.IDEA_SUBMITTED,
+      Status.APPROVED_FOR_ASSIGNMENT,
       Status.IMPLEMENTATION_DONE,
-      Status.REWARD_PENDING,
-      Status.REWARDED,
+      Status.BE_REVIEW_DONE,
     ].includes(s.status);
   }
 

@@ -87,6 +87,14 @@ export class SuperAdminBootstrapService implements OnModuleInit {
         },
       });
 
+      // Enforce invariant: SUPER_ADMIN user must not have any other roles.
+      await this.prisma.userRoleMapping.deleteMany({
+        where: {
+          userId: user.id,
+          role: { code: { not: RoleCode.SUPER_ADMIN } },
+        },
+      });
+
       this.logger.log(
         `SUPER_ADMIN ensured for employeeCode="${employeeCode}" (userId=${user.id}).`,
       );

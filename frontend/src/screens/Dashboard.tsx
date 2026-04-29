@@ -154,11 +154,28 @@ export const Dashboard: React.FC<DashboardProps> = ({ suggestions: allSuggestion
     }
 
     if (role === Role.UNIT_COORDINATOR) {
+      const ideasReceived = submitted;
+      const approvedCount = suggestions.filter((s) =>
+        [
+          Status.APPROVED_FOR_ASSIGNMENT,
+          Status.ASSIGNED_FOR_IMPLEMENTATION,
+          Status.IMPLEMENTATION_DONE,
+          Status.BE_REVIEW_DONE,
+          Status.VERIFIED_PENDING_APPROVAL,
+          Status.BE_EVALUATION_PENDING,
+          Status.REWARD_PENDING,
+          Status.REWARDED,
+        ].includes(s.status),
+      ).length;
+      const balanceApproval = suggestions.filter((s) =>
+        [Status.IDEA_SUBMITTED, Status.BE_REVIEW_DONE, Status.IMPLEMENTATION_DONE].includes(
+          s.status,
+        ),
+      ).length;
       return [
-        { label: 'Ideas Received', value: submitted, color: 'text-gray-900' },
-        { label: 'Approved by Coordinator', value: approved, color: 'text-blue-800' },
-        { label: 'Pending Coordinator Action', value: suggestions.filter(s => [Status.IDEA_SUBMITTED, Status.IMPLEMENTATION_DONE].includes(s.status)).length, color: 'text-orange-700' },
-        { label: 'Rewarded / Closed', value: rewarded, color: 'text-green-800' },
+        { label: 'Ideas Received', value: ideasReceived, color: 'text-gray-900' },
+        { label: 'Approved', value: approvedCount, color: 'text-blue-800' },
+        { label: 'Balance Approval', value: balanceApproval, color: 'text-orange-700' },
       ];
     }
 
@@ -295,12 +312,15 @@ export const Dashboard: React.FC<DashboardProps> = ({ suggestions: allSuggestion
     if (role === Role.UNIT_COORDINATOR) {
       return {
         title: 'Coordinator actions',
-        hint: 'Approve new ideas and verify implemented templates.',
+        hint: 'Approve new ideas, track approved ideas, and verify implemented templates.',
         items: take(
           byNewest.filter((s) =>
-            [Status.IDEA_SUBMITTED, Status.BE_REVIEW_DONE, Status.IMPLEMENTATION_DONE].includes(
-              s.status,
-            ),
+            [
+              Status.IDEA_SUBMITTED,
+              Status.APPROVED_FOR_ASSIGNMENT,
+              Status.BE_REVIEW_DONE,
+              Status.IMPLEMENTATION_DONE,
+            ].includes(s.status),
           ),
         ),
       };
@@ -486,7 +506,15 @@ export const Dashboard: React.FC<DashboardProps> = ({ suggestions: allSuggestion
       </div>
 
       {/* KPI Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+      <div
+        className={`grid grid-cols-1 gap-6 ${
+          roleKpis.length === 3
+            ? 'md:grid-cols-3'
+            : roleKpis.length === 2
+              ? 'md:grid-cols-2'
+              : 'md:grid-cols-4'
+        }`}
+      >
         {roleKpis.map((kpi, idx) => (
           <div key={kpi.label} className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 flex items-center justify-between">
               <div>

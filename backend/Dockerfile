@@ -27,4 +27,4 @@ EXPOSE 3000
 
 # Fresh deployments: this repo's migrations are not a reliable bootstrap path yet (missing base schema),
 # so we initialize from the Prisma schema directly.
-CMD ["sh", "-c", "npx prisma db push && node dist/src/main.js"]
+CMD ["sh", "-c", "npx prisma db push --accept-data-loss && node dist/src/main.js"]

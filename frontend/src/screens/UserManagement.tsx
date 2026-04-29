@@ -95,6 +95,8 @@ export const UserManagement: React.FC<{
   const [rows, setRows] = useState<UsersApiRow[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [isSyncingMobile, setIsSyncingMobile] = useState(false);
 
   const [activeUser, setActiveUser] = useState<UsersApiRow | null>(null);
   const [selectedRoleCode, setSelectedRoleCode] = useState<BackendRoleCode>('EMPLOYEE');
@@ -140,6 +142,7 @@ export const UserManagement: React.FC<{
   const load = async () => {
     setIsLoading(true);
     setError(null);
+    setNotice(null);
     try {
       const params = new URLSearchParams();
       if (query.trim()) params.set('search', query.trim());
@@ -154,6 +157,37 @@ export const UserManagement: React.FC<{
       setError(e instanceof Error ? e.message : 'Failed to load users.');
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const runMobileIdeasSync = async () => {
+    setIsSyncingMobile(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const res = await fetch(`${apiBase}/mobile-ideas-sync/run-now`, {
+        method: 'POST',
+        headers: authHeaders(),
+      });
+      if (!res.ok) throw new Error(await messageFromFailedResponse(res));
+      const body = (await res.json()) as {
+        scanned?: number;
+        inserted?: number;
+        updated?: number;
+        skippedUnmappedEmployee?: number;
+      };
+      const scanned = Number(body?.scanned ?? 0);
+      const inserted = Number(body?.inserted ?? 0);
+      const updated = Number(body?.updated ?? 0);
+      const skipped = Number(body?.skippedUnmappedEmployee ?? 0);
+      setNotice(
+        `Mobile sync done. Scanned: ${scanned}, Inserted: ${inserted}, Updated: ${updated}, Skipped (unmapped employee): ${skipped}.`,
+      );
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Mobile sync failed.');
+    } finally {
+      setIsSyncingMobile(false);
     }
   };
 
@@ -254,6 +288,15 @@ export const UserManagement: React.FC<{
             />
           </div>
           <button
+            onClick={() => void runMobileIdeasSync()}
+            className="px-4 py-2.5 rounded-xl bg-white border border-gray-300 text-gray-900 font-extrabold text-sm shadow-sm hover:bg-gray-50"
+            disabled={isSyncingMobile}
+            title="Import ideas submitted from the mobile app into Kaizen portal"
+          >
+            <span className="material-icons-round text-[18px] align-[-4px] mr-1.5">sync</span>
+            {isSyncingMobile ? 'Syncing…' : 'Sync Mobile Ideas'}
+          </button>
+          <button
             onClick={() => void load()}
             className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-kauvery-purple to-kauvery-violet text-white font-extrabold text-sm shadow-lg shadow-purple-200 hover:opacity-95"
             disabled={isLoading}
@@ -266,6 +309,11 @@ export const UserManagement: React.FC<{
       {error && (
         <div className="mb-4 text-xs text-red-800 font-bold bg-red-50 border border-red-200 rounded-xl p-3">
           {error}
+        </div>
+      )}
+      {notice && (
+        <div className="mb-4 text-xs text-emerald-900 font-bold bg-emerald-50 border border-emerald-200 rounded-xl p-3">
+          {notice}
         </div>
       )}
 

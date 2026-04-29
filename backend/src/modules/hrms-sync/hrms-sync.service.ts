@@ -49,7 +49,7 @@ export class HrmsSyncService {
     const employees = await this.fetchEmployeesFromHrms();
 
     const syncLog = await this.prisma.hrmsSyncLog.create({
-      data: { status: SyncStatus.SUCCESS },
+      data: { status: SyncStatus.SUCCESS, source: 'EMPLOYEE' } as any,
     });
 
     let insertedCount = 0;

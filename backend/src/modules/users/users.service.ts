@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { RoleCode } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
 import { AssignRoleDto } from './dto/assign-role.dto';
@@ -7,6 +7,16 @@ import type { JwtAccessPayload } from '../auth/guards/jwt-auth.guard';
 @Injectable()
 export class UsersService {
   constructor(private readonly prisma: PrismaService) {}
+
+  private async userHasSuperAdmin(userId: string): Promise<boolean> {
+    const count = await this.prisma.userRoleMapping.count({
+      where: {
+        userId,
+        role: { code: RoleCode.SUPER_ADMIN },
+      },
+    });
+    return count > 0;
+  }
 
   async getEmployeeHrms(employeeIdRaw: string) {
     const employeeId = employeeIdRaw?.trim();
@@ -171,6 +181,16 @@ export class UsersService {
       throw new NotFoundException('User not found');
     }
 
+    // Hard rule: a SUPER_ADMIN user must not have any other roles.
+    // - If user already has SUPER_ADMIN, block assigning any other role.
+    // - If assigning SUPER_ADMIN, remove all other role mappings first.
+    const hasSuperAdmin = await this.userHasSuperAdmin(user.id);
+    if (dto.roleCode !== RoleCode.SUPER_ADMIN && hasSuperAdmin) {
+      throw new ForbiddenException(
+        'Cannot assign additional roles to a SUPER_ADMIN user',
+      );
+    }
+
     let role = await this.prisma.role.findUnique({
       where: { code: dto.roleCode },
     });
@@ -183,22 +203,33 @@ export class UsersService {
       });
     }
 
-    const mapping = await this.prisma.userRoleMapping.upsert({
-      where: {
-        userId_roleId: {
+    const mapping = await this.prisma.$transaction(async (tx) => {
+      if (dto.roleCode === RoleCode.SUPER_ADMIN) {
+        await tx.userRoleMapping.deleteMany({
+          where: {
+            userId: user.id,
+            role: { code: { not: RoleCode.SUPER_ADMIN } },
+          },
+        });
+      }
+
+      return tx.userRoleMapping.upsert({
+        where: {
+          userId_roleId: {
+            userId: user.id,
+            roleId: role.id,
+          },
+        },
+        update: {
+          assignedBy: dto.assignedBy,
+          assignedAt: new Date(),
+        },
+        create: {
           userId: user.id,
           roleId: role.id,
+          assignedBy: dto.assignedBy,
         },
-      },
-      update: {
-        assignedBy: dto.assignedBy,
-        assignedAt: new Date(),
-      },
-      create: {
-        userId: user.id,
-        roleId: role.id,
-        assignedBy: dto.assignedBy,
-      },
+      });
     });
 
     return {
@@ -225,6 +256,10 @@ export class UsersService {
     });
     if (!role) {
       throw new NotFoundException('Role not found');
+    }
+
+    if (role.code === RoleCode.SUPER_ADMIN) {
+      throw new ForbiddenException('SUPER_ADMIN role cannot be removed');
     }
 
     await this.prisma.userRoleMapping.deleteMany({

@@ -274,32 +274,40 @@ export class SuggestionsService {
           const employeeCode = String((safeExtra as any).assignedImplementerCode);
           const user = await tx.user.findUnique({ where: { employeeCode } });
           if (user) {
-            const role = await tx.role.upsert({
-              where: { code: RoleCode.IMPLEMENTER },
-              update: { name: 'Implementer' },
-              create: {
-                code: RoleCode.IMPLEMENTER,
-                name: 'Implementer',
-                description: 'Auto-assigned when work is assigned',
-              },
-            });
-            await tx.userRoleMapping.upsert({
-              where: {
-                userId_roleId: {
+            const isSuperAdmin = (await tx.userRoleMapping.count({
+              where: { userId: user.id, role: { code: RoleCode.SUPER_ADMIN } },
+            })) > 0;
+            if (isSuperAdmin) {
+              // SUPER_ADMIN must not get additional roles.
+              // Skip role auto-grant.
+            } else {
+              const role = await tx.role.upsert({
+                where: { code: RoleCode.IMPLEMENTER },
+                update: { name: 'Implementer' },
+                create: {
+                  code: RoleCode.IMPLEMENTER,
+                  name: 'Implementer',
+                  description: 'Auto-assigned when work is assigned',
+                },
+              });
+              await tx.userRoleMapping.upsert({
+                where: {
+                  userId_roleId: {
+                    userId: user.id,
+                    roleId: role.id,
+                  },
+                },
+                update: {
+                  assignedBy: 'AUTO_ASSIGN_IMPLEMENTER',
+                  assignedAt: new Date(),
+                },
+                create: {
                   userId: user.id,
                   roleId: role.id,
+                  assignedBy: 'AUTO_ASSIGN_IMPLEMENTER',
                 },
-              },
-              update: {
-                assignedBy: 'AUTO_ASSIGN_IMPLEMENTER',
-                assignedAt: new Date(),
-              },
-              create: {
-                userId: user.id,
-                roleId: role.id,
-                assignedBy: 'AUTO_ASSIGN_IMPLEMENTER',
-              },
-            });
+              });
+            }
           }
         } catch (e: any) {
           // Assignment should not fail just because role auto-grant failed.
@@ -487,11 +495,18 @@ export class SuggestionsService {
       );
     }
     if (role === AppRole.UNIT_COORDINATOR) {
+      // Coordinator view should focus on approval/workflow actions (not the coordinator's own submissions).
+      // Own ideas remain visible under the Employee role view.
+      const isOwn =
+        currentUserName &&
+        String(suggestion.employeeName || '').trim().toLowerCase() ===
+          currentUserName.trim().toLowerCase();
+      if (isOwn) return false;
       return [
         AppStatus.IDEA_SUBMITTED,
+        AppStatus.APPROVED_FOR_ASSIGNMENT,
         AppStatus.BE_REVIEW_DONE,
-        AppStatus.REWARD_PENDING,
-        AppStatus.REWARDED,
+        AppStatus.IMPLEMENTATION_DONE,
       ].includes(suggestion.status);
     }
     if (role === AppRole.SELECTION_COMMITTEE)

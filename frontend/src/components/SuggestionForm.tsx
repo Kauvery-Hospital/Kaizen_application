@@ -75,6 +75,32 @@ const HTML_TO_IMAGE_OPTS = {
   },
 } as const;
 
+const EXPORT_FRAME = { width: 1920, height: 1080 } as const; // 16:9 landscape (sharper in PPT)
+
+async function captureNodeAsLandscapePng(node: HTMLElement): Promise<string | null> {
+  // Capture the template page into a fixed 16:9 landscape frame.
+  // We scale the DOM to FIT the frame (contain) so all content is visible and zoom is consistent across sheets.
+  const w = Math.max(1, node.scrollWidth || node.clientWidth || 1);
+  const h = Math.max(1, node.scrollHeight || node.clientHeight || 1);
+  const scale = Math.min(EXPORT_FRAME.width / w, EXPORT_FRAME.height / h);
+  const dx = (EXPORT_FRAME.width - w * scale) / 2;
+  const dy = (EXPORT_FRAME.height - h * scale) / 2;
+
+  const png = await toPng(node, {
+    ...(HTML_TO_IMAGE_OPTS as any),
+    width: EXPORT_FRAME.width,
+    height: EXPORT_FRAME.height,
+    style: {
+      transform: `translate(${dx}px, ${dy}px) scale(${scale})`,
+      transformOrigin: 'top left',
+      width: `${w}px`,
+      height: `${h}px`,
+      backgroundColor: '#ffffff',
+    },
+  } as any);
+  return png || null;
+}
+
 /** Image fills the frame (object-cover). Optional native corner resize for team photo etc. */
 const ResizableImageFrame: React.FC<{
   src: string;
@@ -487,8 +513,8 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
             await new Promise((r) => setTimeout(r, 80));
             const node = templateSheetCaptureRef.current;
             if (!node) continue;
-            const png = await toPng(node, HTML_TO_IMAGE_OPTS as any);
-            out.push(png);
+            const png = await captureNodeAsLandscapePng(node);
+            if (png) out.push(png);
           }
           return out;
         } finally {
@@ -636,8 +662,8 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
             await new Promise((r) => setTimeout(r, 80));
             const node = templateSheetCaptureRef.current;
             if (!node) continue;
-            const png = await toPng(node, HTML_TO_IMAGE_OPTS as any);
-            out.push(png);
+            const png = await captureNodeAsLandscapePng(node);
+            if (png) out.push(png);
           }
           return out;
         } finally {
