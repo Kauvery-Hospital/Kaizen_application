@@ -935,8 +935,15 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
           const existing: string[] = Array.isArray((basePayload as any).templateAttachmentPaths)
             ? ((basePayload as any).templateAttachmentPaths as any)
             : [];
-          const next = Array.from(new Set([...existing, finalized.pptPath, finalized.pdfPath]));
-          (basePayload as any).templateAttachmentPaths = next;
+          // Replace any previous FINAL exports (do not append indefinitely).
+          const nonFinal = existing.filter(
+            (p) => !String(p || '').replace(/\\/g, '/').includes('/kaizen_template/final/'),
+          );
+          (basePayload as any).templateAttachmentPaths = [
+            ...nonFinal,
+            finalized.pptPath,
+            finalized.pdfPath,
+          ];
         }
       } catch {
         // If generation fails, still allow submission of template data

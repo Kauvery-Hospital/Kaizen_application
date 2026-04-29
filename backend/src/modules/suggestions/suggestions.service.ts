@@ -19,6 +19,16 @@ export class SuggestionsService {
   private readonly logger = new Logger(SuggestionsService.name);
   constructor(private readonly prisma: PrismaService) {}
 
+  private approvalsComplete(row: any): boolean {
+    const required = Array.isArray(row?.requiredApprovals)
+      ? (row.requiredApprovals as string[])
+      : [];
+    if (required.length === 0) return true;
+    const approvals =
+      (row?.approvals as Record<string, boolean> | null | undefined) ?? {};
+    return required.every((r) => Boolean(approvals?.[r]));
+  }
+
   async create(
     dto: CreateSuggestionDto,
     ctx: { employeeCode: string },
@@ -231,8 +241,11 @@ export class SuggestionsService {
           throw new BadRequestException('Remarks are required when marking as not approved.');
         }
       }
-      // 4) Finance/HOD sends back during approvals
-      if (dto.status === AppStatus.BE_EVALUATION_PENDING) {
+      // 4) Functional approver sends back during approvals (VERIFIED -> BE_REVIEW_DONE)
+      if (
+        current.status === AppStatus.VERIFIED_PENDING_APPROVAL &&
+        dto.status === AppStatus.BE_REVIEW_DONE
+      ) {
         const remark = String((safeExtra as any).beReviewNotes ?? '').trim();
         if (!remark) {
           throw new BadRequestException('Remarks are required when marking as not approved.');
@@ -252,6 +265,19 @@ export class SuggestionsService {
             (safeExtra as any).requiredApprovals = [...existingReq, AppRole.FINANCE_HOD];
             (merged as any).requiredApprovals = (safeExtra as any).requiredApprovals;
           }
+        }
+      }
+
+      // --- Guard: only move to BE Head evaluation after approvals are complete ---
+      if (
+        current.status === AppStatus.VERIFIED_PENDING_APPROVAL &&
+        dto.status === AppStatus.BE_EVALUATION_PENDING
+      ) {
+        const after = { ...(current as any), ...(safeExtra as any) };
+        if (!this.approvalsComplete(after)) {
+          throw new BadRequestException(
+            'All required approvals must be completed before BE Head evaluation.',
+          );
         }
       }
 
@@ -592,26 +618,20 @@ export class SuggestionsService {
         AppRole.BUSINESS_EXCELLENCE,
         AppRole.ADMIN,
       ],
-      [`${AppStatus.BE_REVIEW_DONE}->${AppStatus.BE_EVALUATION_PENDING}`]: [
+      // Unit Coordinator routes to functional approvals after BE Member review
+      [`${AppStatus.BE_REVIEW_DONE}->${AppStatus.VERIFIED_PENDING_APPROVAL}`]: [
         AppRole.UNIT_COORDINATOR,
         AppRole.ADMIN,
       ],
-      [`${AppStatus.VERIFIED_PENDING_APPROVAL}->${AppStatus.BE_EVALUATION_PENDING}`]: [
-        AppRole.FINANCE_HOD,
-        AppRole.QUALITY_HOD,
-        AppRole.HR_HEAD,
-        AppRole.ADMIN,
-      ],
+      // After approvals are completed, move to BE Head evaluation
+      [`${AppStatus.VERIFIED_PENDING_APPROVAL}->${AppStatus.BE_EVALUATION_PENDING}`]:
+        [AppRole.UNIT_COORDINATOR, AppRole.ADMIN, AppRole.FINANCE_HOD, AppRole.QUALITY_HOD, AppRole.HR_HEAD],
       [`${AppStatus.BE_EVALUATION_PENDING}->${AppStatus.VERIFIED_PENDING_APPROVAL}`]: [
         AppRole.BUSINESS_EXCELLENCE_HEAD,
         AppRole.ADMIN,
       ],
       [`${AppStatus.BE_EVALUATION_PENDING}->${AppStatus.REWARD_PENDING}`]: [
         AppRole.BUSINESS_EXCELLENCE_HEAD,
-        AppRole.ADMIN,
-      ],
-      [`${AppStatus.VERIFIED_PENDING_APPROVAL}->${AppStatus.REWARD_PENDING}`]: [
-        AppRole.FINANCE_HOD,
         AppRole.ADMIN,
       ],
       [`${AppStatus.REWARD_PENDING}->${AppStatus.REWARDED}`]: [
@@ -704,9 +724,9 @@ export class SuggestionsService {
     if (status === AppStatus.BE_REVIEW_DONE)
       return 'completed BE review and routed to Unit Coordinator';
     if (status === AppStatus.VERIFIED_PENDING_APPROVAL)
-      return 'approved after BE review and routed for BE scoring';
+      return 'routed for functional approvals';
     if (status === AppStatus.BE_EVALUATION_PENDING)
-      return 'moved to final BE evaluation and scoring';
+      return 'moved to BE Head evaluation and scoring';
     if (status === AppStatus.REWARD_PENDING)
       return 'completed BE evaluation and moved to reward processing';
     if (status === AppStatus.REWARDED) return 'closed idea with reward';

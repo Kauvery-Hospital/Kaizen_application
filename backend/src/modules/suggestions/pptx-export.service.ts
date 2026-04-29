@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { mkdir, readFile, writeFile } from 'fs/promises';
+import { mkdir, readFile, readdir, unlink, writeFile } from 'fs/promises';
 import { extname, join } from 'path';
 import PptxGenJS from 'pptxgenjs';
 import { PDFDocument } from 'pdf-lib';
@@ -740,27 +740,53 @@ export class PptxExportService {
     const uploadRoot = this.config.get<string>('uploadRoot');
     if (!uploadRoot) throw new NotFoundException('Upload root not configured');
 
-    const employeeCode =
-      String(suggestion.assignedImplementerCode || 'UNKNOWN').trim() || 'UNKNOWN';
+    const employeeCode = String(suggestion.assignedImplementerCode || 'UNKNOWN')
+      .trim()
+      .replace(/[^a-zA-Z0-9_-]/g, '') || 'UNKNOWN';
 
     const safeBase = String(fileNameBaseRaw || suggestion.code || suggestionId)
       .trim()
       .replace(/[^a-zA-Z0-9-_]/g, '')
       .slice(0, 60);
-    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
 
     const relDir = `kaizen/${employeeCode}/kaizen_template/final`;
     const absDir = join(uploadRoot, ...relDir.split('/'));
     await mkdir(absDir, { recursive: true });
 
-    const pptFile = `${safeBase || 'kaizen'}_${stamp}.pptx`;
-    const pdfFile = `${safeBase || 'kaizen'}_${stamp}.pdf`;
+    // Deterministic filenames so "final" truly replaces (no file growth).
+    const pptFile = `${safeBase || 'kaizen'}.pptx`;
+    const pdfFile = `${safeBase || 'kaizen'}.pdf`;
 
     const pptBuf = await this.buildRenderedSlidesPptx(slides);
     const pdfBuf = await this.buildRenderedSlidesPdf(slides);
 
     const absPpt = join(absDir, pptFile);
     const absPdf = join(absDir, pdfFile);
+
+    // Clean up old exports in the final folder (best-effort).
+    // We intentionally keep only ONE final PPT + PDF in this directory.
+    try {
+      const items = await readdir(absDir, { withFileTypes: true });
+      const deletions = items
+        .filter((d) => d.isFile())
+        .map((d) => d.name)
+        .filter((name) => {
+          const n = name.toLowerCase();
+          return n.endsWith('.pptx') || n.endsWith('.ppt') || n.endsWith('.pdf');
+        })
+        .filter((name) => name !== pptFile && name !== pdfFile)
+        .map(async (name) => {
+          try {
+            await unlink(join(absDir, name));
+          } catch {
+            // ignore missing/locked files
+          }
+        });
+      await Promise.all(deletions);
+    } catch {
+      // ignore cleanup failures; overwrite will still happen
+    }
+
     await writeFile(absPpt, pptBuf);
     await writeFile(absPdf, pdfBuf);
 
@@ -771,7 +797,11 @@ export class PptxExportService {
       ? (suggestion.templateAttachmentPaths as any)
       : [];
 
-    const next = Array.from(new Set([...existing, pptPath, pdfPath]));
+    // Replace previous FINAL exports in DB (avoid appending on every re-finalize).
+    const keepNonFinal = existing.filter(
+      (p) => !String(p || '').replace(/\\/g, '/').startsWith(`${relDir}/`),
+    );
+    const next = [...keepNonFinal, pptPath, pdfPath];
     await this.prisma.suggestion.update({
       where: { id: suggestionId },
       data: { templateAttachmentPaths: next as any },

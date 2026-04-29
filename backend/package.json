@@ -43,6 +43,7 @@
     "class-validator": "^0.15.1",
     "dotenv": "^16.4.5",
     "multer": "^2.1.1",
+    "nest": "^0.1.6",
     "pdf-lib": "^1.17.1",
     "pg": "^8.20.0",
     "pptxgenjs": "^4.0.1",
