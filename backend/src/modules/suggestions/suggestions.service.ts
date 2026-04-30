@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -18,6 +19,115 @@ const IMPLEMENTED_PREFIX = 'KH-KZ';
 export class SuggestionsService {
   private readonly logger = new Logger(SuggestionsService.name);
   constructor(private readonly prisma: PrismaService) {}
+
+  private normalizeUnitCode(v?: string | null): string {
+    return String(v ?? '').trim();
+  }
+
+  private async getAllowedUnitsForRole(
+    userId: string | undefined,
+    role: AppRole,
+  ): Promise<string[] | null> {
+    if (!userId) return null;
+    let roleCode: RoleCode | null = null;
+    if (role === AppRole.UNIT_COORDINATOR) roleCode = RoleCode.UNIT_COORDINATOR;
+    if (role === AppRole.SELECTION_COMMITTEE)
+      roleCode = RoleCode.SELECTION_COMMITTEE;
+    if (!roleCode) return null;
+
+    const rows = await (this.prisma as any).userRoleUnitScope.findMany({
+      where: { userId, roleCode },
+      select: { unitCode: true },
+      take: 5000,
+    });
+    const units = (Array.isArray(rows) ? rows : [])
+      .map((r: any) => this.normalizeUnitCode(r.unitCode))
+      .filter(Boolean);
+    return Array.from(new Set(units));
+  }
+
+  private coordinatorRoutingUnitForStatus(s: any): string {
+    const st = String(s?.status ?? '');
+    // Early stages: coordinator is bound to originator unit.
+    if (
+      st === AppStatus.IDEA_SUBMITTED ||
+      st === AppStatus.APPROVED_FOR_ASSIGNMENT
+    ) {
+      return this.normalizeUnitCode(s?.unit);
+    }
+    // Later coordinator actions can be on assigned unit (cross-unit assignment).
+    return this.normalizeUnitCode(s?.assignedUnit || s?.unit);
+  }
+
+  private coordinatorRoutingUnitForNextStatus(
+    current: any,
+    nextStatus: AppStatus,
+  ): string {
+    // Early coordinator decisions are always tied to originator unit.
+    if (
+      nextStatus === AppStatus.APPROVED_FOR_ASSIGNMENT ||
+      nextStatus === AppStatus.IDEA_REJECTED
+    ) {
+      return this.normalizeUnitCode(current?.unit);
+    }
+    return this.normalizeUnitCode(current?.assignedUnit || current?.unit);
+  }
+
+  private async assertUnitScopeAllowed(
+    actorUserId: string | undefined,
+    actorRole: AppRole,
+    current: any,
+    nextStatus: AppStatus,
+  ): Promise<void> {
+    if (
+      actorRole !== AppRole.UNIT_COORDINATOR &&
+      actorRole !== AppRole.SELECTION_COMMITTEE
+    ) {
+      return;
+    }
+    if (!actorUserId) {
+      throw new ForbiddenException('Missing actor user id for scope validation');
+    }
+
+    const allowedUnits = await this.getAllowedUnitsForRole(actorUserId, actorRole);
+    if (!allowedUnits || allowedUnits.length === 0) {
+      throw new ForbiddenException(
+        `No unit scopes configured for role ${actorRole}`,
+      );
+    }
+    const allowed = new Set(allowedUnits.map((u) => u.toLowerCase()));
+
+    if (actorRole === AppRole.SELECTION_COMMITTEE) {
+      // Selection committee assignment is scoped to originator unit.
+      const unit = this.normalizeUnitCode(current?.unit);
+      if (!unit || !allowed.has(unit.toLowerCase())) {
+        throw new ForbiddenException(
+          `Selection Committee is not allowed for unit "${unit || 'NA'}"`,
+        );
+      }
+      return;
+    }
+
+    // Unit coordinator action:
+    // - Approve/reject bound to originator unit
+    // - Later coordinator actions bound to assignedUnit (if set) else originator unit
+    const unit = this.coordinatorRoutingUnitForNextStatus(current, nextStatus);
+    if (!unit || !allowed.has(unit.toLowerCase())) {
+      throw new ForbiddenException(
+        `Unit Coordinator is not allowed for unit "${unit || 'NA'}"`,
+      );
+    }
+  }
+
+  private approvalsComplete(row: any): boolean {
+    const required = Array.isArray(row?.requiredApprovals)
+      ? (row.requiredApprovals as string[])
+      : [];
+    if (required.length === 0) return true;
+    const approvals =
+      (row?.approvals as Record<string, boolean> | null | undefined) ?? {};
+    return required.every((r) => Boolean(approvals?.[r]));
+  }
 
   async create(
     dto: CreateSuggestionDto,
@@ -136,8 +246,50 @@ export class SuggestionsService {
     return { ideaFolder: expected, ideaPaths: paths };
   }
 
-  async list(role?: AppRole, currentUserName?: string) {
+  async list(role?: AppRole, currentUserName?: string, userId?: string) {
+    if (!role) {
+      return await this.prisma.suggestion.findMany({
+        orderBy: { createdAt: 'desc' },
+        include: {
+          implementedKaizen: {
+            select: {
+              implementedCode: true,
+              ideaCode: true,
+            },
+          },
+        },
+      });
+    }
+
+    const allowedUnits = await this.getAllowedUnitsForRole(userId, role);
+
+    // For unit-scoped roles, if there are no scopes configured, return empty list
+    // (prevents “all-unit visibility” until admin assigns scopes).
+    if (
+      (role === AppRole.UNIT_COORDINATOR ||
+        role === AppRole.SELECTION_COMMITTEE) &&
+      (!allowedUnits || allowedUnits.length === 0)
+    ) {
+      return [];
+    }
+
+    // Default: fetch within unit(s) first (keeps results bounded), then apply remaining role/status logic.
+    // Coordinator can see items from either originator unit (early stages) or assignedUnit (later stages),
+    // so we broaden the unit filter across both fields.
+    const baseWhere: any = {};
+    if (allowedUnits?.length) {
+      if (role === AppRole.UNIT_COORDINATOR) {
+        baseWhere.OR = [
+          { unit: { in: allowedUnits } },
+          { assignedUnit: { in: allowedUnits } },
+        ];
+      } else if (role === AppRole.SELECTION_COMMITTEE) {
+        baseWhere.unit = { in: allowedUnits };
+      }
+    }
+
     const suggestions = await this.prisma.suggestion.findMany({
+      where: baseWhere,
       orderBy: { createdAt: 'desc' },
       include: {
         implementedKaizen: {
@@ -148,7 +300,17 @@ export class SuggestionsService {
         },
       },
     });
-    if (!role) return suggestions;
+
+    if (role === AppRole.UNIT_COORDINATOR && allowedUnits?.length) {
+      const allowed = new Set(allowedUnits.map((u) => u.toLowerCase()));
+      return suggestions.filter((s: any) => {
+        const unitForStage = this.coordinatorRoutingUnitForStatus(s);
+        if (!unitForStage) return false;
+        if (!allowed.has(unitForStage.toLowerCase())) return false;
+        return this.filterByRole(role, s as any, currentUserName);
+      });
+    }
+
     return suggestions.filter((s) =>
       this.filterByRole(role, s as any, currentUserName),
     );
@@ -168,13 +330,14 @@ export class SuggestionsService {
     });
   }
 
-  async updateStatus(id: string, dto: UpdateSuggestionStatusDto) {
+  async updateStatus(id: string, dto: UpdateSuggestionStatusDto, actorUserId?: string) {
     const suggestion = await this.prisma.suggestion.findUnique({
       where: { id },
     });
     if (!suggestion) throw new NotFoundException('Suggestion not found');
 
     const current = suggestion as any;
+    await this.assertUnitScopeAllowed(actorUserId, dto.actor.role, current, dto.status);
     this.assertTransitionAllowed(current.status, dto.status, dto.actor.role);
 
     const rawExtra = (dto.extraData ?? {}) as Record<string, unknown>;
@@ -231,8 +394,11 @@ export class SuggestionsService {
           throw new BadRequestException('Remarks are required when marking as not approved.');
         }
       }
-      // 4) Finance/HOD sends back during approvals
-      if (dto.status === AppStatus.BE_EVALUATION_PENDING) {
+      // 4) Functional approver sends back during approvals (VERIFIED -> BE_REVIEW_DONE)
+      if (
+        current.status === AppStatus.VERIFIED_PENDING_APPROVAL &&
+        dto.status === AppStatus.BE_REVIEW_DONE
+      ) {
         const remark = String((safeExtra as any).beReviewNotes ?? '').trim();
         if (!remark) {
           throw new BadRequestException('Remarks are required when marking as not approved.');
@@ -255,6 +421,19 @@ export class SuggestionsService {
         }
       }
 
+      // --- Guard: only move to BE Head evaluation after approvals are complete ---
+      if (
+        current.status === AppStatus.VERIFIED_PENDING_APPROVAL &&
+        dto.status === AppStatus.BE_EVALUATION_PENDING
+      ) {
+        const after = { ...(current as any), ...(safeExtra as any) };
+        if (!this.approvalsComplete(after)) {
+          throw new BadRequestException(
+            'All required approvals must be completed before BE Head evaluation.',
+          );
+        }
+      }
+
       const updated = await tx.suggestion.update({
         where: { id },
         data: {
@@ -274,32 +453,40 @@ export class SuggestionsService {
           const employeeCode = String((safeExtra as any).assignedImplementerCode);
           const user = await tx.user.findUnique({ where: { employeeCode } });
           if (user) {
-            const role = await tx.role.upsert({
-              where: { code: RoleCode.IMPLEMENTER },
-              update: { name: 'Implementer' },
-              create: {
-                code: RoleCode.IMPLEMENTER,
-                name: 'Implementer',
-                description: 'Auto-assigned when work is assigned',
-              },
-            });
-            await tx.userRoleMapping.upsert({
-              where: {
-                userId_roleId: {
+            const isSuperAdmin = (await tx.userRoleMapping.count({
+              where: { userId: user.id, role: { code: RoleCode.SUPER_ADMIN } },
+            })) > 0;
+            if (isSuperAdmin) {
+              // SUPER_ADMIN must not get additional roles.
+              // Skip role auto-grant.
+            } else {
+              const role = await tx.role.upsert({
+                where: { code: RoleCode.IMPLEMENTER },
+                update: { name: 'Implementer' },
+                create: {
+                  code: RoleCode.IMPLEMENTER,
+                  name: 'Implementer',
+                  description: 'Auto-assigned when work is assigned',
+                },
+              });
+              await tx.userRoleMapping.upsert({
+                where: {
+                  userId_roleId: {
+                    userId: user.id,
+                    roleId: role.id,
+                  },
+                },
+                update: {
+                  assignedBy: 'AUTO_ASSIGN_IMPLEMENTER',
+                  assignedAt: new Date(),
+                },
+                create: {
                   userId: user.id,
                   roleId: role.id,
+                  assignedBy: 'AUTO_ASSIGN_IMPLEMENTER',
                 },
-              },
-              update: {
-                assignedBy: 'AUTO_ASSIGN_IMPLEMENTER',
-                assignedAt: new Date(),
-              },
-              create: {
-                userId: user.id,
-                roleId: role.id,
-                assignedBy: 'AUTO_ASSIGN_IMPLEMENTER',
-              },
-            });
+              });
+            }
           }
         } catch (e: any) {
           // Assignment should not fail just because role auto-grant failed.
@@ -487,11 +674,18 @@ export class SuggestionsService {
       );
     }
     if (role === AppRole.UNIT_COORDINATOR) {
+      // Coordinator view should focus on approval/workflow actions (not the coordinator's own submissions).
+      // Own ideas remain visible under the Employee role view.
+      const isOwn =
+        currentUserName &&
+        String(suggestion.employeeName || '').trim().toLowerCase() ===
+          currentUserName.trim().toLowerCase();
+      if (isOwn) return false;
       return [
         AppStatus.IDEA_SUBMITTED,
+        AppStatus.APPROVED_FOR_ASSIGNMENT,
         AppStatus.BE_REVIEW_DONE,
-        AppStatus.REWARD_PENDING,
-        AppStatus.REWARDED,
+        AppStatus.IMPLEMENTATION_DONE,
       ].includes(suggestion.status);
     }
     if (role === AppRole.SELECTION_COMMITTEE)
@@ -577,26 +771,20 @@ export class SuggestionsService {
         AppRole.BUSINESS_EXCELLENCE,
         AppRole.ADMIN,
       ],
-      [`${AppStatus.BE_REVIEW_DONE}->${AppStatus.BE_EVALUATION_PENDING}`]: [
+      // Unit Coordinator routes to functional approvals after BE Member review
+      [`${AppStatus.BE_REVIEW_DONE}->${AppStatus.VERIFIED_PENDING_APPROVAL}`]: [
         AppRole.UNIT_COORDINATOR,
         AppRole.ADMIN,
       ],
-      [`${AppStatus.VERIFIED_PENDING_APPROVAL}->${AppStatus.BE_EVALUATION_PENDING}`]: [
-        AppRole.FINANCE_HOD,
-        AppRole.QUALITY_HOD,
-        AppRole.HR_HEAD,
-        AppRole.ADMIN,
-      ],
+      // After approvals are completed, move to BE Head evaluation
+      [`${AppStatus.VERIFIED_PENDING_APPROVAL}->${AppStatus.BE_EVALUATION_PENDING}`]:
+        [AppRole.UNIT_COORDINATOR, AppRole.ADMIN, AppRole.FINANCE_HOD, AppRole.QUALITY_HOD, AppRole.HR_HEAD],
       [`${AppStatus.BE_EVALUATION_PENDING}->${AppStatus.VERIFIED_PENDING_APPROVAL}`]: [
         AppRole.BUSINESS_EXCELLENCE_HEAD,
         AppRole.ADMIN,
       ],
       [`${AppStatus.BE_EVALUATION_PENDING}->${AppStatus.REWARD_PENDING}`]: [
         AppRole.BUSINESS_EXCELLENCE_HEAD,
-        AppRole.ADMIN,
-      ],
-      [`${AppStatus.VERIFIED_PENDING_APPROVAL}->${AppStatus.REWARD_PENDING}`]: [
-        AppRole.FINANCE_HOD,
         AppRole.ADMIN,
       ],
       [`${AppStatus.REWARD_PENDING}->${AppStatus.REWARDED}`]: [
@@ -689,9 +877,9 @@ export class SuggestionsService {
     if (status === AppStatus.BE_REVIEW_DONE)
       return 'completed BE review and routed to Unit Coordinator';
     if (status === AppStatus.VERIFIED_PENDING_APPROVAL)
-      return 'approved after BE review and routed for BE scoring';
+      return 'routed for functional approvals';
     if (status === AppStatus.BE_EVALUATION_PENDING)
-      return 'moved to final BE evaluation and scoring';
+      return 'moved to BE Head evaluation and scoring';
     if (status === AppStatus.REWARD_PENDING)
       return 'completed BE evaluation and moved to reward processing';
     if (status === AppStatus.REWARDED) return 'closed idea with reward';

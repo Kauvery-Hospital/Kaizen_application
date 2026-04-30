@@ -223,6 +223,7 @@ export type ViewType =
   | 'pipeline'
   | 'be-overview'
   | 'users'
+  | 'role-list'
   | 'template';
 
 export interface User {

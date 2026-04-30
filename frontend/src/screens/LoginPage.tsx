@@ -172,10 +172,13 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
       setRoleChoices(finalRoles);
       setPassword('');
 
-      // Default behavior: if user has multiple roles, login as EMPLOYEE (if present).
-      // Otherwise, fallback to the first assigned role.
-      const preferred =
-        finalRoles.includes(Role.EMPLOYEE) ? Role.EMPLOYEE : finalRoles[0];
+      // Default behavior: prefer Admin when present (covers SUPER_ADMIN -> Admin mapping),
+      // otherwise prefer Employee if present, else fallback to the first assigned role.
+      const preferred = finalRoles.includes(Role.ADMIN)
+        ? Role.ADMIN
+        : finalRoles.includes(Role.EMPLOYEE)
+          ? Role.EMPLOYEE
+          : finalRoles[0];
       setSelectedRole(preferred);
       finishLogin(data.user, data.accessToken, preferred, finalRoles);
     } catch (err) {

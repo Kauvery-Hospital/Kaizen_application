@@ -45,6 +45,7 @@ services:
       # Optional: HRMS mirror / bootstrap (see backend/.env.example)
       HRMS_DATABASE_URL: ${HRMS_DATABASE_URL:-}
       HRMS_SYNC_CRON: ${HRMS_SYNC_CRON:-0 */30 * * * *}
+      MOBILE_IDEA_SYNC_CRON: ${MOBILE_IDEA_SYNC_CRON:-0 */5 * * * *}
       # Create/ensure a SUPER_ADMIN user on startup (dev-friendly).
       # Override in docker.env for production (or set to false and manage users manually).
       SUPER_ADMIN_BOOTSTRAP_ENABLED: ${SUPER_ADMIN_BOOTSTRAP_ENABLED:-true}

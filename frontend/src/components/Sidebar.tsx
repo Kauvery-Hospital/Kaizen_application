@@ -95,8 +95,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
       ? [{ id: 'be-overview', label: 'BE Overview', icon: 'manage_search' }]
       : []),
     { id: 'list', label: 'All Suggestions', icon: 'format_list_bulleted' },
-    ...(currentRole === Role.ADMIN
-      ? [{ id: 'users', label: 'User Management', icon: 'manage_accounts' }]
+    ...(currentRole === Role.ADMIN || currentRole === Role.SUPER_ADMIN
+      ? [
+          { id: 'role-list', label: 'Role List', icon: 'shield' },
+          { id: 'users', label: 'User Management', icon: 'manage_accounts' },
+        ]
       : []),
   ];
 

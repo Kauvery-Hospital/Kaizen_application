@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { mkdir, readFile, writeFile } from 'fs/promises';
+import { mkdir, readFile, readdir, unlink, writeFile } from 'fs/promises';
 import { extname, join } from 'path';
 import PptxGenJS from 'pptxgenjs';
 import { PDFDocument } from 'pdf-lib';
@@ -579,12 +579,17 @@ export class PptxExportService {
     // Wide layout is 13.33 x 7.5 in pptxgenjs
     const W = 13.33;
     const H = 7.5;
+    const M = 0.08; // small margin to avoid edge clipping in viewers
+    const maxW = W - M * 2;
+    const maxH = H - M * 2;
 
     for (const dataUri of list) {
       const uri = String(dataUri || '').trim();
       if (!uri.startsWith('data:image/')) continue;
       const slide = pptx.addSlide();
-      slide.addImage({ data: uri, x: 0, y: 0, w: W, h: H });
+      // Always fit the captured slide image inside a safe frame.
+      // This guarantees no cropping across PPT viewers even if the PNG aspect ratio is slightly off.
+      slide.addImage({ data: uri, x: M, y: M, w: maxW, h: maxH });
     }
 
     if (list.length === 0) {
@@ -596,27 +601,118 @@ export class PptxExportService {
     return Buffer.from(out);
   }
 
-  private decodeDataUriToBytes(dataUri: string): Uint8Array | null {
+  private tryGetImageSize(
+    mime: string,
+    bytes: Uint8Array,
+  ): { width: number; height: number } | null {
+    const m = String(mime || '').toLowerCase();
+    if (m === 'image/png') return this.tryGetPngSize(bytes);
+    if (m === 'image/jpeg' || m === 'image/jpg') return this.tryGetJpegSize(bytes);
+    return null;
+  }
+
+  private tryGetPngSize(bytes: Uint8Array): { width: number; height: number } | null {
+    // PNG signature: 89 50 4E 47 0D 0A 1A 0A
+    if (!bytes || bytes.length < 24) return null;
+    if (
+      bytes[0] !== 0x89 ||
+      bytes[1] !== 0x50 ||
+      bytes[2] !== 0x4e ||
+      bytes[3] !== 0x47 ||
+      bytes[4] !== 0x0d ||
+      bytes[5] !== 0x0a ||
+      bytes[6] !== 0x1a ||
+      bytes[7] !== 0x0a
+    ) {
+      return null;
+    }
+    // First chunk should be IHDR at offset 12 (after 8-byte sig + 4-byte length)
+    const t0 = String.fromCharCode(bytes[12], bytes[13], bytes[14], bytes[15]);
+    if (t0 !== 'IHDR') return null;
+    try {
+      const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+      const width = dv.getUint32(16, false);
+      const height = dv.getUint32(20, false);
+      if (!width || !height) return null;
+      return { width, height };
+    } catch {
+      return null;
+    }
+  }
+
+  private tryGetJpegSize(bytes: Uint8Array): { width: number; height: number } | null {
+    // Minimal JPEG SOF parser (supports baseline/progressive SOF markers)
+    if (!bytes || bytes.length < 4) return null;
+    if (bytes[0] !== 0xff || bytes[1] !== 0xd8) return null; // SOI
+    let i = 2;
+    while (i + 9 < bytes.length) {
+      if (bytes[i] !== 0xff) {
+        i++;
+        continue;
+      }
+      const marker = bytes[i + 1];
+      // Standalone markers: restart markers + TEM
+      if (marker === 0xd9) break; // EOI
+      if (marker >= 0xd0 && marker <= 0xd7) {
+        i += 2;
+        continue;
+      }
+      const len = (bytes[i + 2] << 8) | bytes[i + 3];
+      if (len < 2) return null;
+      const isSof =
+        marker === 0xc0 ||
+        marker === 0xc1 ||
+        marker === 0xc2 ||
+        marker === 0xc3 ||
+        marker === 0xc5 ||
+        marker === 0xc6 ||
+        marker === 0xc7 ||
+        marker === 0xc9 ||
+        marker === 0xca ||
+        marker === 0xcb ||
+        marker === 0xcd ||
+        marker === 0xce ||
+        marker === 0xcf;
+      if (isSof) {
+        const height = (bytes[i + 5] << 8) | bytes[i + 6];
+        const width = (bytes[i + 7] << 8) | bytes[i + 8];
+        if (!width || !height) return null;
+        return { width, height };
+      }
+      i += 2 + len;
+    }
+    return null;
+  }
+
+  private decodeDataUri(
+    dataUri: string,
+  ): { mime: string; bytes: Uint8Array } | null {
     const s = String(dataUri || '').trim();
     const m = s.match(/^data:([a-zA-Z0-9/+.-]+);base64,(.+)$/);
     if (!m) return null;
+    const mime = m[1];
     const b64 = m[2];
     try {
-      return Uint8Array.from(Buffer.from(b64, 'base64'));
+      return { mime, bytes: Uint8Array.from(Buffer.from(b64, 'base64')) };
     } catch {
       return null;
     }
   }
 
   async buildRenderedSlidesPdf(slides: string[]): Promise<Buffer> {
-    const list = Array.isArray(slides) ? slides.filter(Boolean) : [];
+    // The 4th sheet (index 3) is the "before/after process video" page.
+    // In some environments html-to-image capture of that sheet can produce a blank/white image.
+    // PPT output can still include it, but for PDF exports we intentionally drop that sheet.
+    const list = Array.isArray(slides)
+      ? slides.filter(Boolean).filter((_, idx) => idx !== 3)
+      : [];
     const pdfDoc = await PDFDocument.create();
 
     for (const dataUri of list) {
-      const bytes = this.decodeDataUriToBytes(dataUri);
-      if (!bytes) continue;
+      const decoded = this.decodeDataUri(dataUri);
+      if (!decoded?.bytes) continue;
       // html-to-image exports PNG by default; embed as PNG
-      const img = await pdfDoc.embedPng(bytes);
+      const img = await pdfDoc.embedPng(decoded.bytes);
       const { width, height } = img.size();
       const page = pdfDoc.addPage([width, height]);
       page.drawImage(img, { x: 0, y: 0, width, height });
@@ -644,27 +740,53 @@ export class PptxExportService {
     const uploadRoot = this.config.get<string>('uploadRoot');
     if (!uploadRoot) throw new NotFoundException('Upload root not configured');
 
-    const employeeCode =
-      String(suggestion.assignedImplementerCode || 'UNKNOWN').trim() || 'UNKNOWN';
+    const employeeCode = String(suggestion.assignedImplementerCode || 'UNKNOWN')
+      .trim()
+      .replace(/[^a-zA-Z0-9_-]/g, '') || 'UNKNOWN';
 
     const safeBase = String(fileNameBaseRaw || suggestion.code || suggestionId)
       .trim()
       .replace(/[^a-zA-Z0-9-_]/g, '')
       .slice(0, 60);
-    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
 
     const relDir = `kaizen/${employeeCode}/kaizen_template/final`;
     const absDir = join(uploadRoot, ...relDir.split('/'));
     await mkdir(absDir, { recursive: true });
 
-    const pptFile = `${safeBase || 'kaizen'}_${stamp}.pptx`;
-    const pdfFile = `${safeBase || 'kaizen'}_${stamp}.pdf`;
+    // Deterministic filenames so "final" truly replaces (no file growth).
+    const pptFile = `${safeBase || 'kaizen'}.pptx`;
+    const pdfFile = `${safeBase || 'kaizen'}.pdf`;
 
     const pptBuf = await this.buildRenderedSlidesPptx(slides);
     const pdfBuf = await this.buildRenderedSlidesPdf(slides);
 
     const absPpt = join(absDir, pptFile);
     const absPdf = join(absDir, pdfFile);
+
+    // Clean up old exports in the final folder (best-effort).
+    // We intentionally keep only ONE final PPT + PDF in this directory.
+    try {
+      const items = await readdir(absDir, { withFileTypes: true });
+      const deletions = items
+        .filter((d) => d.isFile())
+        .map((d) => d.name)
+        .filter((name) => {
+          const n = name.toLowerCase();
+          return n.endsWith('.pptx') || n.endsWith('.ppt') || n.endsWith('.pdf');
+        })
+        .filter((name) => name !== pptFile && name !== pdfFile)
+        .map(async (name) => {
+          try {
+            await unlink(join(absDir, name));
+          } catch {
+            // ignore missing/locked files
+          }
+        });
+      await Promise.all(deletions);
+    } catch {
+      // ignore cleanup failures; overwrite will still happen
+    }
+
     await writeFile(absPpt, pptBuf);
     await writeFile(absPdf, pdfBuf);
 
@@ -675,7 +797,11 @@ export class PptxExportService {
       ? (suggestion.templateAttachmentPaths as any)
       : [];
 
-    const next = Array.from(new Set([...existing, pptPath, pdfPath]));
+    // Replace previous FINAL exports in DB (avoid appending on every re-finalize).
+    const keepNonFinal = existing.filter(
+      (p) => !String(p || '').replace(/\\/g, '/').startsWith(`${relDir}/`),
+    );
+    const next = [...keepNonFinal, pptPath, pdfPath];
     await this.prisma.suggestion.update({
       where: { id: suggestionId },
       data: { templateAttachmentPaths: next as any },

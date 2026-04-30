@@ -13,6 +13,7 @@ import { WorkflowModule } from './modules/workflow/workflow.module';
 import { AttachmentsModule } from './modules/attachments/attachments.module';
 import { HrmsSyncModule } from './modules/hrms-sync/hrms-sync.module';
 import { AiModule } from './modules/ai/ai.module';
+import { MobileIdeasSyncModule } from './modules/mobile-ideas-sync/mobile-ideas-sync.module';
 
 @Module({
   imports: [
@@ -27,6 +28,7 @@ import { AiModule } from './modules/ai/ai.module';
     AttachmentsModule,
     HrmsSyncModule,
     AiModule,
+    MobileIdeasSyncModule,
   ],
   controllers: [AppController],
   providers: [AppService],

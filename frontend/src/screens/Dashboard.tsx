@@ -33,6 +33,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ suggestions: allSuggestion
   const [toDate, setToDate] = useState('');
   const [selectedUnit, setSelectedUnit] = useState('');
   const [selectedDepartment, setSelectedDepartment] = useState('');
+  const [coordinatorQueueTab, setCoordinatorQueueTab] = useState<'pending' | 'approved'>('pending');
 
   const unitOptions = useMemo(
     () => Array.from(new Set(allSuggestions.map(s => s.unit).filter(Boolean))).sort(),
@@ -154,11 +155,28 @@ export const Dashboard: React.FC<DashboardProps> = ({ suggestions: allSuggestion
     }
 
     if (role === Role.UNIT_COORDINATOR) {
+      const ideasReceived = submitted;
+      const approvedCount = suggestions.filter((s) =>
+        [
+          Status.APPROVED_FOR_ASSIGNMENT,
+          Status.ASSIGNED_FOR_IMPLEMENTATION,
+          Status.IMPLEMENTATION_DONE,
+          Status.BE_REVIEW_DONE,
+          Status.VERIFIED_PENDING_APPROVAL,
+          Status.BE_EVALUATION_PENDING,
+          Status.REWARD_PENDING,
+          Status.REWARDED,
+        ].includes(s.status),
+      ).length;
+      const balanceApproval = suggestions.filter((s) =>
+        [Status.IDEA_SUBMITTED, Status.BE_REVIEW_DONE, Status.IMPLEMENTATION_DONE].includes(
+          s.status,
+        ),
+      ).length;
       return [
-        { label: 'Ideas Received', value: submitted, color: 'text-gray-900' },
-        { label: 'Approved by Coordinator', value: approved, color: 'text-blue-800' },
-        { label: 'Pending Coordinator Action', value: suggestions.filter(s => [Status.IDEA_SUBMITTED, Status.IMPLEMENTATION_DONE].includes(s.status)).length, color: 'text-orange-700' },
-        { label: 'Rewarded / Closed', value: rewarded, color: 'text-green-800' },
+        { label: 'Ideas Received', value: ideasReceived, color: 'text-gray-900' },
+        { label: 'Approved', value: approvedCount, color: 'text-blue-800' },
+        { label: 'Balance Approval', value: balanceApproval, color: 'text-orange-700' },
       ];
     }
 
@@ -293,16 +311,26 @@ export const Dashboard: React.FC<DashboardProps> = ({ suggestions: allSuggestion
     }
 
     if (role === Role.UNIT_COORDINATOR) {
-      return {
-        title: 'Coordinator actions',
-        hint: 'Approve new ideas and verify implemented templates.',
-        items: take(
-          byNewest.filter((s) =>
-            [Status.IDEA_SUBMITTED, Status.BE_REVIEW_DONE, Status.IMPLEMENTATION_DONE].includes(
-              s.status,
-            ),
-          ),
+      const pending = byNewest.filter((s) =>
+        [Status.IDEA_SUBMITTED, Status.BE_REVIEW_DONE, Status.IMPLEMENTATION_DONE].includes(
+          s.status,
         ),
+      );
+      const approved = byNewest.filter((s) => s.status === Status.APPROVED_FOR_ASSIGNMENT);
+      return {
+        title:
+          coordinatorQueueTab === 'approved'
+            ? 'Approved ideas'
+            : 'Coordinator actions',
+        hint:
+          coordinatorQueueTab === 'approved'
+            ? 'Ideas approved by you (waiting for Selection Committee assignment).'
+            : 'Approve new ideas and verify implemented templates.',
+        items: take(coordinatorQueueTab === 'approved' ? approved : pending),
+        meta: {
+          pendingCount: pending.length,
+          approvedCount: approved.length,
+        },
       };
     }
 
@@ -335,7 +363,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ suggestions: allSuggestion
       hint: 'Latest ideas across the system.',
       items: take(byNewest),
     };
-  }, [suggestions, role]);
+  }, [suggestions, role, coordinatorQueueTab]);
 
   const showInsightsCharts = useMemo(() => {
     // Charts are most useful for Admin / Coordinator / BE roles; keep employee/implementer dashboards focused.
@@ -486,7 +514,15 @@ export const Dashboard: React.FC<DashboardProps> = ({ suggestions: allSuggestion
       </div>
 
       {/* KPI Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+      <div
+        className={`grid grid-cols-1 gap-6 ${
+          roleKpis.length === 3
+            ? 'md:grid-cols-3'
+            : roleKpis.length === 2
+              ? 'md:grid-cols-2'
+              : 'md:grid-cols-4'
+        }`}
+      >
         {roleKpis.map((kpi, idx) => (
           <div key={kpi.label} className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 flex items-center justify-between">
               <div>
@@ -507,7 +543,47 @@ export const Dashboard: React.FC<DashboardProps> = ({ suggestions: allSuggestion
         <div className="lg:col-span-2 bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
           <div className="p-6 border-b border-gray-200 flex items-start justify-between gap-4">
             <div>
-              <h3 className="text-lg font-black text-gray-900">{actionQueue.title}</h3>
+              <div className="flex items-center gap-3 flex-wrap">
+                <h3 className="text-lg font-black text-gray-900">{actionQueue.title}</h3>
+                {role === Role.UNIT_COORDINATOR && (
+                  <div className="inline-flex rounded-xl border border-gray-200 bg-white overflow-hidden">
+                    <button
+                      type="button"
+                      onClick={() => setCoordinatorQueueTab('pending')}
+                      className={`px-3 py-1.5 text-xs font-extrabold ${
+                        coordinatorQueueTab === 'pending'
+                          ? 'bg-kauvery-purple text-white'
+                          : 'text-gray-900 hover:bg-gray-50'
+                      }`}
+                      title="Ideas needing coordinator action"
+                    >
+                      Pending
+                      {typeof (actionQueue as any)?.meta?.pendingCount === 'number' && (
+                        <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full bg-white/20 border border-white/20 text-[10px] font-black">
+                          {(actionQueue as any).meta.pendingCount}
+                        </span>
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCoordinatorQueueTab('approved')}
+                      className={`px-3 py-1.5 text-xs font-extrabold border-l border-gray-200 ${
+                        coordinatorQueueTab === 'approved'
+                          ? 'bg-kauvery-purple text-white'
+                          : 'text-gray-900 hover:bg-gray-50'
+                      }`}
+                      title="Ideas approved by coordinator"
+                    >
+                      Approved
+                      {typeof (actionQueue as any)?.meta?.approvedCount === 'number' && (
+                        <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full bg-white/20 border border-white/20 text-[10px] font-black">
+                          {(actionQueue as any).meta.approvedCount}
+                        </span>
+                      )}
+                    </button>
+                  </div>
+                )}
+              </div>
               <p className="text-xs text-gray-600 font-semibold mt-1">{actionQueue.hint}</p>
             </div>
             <div className="text-[11px] font-black text-gray-500 uppercase tracking-wide">

@@ -393,11 +393,13 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
 
   // 4. Coordinator: Verify and Select Approvers
   const handleVerification = () => {
-      onUpdateStatus(suggestion.id, Status.BE_EVALUATION_PENDING, {
-          coordinatorSuggestion,
-          approvals: {},
-          // Populate template footer "Validated By — Department In-charger / HOD" with the approving Unit Coordinator.
-          validatedBy: suggestion.validatedBy || currentUserName || 'Unit Coordinator',
+      onUpdateStatus(suggestion.id, Status.VERIFIED_PENDING_APPROVAL, {
+        coordinatorSuggestion,
+        approvals: {},
+        requiredApprovals: selectedApprovers,
+        hodApproverNames,
+        // Populate template footer "Validated By — Department In-charger / HOD" with the approving Unit Coordinator.
+        validatedBy: suggestion.validatedBy || currentUserName || 'Unit Coordinator',
       });
   };
 
@@ -446,15 +448,11 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
       const nextApprovals = { ...(suggestion.approvals || {}), [r]: true };
       const req = suggestion.requiredApprovals || [];
       const allDone = req.every((x) => nextApprovals?.[x]);
-      if (r === Role.FINANCE_HOD && allDone) {
-        await onUpdateStatus(suggestion.id, Status.REWARD_PENDING, {
-          approvals: nextApprovals,
-        });
-      } else {
-        await onUpdateStatus(suggestion.id, Status.VERIFIED_PENDING_APPROVAL, {
-          approvals: nextApprovals,
-        });
-      }
+      await onUpdateStatus(
+        suggestion.id,
+        allDone ? Status.BE_EVALUATION_PENDING : Status.VERIFIED_PENDING_APPROVAL,
+        { approvals: nextApprovals },
+      );
       showToast('success', 'Approval recorded');
       setApprovalRemarks('');
     } catch (e: any) {
@@ -469,10 +467,11 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
       return;
     }
     try {
-      await onUpdateStatus(suggestion.id, Status.BE_EVALUATION_PENDING, {
+      // Send back to Unit Coordinator for re-routing / clarification.
+      await onUpdateStatus(suggestion.id, Status.BE_REVIEW_DONE, {
         beReviewNotes: remark,
       });
-      showToast('success', 'Sent back to BE Head');
+      showToast('success', 'Sent back to Unit Coordinator');
       setApprovalRemarks('');
     } catch (e: any) {
       showToast('error', e?.message || 'Failed to send back');
@@ -531,6 +530,9 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
   const pendingApprovers =
     suggestion.requiredApprovals?.filter(r => !suggestion.approvals?.[r]) || [];
 
+  const nextApprover =
+    pendingApprovers.length > 0 ? pendingApprovers[0] : null;
+
   const getCurrentOwner = () => {
     if (suggestion.status === Status.IDEA_SUBMITTED) return Role.UNIT_COORDINATOR;
     if (suggestion.status === Status.APPROVED_FOR_ASSIGNMENT) return Role.SELECTION_COMMITTEE;
@@ -539,8 +541,8 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
     }
     if (suggestion.status === Status.IMPLEMENTATION_DONE) return Role.BUSINESS_EXCELLENCE;
     if (suggestion.status === Status.BE_REVIEW_DONE) return Role.UNIT_COORDINATOR;
-    if (suggestion.status === Status.VERIFIED_PENDING_APPROVAL) return Role.BUSINESS_EXCELLENCE_HEAD;
     if (suggestion.status === Status.BE_EVALUATION_PENDING) return Role.BUSINESS_EXCELLENCE_HEAD;
+    if (suggestion.status === Status.VERIFIED_PENDING_APPROVAL) return nextApprover || Role.QUALITY_HOD;
     if (suggestion.status === Status.REWARD_PENDING) return 'HR';
     if (suggestion.status === Status.REWARDED) return 'Closed';
     if (suggestion.status === Status.IDEA_REJECTED) return 'Closed';
@@ -553,8 +555,11 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
     if (suggestion.status === Status.ASSIGNED_FOR_IMPLEMENTATION) return 'Complete Kaizen template';
     if (suggestion.status === Status.IMPLEMENTATION_DONE) return 'BE review/edit template and approve to Unit Coordinator';
     if (suggestion.status === Status.BE_REVIEW_DONE) return 'Unit Coordinator approval after BE review';
-    if (suggestion.status === Status.VERIFIED_PENDING_APPROVAL) return 'Pending BE final scoring';
     if (suggestion.status === Status.BE_EVALUATION_PENDING) return 'Business Excellence Head final scoring and evaluation';
+    if (suggestion.status === Status.VERIFIED_PENDING_APPROVAL) {
+      if (nextApprover) return `Pending functional approval: ${String(nextApprover)}`;
+      return 'Pending functional approvals';
+    }
     if (suggestion.status === Status.REWARD_PENDING) return 'HR process payment and notify employee';
     if (suggestion.status === Status.REWARDED) return 'Completed';
     if (suggestion.status === Status.IDEA_REJECTED) return 'Rejected';
@@ -630,16 +635,28 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
       state: 'pending',
     },
     {
-      id: 'functional',
+      id: 'coordinator',
       title: 'Unit Coordinator Approval',
       owner: Role.UNIT_COORDINATOR,
-      statuses: [Status.VERIFIED_PENDING_APPROVAL, Status.BE_EVALUATION_PENDING, Status.REWARD_PENDING, Status.REWARDED],
+      statuses: [
+        Status.BE_EVALUATION_PENDING,
+        Status.VERIFIED_PENDING_APPROVAL,
+        Status.REWARD_PENDING,
+        Status.REWARDED,
+      ],
       state: 'pending',
     },
     {
-      id: 'be',
-      title: 'Business Excellence Head Evaluation',
+      id: 'be_head',
+      title: 'BE Head Evaluation',
       owner: Role.BUSINESS_EXCELLENCE_HEAD,
+      statuses: [Status.VERIFIED_PENDING_APPROVAL, Status.REWARD_PENDING, Status.REWARDED],
+      state: 'pending',
+    },
+    {
+      id: 'approvals',
+      title: 'Functional Approvals',
+      owner: (nextApprover || Role.QUALITY_HOD) as any,
       statuses: [Status.REWARD_PENDING, Status.REWARDED],
       state: 'pending',
     },
@@ -659,8 +676,9 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
       (step.id === 'screening' && suggestion.status === Status.IDEA_SUBMITTED) ||
       (step.id === 'assignment' && suggestion.status === Status.APPROVED_FOR_ASSIGNMENT) ||
       (step.id === 'implementation' && suggestion.status === Status.ASSIGNED_FOR_IMPLEMENTATION) ||
-      (step.id === 'functional' && suggestion.status === Status.BE_REVIEW_DONE) ||
-      (step.id === 'be' && (suggestion.status === Status.VERIFIED_PENDING_APPROVAL || suggestion.status === Status.BE_EVALUATION_PENDING)) ||
+      (step.id === 'coordinator' && suggestion.status === Status.BE_REVIEW_DONE) ||
+      (step.id === 'be_head' && suggestion.status === Status.BE_EVALUATION_PENDING) ||
+      (step.id === 'approvals' && suggestion.status === Status.VERIFIED_PENDING_APPROVAL) ||
       (step.id === 'reward' && suggestion.status === Status.REWARD_PENDING)
     ) {
       return { ...step, state: 'current' as const };
@@ -675,6 +693,13 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
     if (role === Role.BUSINESS_EXCELLENCE && suggestion.status === Status.IMPLEMENTATION_DONE) return { canAct: true, message: 'Review template, edit if needed, and approve to Unit Coordinator.' };
     if (role === Role.UNIT_COORDINATOR && suggestion.status === Status.BE_REVIEW_DONE) return { canAct: true, message: 'Approve after BE review and send to BE Head scoring.' };
     if (role === Role.BUSINESS_EXCELLENCE_HEAD && suggestion.status === Status.BE_EVALUATION_PENDING) return { canAct: true, message: 'Business Excellence Head evaluates score and reward.' };
+    if (
+      [Role.HR_HEAD, Role.QUALITY_HOD, Role.FINANCE_HOD].includes(role) &&
+      suggestion.status === Status.VERIFIED_PENDING_APPROVAL &&
+      pendingApprovers.includes(role)
+    ) {
+      return { canAct: true, message: 'Approve or send back for BE re-evaluation.' };
+    }
     if (role === Role.HR_HEAD && suggestion.status === Status.REWARD_PENDING) return { canAct: true, message: 'Process payment and close the idea.' };
     return { canAct: false, message: 'No action available for this role at current status.' };
   };

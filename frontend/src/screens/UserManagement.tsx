@@ -92,14 +92,25 @@ export const UserManagement: React.FC<{
   const [query, setQuery] = useState('');
   const [department, setDepartment] = useState<string>('');
   const [departments, setDepartments] = useState<string[]>([]);
+  const [units, setUnits] = useState<Array<{ code: string; name?: string }>>([]);
   const [rows, setRows] = useState<UsersApiRow[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [isSyncingMobile, setIsSyncingMobile] = useState(false);
 
   const [activeUser, setActiveUser] = useState<UsersApiRow | null>(null);
   const [selectedRoleCode, setSelectedRoleCode] = useState<BackendRoleCode>('EMPLOYEE');
   const [isSaving, setIsSaving] = useState(false);
   const [isRemoving, setIsRemoving] = useState(false);
+
+  // Unit-scoped role configuration
+  const isUnitScopedRole =
+    selectedRoleCode === 'UNIT_COORDINATOR' || selectedRoleCode === 'SELECTION_COMMITTEE';
+  const [unitScopeQuery, setUnitScopeQuery] = useState('');
+  const [selectedUnitCodes, setSelectedUnitCodes] = useState<string[]>([]);
+  const [isLoadingScopes, setIsLoadingScopes] = useState(false);
+  const [isSavingScopes, setIsSavingScopes] = useState(false);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -137,9 +148,29 @@ export const UserManagement: React.FC<{
     }
   };
 
+  const loadUnits = async () => {
+    try {
+      const res = await fetch(`${apiBase}/hrms/units`, {
+        headers: authHeaders(),
+      });
+      if (!res.ok) return;
+      const data = (await res.json()) as Array<{ code?: string; name?: string }>;
+      const clean = (Array.isArray(data) ? data : [])
+        .map((u) => ({
+          code: String(u?.code || '').trim(),
+          name: u?.name ? String(u.name) : undefined,
+        }))
+        .filter((u) => !!u.code);
+      setUnits(clean.sort((a, b) => a.code.localeCompare(b.code)));
+    } catch {
+      // non-blocking
+    }
+  };
+
   const load = async () => {
     setIsLoading(true);
     setError(null);
+    setNotice(null);
     try {
       const params = new URLSearchParams();
       if (query.trim()) params.set('search', query.trim());
@@ -157,11 +188,102 @@ export const UserManagement: React.FC<{
     }
   };
 
+  const runMobileIdeasSync = async () => {
+    setIsSyncingMobile(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const res = await fetch(`${apiBase}/mobile-ideas-sync/run-now`, {
+        method: 'POST',
+        headers: authHeaders(),
+      });
+      if (!res.ok) throw new Error(await messageFromFailedResponse(res));
+      const body = (await res.json()) as {
+        scanned?: number;
+        inserted?: number;
+        updated?: number;
+        skippedUnmappedEmployee?: number;
+      };
+      const scanned = Number(body?.scanned ?? 0);
+      const inserted = Number(body?.inserted ?? 0);
+      const updated = Number(body?.updated ?? 0);
+      const skipped = Number(body?.skippedUnmappedEmployee ?? 0);
+      setNotice(
+        `Mobile sync done. Scanned: ${scanned}, Inserted: ${inserted}, Updated: ${updated}, Skipped (unmapped employee): ${skipped}.`,
+      );
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Mobile sync failed.');
+    } finally {
+      setIsSyncingMobile(false);
+    }
+  };
+
   useEffect(() => {
     void load();
     void loadDepartments();
+    void loadUnits();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const loadUnitScopes = async (userId: string, roleCode: BackendRoleCode) => {
+    setIsLoadingScopes(true);
+    try {
+      const params = new URLSearchParams({ roleCode });
+      const res = await fetch(`${apiBase}/users/${userId}/unit-scopes?${params.toString()}`, {
+        headers: authHeaders(),
+      });
+      if (!res.ok) throw new Error(await messageFromFailedResponse(res));
+      const data = (await res.json()) as Array<{ unitCode?: string }>;
+      const codes = (Array.isArray(data) ? data : [])
+        .map((r) => String(r?.unitCode || '').trim())
+        .filter(Boolean);
+      setSelectedUnitCodes(Array.from(new Set(codes)).sort((a, b) => a.localeCompare(b)));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to load unit scopes.');
+      setSelectedUnitCodes([]);
+    } finally {
+      setIsLoadingScopes(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!activeUser) return;
+    if (!isUnitScopedRole) {
+      setSelectedUnitCodes([]);
+      setUnitScopeQuery('');
+      return;
+    }
+    void loadUnitScopes(activeUser.id, selectedRoleCode);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeUser?.id, selectedRoleCode]);
+
+  const handleSaveUnitScopes = async () => {
+    if (!activeUser) return;
+    if (!isUnitScopedRole) return;
+    setIsSavingScopes(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const res = await fetch(`${apiBase}/users/${activeUser.id}/unit-scopes`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({
+          roleCode: selectedRoleCode,
+          unitCodes: selectedUnitCodes,
+          assignedBy: 'SUPER_ADMIN_UI',
+        }),
+      });
+      if (!res.ok) throw new Error(await messageFromFailedResponse(res));
+      setNotice(
+        `${ROLE_LABEL[selectedRoleCode]} unit scopes saved (${selectedUnitCodes.length}).`,
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to save unit scopes.');
+    } finally {
+      setIsSavingScopes(false);
+    }
+  };
 
   const handleAssignRole = async () => {
     if (!activeUser) return;
@@ -254,6 +376,15 @@ export const UserManagement: React.FC<{
             />
           </div>
           <button
+            onClick={() => void runMobileIdeasSync()}
+            className="px-4 py-2.5 rounded-xl bg-white border border-gray-300 text-gray-900 font-extrabold text-sm shadow-sm hover:bg-gray-50"
+            disabled={isSyncingMobile}
+            title="Import ideas submitted from the mobile app into Kaizen portal"
+          >
+            <span className="material-icons-round text-[18px] align-[-4px] mr-1.5">sync</span>
+            {isSyncingMobile ? 'Syncing…' : 'Sync Mobile Ideas'}
+          </button>
+          <button
             onClick={() => void load()}
             className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-kauvery-purple to-kauvery-violet text-white font-extrabold text-sm shadow-lg shadow-purple-200 hover:opacity-95"
             disabled={isLoading}
@@ -266,6 +397,11 @@ export const UserManagement: React.FC<{
       {error && (
         <div className="mb-4 text-xs text-red-800 font-bold bg-red-50 border border-red-200 rounded-xl p-3">
           {error}
+        </div>
+      )}
+      {notice && (
+        <div className="mb-4 text-xs text-emerald-900 font-bold bg-emerald-50 border border-emerald-200 rounded-xl p-3">
+          {notice}
         </div>
       )}
 
@@ -402,6 +538,100 @@ export const UserManagement: React.FC<{
                   This adds an additional role (it does not remove existing roles).
                 </div>
               </div>
+
+              {isUnitScopedRole && (
+                <div className="bg-white rounded-xl border border-gray-200 p-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-xs font-black text-gray-700 uppercase tracking-wide">
+                        Unit scopes for {ROLE_LABEL[selectedRoleCode]}
+                      </div>
+                      <div className="text-[11px] text-gray-500 font-semibold mt-1">
+                        Select which unit(s) this user can act on for this role.
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => void handleSaveUnitScopes()}
+                      disabled={isLoadingScopes || isSavingScopes || isSaving || isRemoving}
+                      className="shrink-0 px-3 py-2 rounded-xl bg-white border border-gray-300 text-gray-900 font-extrabold text-xs hover:bg-gray-50 disabled:opacity-60"
+                      title="Save unit scopes"
+                    >
+                      {isSavingScopes ? 'Saving…' : 'Save scopes'}
+                    </button>
+                  </div>
+
+                  <div className="mt-3">
+                    <div className="relative">
+                      <span className="material-icons-round absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-lg">
+                        search
+                      </span>
+                      <input
+                        value={unitScopeQuery}
+                        onChange={(e) => setUnitScopeQuery(e.target.value)}
+                        placeholder="Search unit code/name…"
+                        className="w-full pl-10 pr-3 py-2 rounded-xl border border-gray-300 bg-white text-sm font-semibold text-gray-900"
+                      />
+                    </div>
+                    <div className="mt-3 max-h-44 overflow-y-auto border border-gray-200 rounded-xl bg-gray-50">
+                      {isLoadingScopes ? (
+                        <div className="px-3 py-3 text-xs text-gray-600 font-bold">
+                          Loading scopes…
+                        </div>
+                      ) : (
+                        (units.length ? units : []).filter((u) => {
+                          const q = unitScopeQuery.trim().toLowerCase();
+                          if (!q) return true;
+                          const hay = `${u.code} ${u.name || ''}`.toLowerCase();
+                          return hay.includes(q);
+                        }).map((u) => {
+                          const checked = selectedUnitCodes.includes(u.code);
+                          return (
+                            <label
+                              key={u.code}
+                              className="flex items-center gap-2 px-3 py-2 border-b border-gray-200 last:border-b-0 cursor-pointer hover:bg-white"
+                            >
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={(e) => {
+                                  const on = e.target.checked;
+                                  setSelectedUnitCodes((prev) => {
+                                    const set = new Set(prev);
+                                    if (on) set.add(u.code);
+                                    else set.delete(u.code);
+                                    return Array.from(set).sort((a, b) => a.localeCompare(b));
+                                  });
+                                }}
+                                className="accent-kauvery-purple"
+                              />
+                              <div className="min-w-0">
+                                <div className="text-xs font-extrabold text-gray-900">
+                                  {u.code}
+                                </div>
+                                {u.name && (
+                                  <div className="text-[11px] text-gray-600 font-semibold truncate">
+                                    {u.name}
+                                  </div>
+                                )}
+                              </div>
+                            </label>
+                          );
+                        })
+                      )}
+
+                      {!isLoadingScopes && units.length === 0 && (
+                        <div className="px-3 py-3 text-xs text-gray-600 font-bold">
+                          No units loaded.
+                        </div>
+                      )}
+                    </div>
+                    <div className="mt-2 text-[11px] text-gray-600 font-semibold">
+                      Selected: <span className="font-black text-gray-900">{selectedUnitCodes.length}</span>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               <div className="bg-gray-50 rounded-xl border border-gray-200 p-3">
                 <div className="text-xs font-black text-gray-600 uppercase tracking-wide mb-2">Current roles</div>

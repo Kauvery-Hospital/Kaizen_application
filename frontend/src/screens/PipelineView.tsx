@@ -25,11 +25,15 @@ const filterByRole = (
   }
 
   if (role === Role.UNIT_COORDINATOR) {
+    const isOwn =
+      currentUserName &&
+      s.employeeName.trim().toLowerCase() === currentUserName.trim().toLowerCase();
+    if (isOwn) return false;
     return [
       Status.IDEA_SUBMITTED,
+      Status.APPROVED_FOR_ASSIGNMENT,
       Status.IMPLEMENTATION_DONE,
-      Status.REWARD_PENDING,
-      Status.REWARDED,
+      Status.BE_REVIEW_DONE,
     ].includes(s.status);
   }
 
@@ -100,6 +104,9 @@ export const PipelineView: React.FC<PipelineViewProps> = ({
 }) => {
   const [search, setSearch] = useState('');
   const [deptFilter, setDeptFilter] = useState<string>('all');
+  const [coordinatorTab, setCoordinatorTab] = useState<'pending' | 'approved'>(
+    'pending',
+  );
   // For implementers, default to showing all ideas they were assigned to implement (including completed/approved).
   const [includeImplemented, setIncludeImplemented] = useState(true);
   const [implementerStageFilter, setImplementerStageFilter] = useState<
@@ -152,10 +159,24 @@ export const PipelineView: React.FC<PipelineViewProps> = ({
           if (role === Role.IMPLEMENTER && includeImplemented) {
             return isInvolvedAsImplementer(s);
           }
-          return filterByRole(role, s, {
+          const roleOk = filterByRole(role, s, {
             currentUserName,
             currentUserEmployeeCode,
           });
+          if (!roleOk) return false;
+
+          // Unit Coordinator: separate view for approved ideas vs pending actions
+          if (role === Role.UNIT_COORDINATOR) {
+            if (coordinatorTab === 'approved') {
+              return s.status === Status.APPROVED_FOR_ASSIGNMENT;
+            }
+            return [
+              Status.IDEA_SUBMITTED,
+              Status.BE_REVIEW_DONE,
+              Status.IMPLEMENTATION_DONE,
+            ].includes(s.status);
+          }
+          return true;
         })
         .filter((s) => passesImplementerStage(s))
         .filter(s =>
@@ -181,6 +202,7 @@ export const PipelineView: React.FC<PipelineViewProps> = ({
       implementerNameNorm,
       implementerCodeNorm,
       implementerStageFilter,
+      coordinatorTab,
     ]
   );
 
@@ -261,6 +283,38 @@ export const PipelineView: React.FC<PipelineViewProps> = ({
             </select>
           </div>
         </div>
+
+        {/* Unit Coordinator filter */}
+        {role === Role.UNIT_COORDINATOR && (
+          <div className="flex items-center justify-end gap-2 flex-wrap">
+            <div className="inline-flex rounded-lg border border-gray-300 bg-white overflow-hidden">
+              <button
+                type="button"
+                onClick={() => setCoordinatorTab('pending')}
+                className={`px-3 py-2 text-xs font-extrabold ${
+                  coordinatorTab === 'pending'
+                    ? 'bg-kauvery-purple text-white'
+                    : 'text-gray-900 hover:bg-gray-50'
+                }`}
+                title="Ideas needing coordinator action"
+              >
+                Pending
+              </button>
+              <button
+                type="button"
+                onClick={() => setCoordinatorTab('approved')}
+                className={`px-3 py-2 text-xs font-extrabold border-l border-gray-200 ${
+                  coordinatorTab === 'approved'
+                    ? 'bg-kauvery-purple text-white'
+                    : 'text-gray-900 hover:bg-gray-50'
+                }`}
+                title="Ideas approved by coordinator"
+              >
+                Approved
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Implementer filter */}
         {isImplementer && (

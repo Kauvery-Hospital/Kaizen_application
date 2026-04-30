@@ -49,6 +49,10 @@ function makeItems(args: {
     if (!s) continue;
 
     if (role === Role.UNIT_COORDINATOR) {
+      const isOwn =
+        meName &&
+        String(s.employeeName || '').trim().toLowerCase() === meName;
+      if (isOwn) continue;
       if (s.status === Status.IDEA_SUBMITTED) {
         items.push({
           id: `${s.id}-uc-screen`,
@@ -64,6 +68,15 @@ function makeItems(args: {
           kind: 'action',
           suggestion: s,
           title: `Approve after BE review · ${suggestionLabel(s)}`,
+          subtitle: `${s.unit} • ${s.department}`,
+        });
+      }
+      if (s.status === Status.IMPLEMENTATION_DONE) {
+        items.push({
+          id: `${s.id}-uc-verify`,
+          kind: 'action',
+          suggestion: s,
+          title: `Verify implementation · ${suggestionLabel(s)}`,
           subtitle: `${s.unit} • ${s.department}`,
         });
       }
