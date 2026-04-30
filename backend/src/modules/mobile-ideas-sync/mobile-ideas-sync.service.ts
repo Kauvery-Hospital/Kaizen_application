@@ -36,8 +36,19 @@ export class MobileIdeasSyncService {
     private readonly config: ConfigService,
   ) {}
 
+  private isSuggestionSyncEnabled(): boolean {
+    const raw = String(this.config.get<string>('SUGGESTION_SYNC') ?? 'true')
+      .trim()
+      .toLowerCase();
+    return raw !== 'false' && raw !== '0' && raw !== 'no' && raw !== 'off';
+  }
+
   @Cron(process.env.MOBILE_IDEA_SYNC_CRON ?? '0 */5 * * * *')
   async scheduledSync(): Promise<void> {
+    if (!this.isSuggestionSyncEnabled()) {
+      this.logger.log('Scheduled mobile-ideas sync skipped (SUGGESTION_SYNC=false).');
+      return;
+    }
     try {
       const r = await this.runNow();
       this.logger.log(
@@ -59,6 +70,14 @@ export class MobileIdeasSyncService {
   }
 
   async runNow(opts: { take?: number } = {}): Promise<SyncResult> {
+    if (!this.isSuggestionSyncEnabled()) {
+      return {
+        scanned: 0,
+        inserted: 0,
+        updated: 0,
+        skippedUnmappedEmployee: 0,
+      };
+    }
     const take = Math.min(Math.max(Number(opts.take ?? 500), 1), 5000);
 
     const syncLog = await this.prisma.hrmsSyncLog.create({

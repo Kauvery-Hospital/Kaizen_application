@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -18,6 +19,105 @@ const IMPLEMENTED_PREFIX = 'KH-KZ';
 export class SuggestionsService {
   private readonly logger = new Logger(SuggestionsService.name);
   constructor(private readonly prisma: PrismaService) {}
+
+  private normalizeUnitCode(v?: string | null): string {
+    return String(v ?? '').trim();
+  }
+
+  private async getAllowedUnitsForRole(
+    userId: string | undefined,
+    role: AppRole,
+  ): Promise<string[] | null> {
+    if (!userId) return null;
+    let roleCode: RoleCode | null = null;
+    if (role === AppRole.UNIT_COORDINATOR) roleCode = RoleCode.UNIT_COORDINATOR;
+    if (role === AppRole.SELECTION_COMMITTEE)
+      roleCode = RoleCode.SELECTION_COMMITTEE;
+    if (!roleCode) return null;
+
+    const rows = await (this.prisma as any).userRoleUnitScope.findMany({
+      where: { userId, roleCode },
+      select: { unitCode: true },
+      take: 5000,
+    });
+    const units = (Array.isArray(rows) ? rows : [])
+      .map((r: any) => this.normalizeUnitCode(r.unitCode))
+      .filter(Boolean);
+    return Array.from(new Set(units));
+  }
+
+  private coordinatorRoutingUnitForStatus(s: any): string {
+    const st = String(s?.status ?? '');
+    // Early stages: coordinator is bound to originator unit.
+    if (
+      st === AppStatus.IDEA_SUBMITTED ||
+      st === AppStatus.APPROVED_FOR_ASSIGNMENT
+    ) {
+      return this.normalizeUnitCode(s?.unit);
+    }
+    // Later coordinator actions can be on assigned unit (cross-unit assignment).
+    return this.normalizeUnitCode(s?.assignedUnit || s?.unit);
+  }
+
+  private coordinatorRoutingUnitForNextStatus(
+    current: any,
+    nextStatus: AppStatus,
+  ): string {
+    // Early coordinator decisions are always tied to originator unit.
+    if (
+      nextStatus === AppStatus.APPROVED_FOR_ASSIGNMENT ||
+      nextStatus === AppStatus.IDEA_REJECTED
+    ) {
+      return this.normalizeUnitCode(current?.unit);
+    }
+    return this.normalizeUnitCode(current?.assignedUnit || current?.unit);
+  }
+
+  private async assertUnitScopeAllowed(
+    actorUserId: string | undefined,
+    actorRole: AppRole,
+    current: any,
+    nextStatus: AppStatus,
+  ): Promise<void> {
+    if (
+      actorRole !== AppRole.UNIT_COORDINATOR &&
+      actorRole !== AppRole.SELECTION_COMMITTEE
+    ) {
+      return;
+    }
+    if (!actorUserId) {
+      throw new ForbiddenException('Missing actor user id for scope validation');
+    }
+
+    const allowedUnits = await this.getAllowedUnitsForRole(actorUserId, actorRole);
+    if (!allowedUnits || allowedUnits.length === 0) {
+      throw new ForbiddenException(
+        `No unit scopes configured for role ${actorRole}`,
+      );
+    }
+    const allowed = new Set(allowedUnits.map((u) => u.toLowerCase()));
+
+    if (actorRole === AppRole.SELECTION_COMMITTEE) {
+      // Selection committee assignment is scoped to originator unit.
+      const unit = this.normalizeUnitCode(current?.unit);
+      if (!unit || !allowed.has(unit.toLowerCase())) {
+        throw new ForbiddenException(
+          `Selection Committee is not allowed for unit "${unit || 'NA'}"`,
+        );
+      }
+      return;
+    }
+
+    // Unit coordinator action:
+    // - Approve/reject bound to originator unit
+    // - Later coordinator actions bound to assignedUnit (if set) else originator unit
+    const unit = this.coordinatorRoutingUnitForNextStatus(current, nextStatus);
+    if (!unit || !allowed.has(unit.toLowerCase())) {
+      throw new ForbiddenException(
+        `Unit Coordinator is not allowed for unit "${unit || 'NA'}"`,
+      );
+    }
+  }
 
   private approvalsComplete(row: any): boolean {
     const required = Array.isArray(row?.requiredApprovals)
@@ -146,8 +246,50 @@ export class SuggestionsService {
     return { ideaFolder: expected, ideaPaths: paths };
   }
 
-  async list(role?: AppRole, currentUserName?: string) {
+  async list(role?: AppRole, currentUserName?: string, userId?: string) {
+    if (!role) {
+      return await this.prisma.suggestion.findMany({
+        orderBy: { createdAt: 'desc' },
+        include: {
+          implementedKaizen: {
+            select: {
+              implementedCode: true,
+              ideaCode: true,
+            },
+          },
+        },
+      });
+    }
+
+    const allowedUnits = await this.getAllowedUnitsForRole(userId, role);
+
+    // For unit-scoped roles, if there are no scopes configured, return empty list
+    // (prevents “all-unit visibility” until admin assigns scopes).
+    if (
+      (role === AppRole.UNIT_COORDINATOR ||
+        role === AppRole.SELECTION_COMMITTEE) &&
+      (!allowedUnits || allowedUnits.length === 0)
+    ) {
+      return [];
+    }
+
+    // Default: fetch within unit(s) first (keeps results bounded), then apply remaining role/status logic.
+    // Coordinator can see items from either originator unit (early stages) or assignedUnit (later stages),
+    // so we broaden the unit filter across both fields.
+    const baseWhere: any = {};
+    if (allowedUnits?.length) {
+      if (role === AppRole.UNIT_COORDINATOR) {
+        baseWhere.OR = [
+          { unit: { in: allowedUnits } },
+          { assignedUnit: { in: allowedUnits } },
+        ];
+      } else if (role === AppRole.SELECTION_COMMITTEE) {
+        baseWhere.unit = { in: allowedUnits };
+      }
+    }
+
     const suggestions = await this.prisma.suggestion.findMany({
+      where: baseWhere,
       orderBy: { createdAt: 'desc' },
       include: {
         implementedKaizen: {
@@ -158,7 +300,17 @@ export class SuggestionsService {
         },
       },
     });
-    if (!role) return suggestions;
+
+    if (role === AppRole.UNIT_COORDINATOR && allowedUnits?.length) {
+      const allowed = new Set(allowedUnits.map((u) => u.toLowerCase()));
+      return suggestions.filter((s: any) => {
+        const unitForStage = this.coordinatorRoutingUnitForStatus(s);
+        if (!unitForStage) return false;
+        if (!allowed.has(unitForStage.toLowerCase())) return false;
+        return this.filterByRole(role, s as any, currentUserName);
+      });
+    }
+
     return suggestions.filter((s) =>
       this.filterByRole(role, s as any, currentUserName),
     );
@@ -178,13 +330,14 @@ export class SuggestionsService {
     });
   }
 
-  async updateStatus(id: string, dto: UpdateSuggestionStatusDto) {
+  async updateStatus(id: string, dto: UpdateSuggestionStatusDto, actorUserId?: string) {
     const suggestion = await this.prisma.suggestion.findUnique({
       where: { id },
     });
     if (!suggestion) throw new NotFoundException('Suggestion not found');
 
     const current = suggestion as any;
+    await this.assertUnitScopeAllowed(actorUserId, dto.actor.role, current, dto.status);
     this.assertTransitionAllowed(current.status, dto.status, dto.actor.role);
 
     const rawExtra = (dto.extraData ?? {}) as Record<string, unknown>;

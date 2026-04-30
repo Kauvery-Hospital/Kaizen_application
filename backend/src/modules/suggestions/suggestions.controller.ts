@@ -59,6 +59,7 @@ export class SuggestionsController {
     return this.suggestionsService.list(
       role,
       query.currentUserName ?? req.user.name,
+      req.user.sub,
     );
   }
 
@@ -130,6 +131,6 @@ export class SuggestionsController {
         name: dto.actor?.name || req.user.name,
         role: actorRole,
       },
-    });
+    }, req.user.sub);
   }
 }

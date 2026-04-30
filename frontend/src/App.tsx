@@ -10,6 +10,7 @@ import { NotificationsButton } from './components/NotificationsButton';
 import { PipelineView } from './screens/PipelineView';
 import { UserManagement } from './screens/UserManagement';
 import { BeOverview } from './screens/BeOverview';
+import { RoleListView } from './screens/RoleListView';
 import { Role, Suggestion, Status, ViewType, User } from './types';
 import { clearSession, loadSession, saveSession } from './auth/session';
 
@@ -31,6 +32,8 @@ const getRoleScopedSuggestions = (
     return allSuggestions.filter(s =>
       [
         Status.IDEA_SUBMITTED,
+        Status.APPROVED_FOR_ASSIGNMENT,
+        Status.IMPLEMENTATION_DONE,
         Status.BE_REVIEW_DONE,
         Status.REWARD_PENDING,
         Status.REWARDED,
@@ -381,6 +384,10 @@ const App: React.FC = () => {
       );
     }
 
+    if (currentView === 'role-list') {
+      return <RoleListView apiBase={apiBase} authHeaders={authHeaders} />;
+    }
+
     if (currentView === 'template') {
       if (!selectedSuggestion) {
         return (
@@ -491,6 +498,8 @@ const App: React.FC = () => {
                     ? 'BE Overview'
                   : currentView === 'list'
                     ? 'All Suggestions'
+                    : currentView === 'role-list'
+                      ? 'Role List'
                     : currentView === 'users'
                       ? 'User Management'
                       : currentView === 'template'

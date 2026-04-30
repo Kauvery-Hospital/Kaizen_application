@@ -32,8 +32,19 @@ export class HrmsSyncService {
     private readonly config: ConfigService,
   ) {}
 
+  private isEmployeeSyncEnabled(): boolean {
+    const raw = String(this.config.get<string>('EMPLOYEE_SYNC') ?? 'true')
+      .trim()
+      .toLowerCase();
+    return raw !== 'false' && raw !== '0' && raw !== 'no' && raw !== 'off';
+  }
+
   @Cron(process.env.HRMS_SYNC_CRON ?? '0 */30 * * * *')
   async scheduledSync(): Promise<void> {
+    if (!this.isEmployeeSyncEnabled()) {
+      this.logger.log('Scheduled HRMS employee sync skipped (EMPLOYEE_SYNC=false).');
+      return;
+    }
     try {
       const syncResult = await this.runNow();
       this.logger.log(
@@ -46,6 +57,13 @@ export class HrmsSyncService {
   }
 
   async runNow() {
+    if (!this.isEmployeeSyncEnabled()) {
+      return {
+        message: 'HRMS employee sync is disabled (EMPLOYEE_SYNC=false)',
+        insertedCount: 0,
+        updatedCount: 0,
+      };
+    }
     const employees = await this.fetchEmployeesFromHrms();
 
     const syncLog = await this.prisma.hrmsSyncLog.create({
@@ -304,7 +322,7 @@ export class HrmsSyncService {
       );
 
       return result.rows.map((row: Record<string, unknown>) => ({
-        employeeId: String(row.employee_id),
+        employeeId: String(row.employee_id).trim(),
         firstName: String(row.first_name ?? ''),
         lastName: String(row.last_name ?? ''),
         email: row.email ? String(row.email) : null,
@@ -313,7 +331,7 @@ export class HrmsSyncService {
         dateOfBirth: String(row.date_of_birth),
         joiningDate: String(row.joining_date),
         department: row.department ? String(row.department) : null,
-        unit: row.unit ? String(row.unit) : null,
+        unit: row.unit ? String(row.unit).trim() : null,
         manager: row.manager ? String(row.manager) : null,
         hod: row.hod ? String(row.hod) : null,
         jobtitle: row.jobtitle ? String(row.jobtitle) : null,

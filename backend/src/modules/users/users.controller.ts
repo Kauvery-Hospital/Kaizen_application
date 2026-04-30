@@ -15,6 +15,7 @@ import { TokenRolesGuard } from '../auth/guards/token-roles.guard';
 import { UsersService } from './users.service';
 import { AssignRoleDto } from './dto/assign-role.dto';
 import { ListUsersQueryDto } from './dto/list-users-query.dto';
+import { SetUnitScopesDto } from './dto/set-unit-scopes.dto';
 
 @Controller('users')
 @UseGuards(JwtAuthGuard, TokenRolesGuard)
@@ -43,7 +44,15 @@ export class UsersController {
   @Get()
   @RequireTokenRoles('ADMIN', 'SUPER_ADMIN')
   list(@Query() query: ListUsersQueryDto) {
-    return this.usersService.listEmployees(query.search, query.department);
+    const includeUnitScopes =
+      String(query.includeUnitScopes ?? '')
+        .trim()
+        .toLowerCase() === 'true';
+    return this.usersService.listEmployees(
+      query.search,
+      query.department,
+      includeUnitScopes,
+    );
   }
 
   @Post(':userId/roles')
@@ -59,5 +68,23 @@ export class UsersController {
     @Param('roleCode') roleCode: string,
   ) {
     return this.usersService.removeRole(userId, roleCode);
+  }
+
+  @Get(':userId/unit-scopes')
+  @RequireTokenRoles('ADMIN', 'SUPER_ADMIN')
+  unitScopes(
+    @Param('userId') userId: string,
+    @Query('roleCode') roleCode: string,
+  ) {
+    return this.usersService.getUnitScopes(userId, roleCode);
+  }
+
+  @Post(':userId/unit-scopes')
+  @RequireTokenRoles('ADMIN', 'SUPER_ADMIN')
+  setUnitScopes(
+    @Param('userId') userId: string,
+    @Body() dto: SetUnitScopesDto,
+  ) {
+    return this.usersService.setUnitScopes(userId, dto);
   }
 }

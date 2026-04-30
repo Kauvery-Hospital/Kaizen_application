@@ -24,6 +24,7 @@ model User {
   updatedAt    DateTime          @default(now()) @map("updated_at") @db.Timestamp(6)
   password     String?
   roles        UserRoleMapping[]
+  unitScopes   UserRoleUnitScope[]
 
   @@index([department], map: "idx_users_department")
   @@index([employeeCode], map: "idx_users_employee_code")
@@ -40,6 +41,22 @@ model Role {
   users       UserRoleMapping[]
 
   @@map("roles")
+}
+
+model UserRoleUnitScope {
+  id         String   @id @default(cuid()) @db.VarChar(50)
+  userId     String   @map("user_id") @db.VarChar(50)
+  roleCode   RoleCode @map("role_code")
+  unitCode   String   @map("unit_code") @db.VarChar(30)
+  assignedBy String?  @map("assigned_by") @db.VarChar(120)
+  assignedAt DateTime @default(now()) @map("assigned_at") @db.Timestamp(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_user_unit_scope_user")
+
+  @@unique([userId, roleCode, unitCode], map: "uq_user_role_unit_scope")
+  @@index([roleCode, unitCode], map: "idx_user_role_unit_scope_role_unit")
+  @@index([userId], map: "idx_user_role_unit_scope_user_id")
+  @@map("user_role_unit_scope")
 }
 
 model UserRoleMapping {
