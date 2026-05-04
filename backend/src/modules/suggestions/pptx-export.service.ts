@@ -284,6 +284,8 @@ export class PptxExportService {
         `Why 1: ${safe(data.analysis?.why1)}`,
         `Why 2: ${safe(data.analysis?.why2)}`,
         `Why 3: ${safe(data.analysis?.why3)}`,
+        ...(safe(data.analysis?.why4) ? [`Why 4: ${safe(data.analysis?.why4)}`] : []),
+        ...(safe(data.analysis?.why5) ? [`Why 5: ${safe(data.analysis?.why5)}`] : []),
         `Root Cause: ${safe(data.analysis?.rootCause)}`,
         `Idea to Eliminate: ${safe(data.ideaToEliminate)}`,
         '',
@@ -302,14 +304,19 @@ export class PptxExportService {
       } as any);
 
       const expected = data.expectedBenefits || {};
+      const pqLabel = (v: unknown) => {
+        if (v === 'secondary') return 'Secondary';
+        if (v === 'primary' || v === true) return 'Primary';
+        return '—';
+      };
       const pqcdsem = [
-        `P Productivity: ${expected.productivity ? 'Yes' : 'No'}`,
-        `Q Quality: ${expected.quality ? 'Yes' : 'No'}`,
-        `C Cost: ${expected.cost ? 'Yes' : 'No'}`,
-        `D Delivery: ${expected.delivery ? 'Yes' : 'No'}`,
-        `S Safety: ${expected.safety ? 'Yes' : 'No'}`,
-        `E Environment/Energy: ${expected.environment ? 'Yes' : 'No'}`,
-        `M Morale: ${expected.morale ? 'Yes' : 'No'}`,
+        `P Productivity: ${pqLabel(expected.productivity)}`,
+        `Q Quality: ${pqLabel(expected.quality)}`,
+        `C Cost: ${pqLabel(expected.cost)}`,
+        `D Delivery: ${pqLabel(expected.delivery)}`,
+        `S Safety: ${pqLabel(expected.safety)}`,
+        `E Environment/Energy: ${pqLabel(expected.environment)}`,
+        `M Morale: ${pqLabel(expected.morale)}`,
       ];
       const std = data.standardization || {};
       const stdLines = [
@@ -434,30 +441,20 @@ export class PptxExportService {
       s4.addShape((PptxGenJS as any).ShapeType.rect, { x: 0, y: bodyY, w: 13.33, h: bodyH, fill: { color: 'F3F4F6' }, line: { color: '6B7280', width: 1 } });
       s4.addShape((PptxGenJS as any).ShapeType.line, { x: 6.665, y: bodyY, w: 0, h: bodyH, line: { color: '6B7280', width: 1 } });
 
-      // Video frames
+      // Video frames (full grey band — no caption row below)
       const frameY = bodyY + 0.2;
-      const frameH = 3.9;
+      const frameH = Math.min(4.95, bodyY + bodyH - frameY - 0.18);
       s4.addShape((PptxGenJS as any).ShapeType.roundRect, { x: 0.35, y: frameY, w: 6.0, h: frameH, fill: { color: 'FFFFFF' }, line: { color: '9CA3AF', width: 1 }, radius: 0.08 } as any);
       s4.addShape((PptxGenJS as any).ShapeType.roundRect, { x: 6.98, y: frameY, w: 6.0, h: frameH, fill: { color: 'FFFFFF' }, line: { color: '9CA3AF', width: 1 }, radius: 0.08 } as any);
 
       const beforeVid = String((data.processBeforeVideoPath || '').trim());
       const afterVid = String((data.processAfterVideoPath || '').trim());
-      const beforeCap = String((data.processBeforeVideoCaption || '').trim());
-      const afterCap = String((data.processAfterVideoCaption || '').trim());
-
-      // Captions (below frame)
-      s4.addText('Caption', { x: 0.35, y: frameY + frameH + 0.12, w: 6.0, h: 0.2, fontFace: 'Calibri', fontSize: 10, bold: true, color: '374151' });
-      s4.addShape((PptxGenJS as any).ShapeType.roundRect, { x: 0.35, y: frameY + frameH + 0.32, w: 6.0, h: 0.45, fill: { color: 'FFFFFF' }, line: { color: 'D1D5DB', width: 1 }, radius: 0.06 } as any);
-      s4.addText(beforeCap || '—', { x: 0.45, y: frameY + frameH + 0.36, w: 5.8, h: 0.38, fontFace: 'Calibri', fontSize: 11, bold: true, color: '111827' });
-
-      s4.addText('Caption', { x: 6.98, y: frameY + frameH + 0.12, w: 6.0, h: 0.2, fontFace: 'Calibri', fontSize: 10, bold: true, color: '374151' });
-      s4.addShape((PptxGenJS as any).ShapeType.roundRect, { x: 6.98, y: frameY + frameH + 0.32, w: 6.0, h: 0.45, fill: { color: 'FFFFFF' }, line: { color: 'D1D5DB', width: 1 }, radius: 0.06 } as any);
-      s4.addText(afterCap || '—', { x: 7.08, y: frameY + frameH + 0.36, w: 5.8, h: 0.38, fontFace: 'Calibri', fontSize: 11, bold: true, color: '111827' });
 
       // File references inside frames (until we embed videos)
+      const vidTextY = frameY + frameH / 2 - 0.3;
       s4.addText(beforeVid ? `Video: ${beforeVid}` : 'No before video uploaded.', {
         x: 0.55,
-        y: frameY + 1.7,
+        y: vidTextY,
         w: 5.6,
         h: 0.6,
         fontFace: 'Calibri',
@@ -468,7 +465,7 @@ export class PptxExportService {
       });
       s4.addText(afterVid ? `Video: ${afterVid}` : 'No after video uploaded.', {
         x: 7.18,
-        y: frameY + 1.7,
+        y: vidTextY,
         w: 5.6,
         h: 0.6,
         fontFace: 'Calibri',
@@ -583,18 +580,52 @@ export class PptxExportService {
     const maxW = W - M * 2;
     const maxH = H - M * 2;
 
+    let addedSlides = 0;
     for (const dataUri of list) {
       const uri = String(dataUri || '').trim();
       if (!uri.startsWith('data:image/')) continue;
+      const decoded = this.decodeDataUri(uri);
+      const dims =
+        decoded && decoded.bytes.length
+          ? this.tryGetImageSize(decoded.mime, decoded.bytes)
+          : null;
+
+      let imgX = M;
+      let imgY = M;
+      let imgW = maxW;
+      let imgH = maxH;
+      if (dims && dims.width > 0 && dims.height > 0) {
+        const ir = dims.width / dims.height;
+        const br = maxW / maxH;
+        if (ir > br) {
+          imgW = maxW;
+          imgH = maxW / ir;
+          imgX = M;
+          imgY = M + (maxH - imgH) / 2;
+        } else {
+          imgH = maxH;
+          imgW = maxH * ir;
+          imgX = M + (maxW - imgW) / 2;
+          imgY = M;
+        }
+      }
+
       const slide = pptx.addSlide();
-      // Always fit the captured slide image inside a safe frame.
-      // This guarantees no cropping across PPT viewers even if the PNG aspect ratio is slightly off.
-      slide.addImage({ data: uri, x: M, y: M, w: maxW, h: maxH });
+      slide.addImage({ data: uri, x: imgX, y: imgY, w: imgW, h: imgH });
+      addedSlides++;
     }
 
-    if (list.length === 0) {
+    if (addedSlides === 0) {
       const s = pptx.addSlide();
-      s.addText('No rendered slides provided.', { x: 0.6, y: 1.0, w: 12.0, h: 0.6, fontFace: 'Calibri', fontSize: 18, bold: true });
+      s.addText('No rendered slides provided.', {
+        x: 0.6,
+        y: 1.0,
+        w: 12.0,
+        h: 0.6,
+        fontFace: 'Calibri',
+        fontSize: 18,
+        bold: true,
+      });
     }
 
     const out = await (pptx as any).write('nodebuffer');
@@ -688,10 +719,12 @@ export class PptxExportService {
     dataUri: string,
   ): { mime: string; bytes: Uint8Array } | null {
     const s = String(dataUri || '').trim();
-    const m = s.match(/^data:([a-zA-Z0-9/+.-]+);base64,(.+)$/);
-    if (!m) return null;
-    const mime = m[1];
-    const b64 = m[2];
+    const marker = ';base64,';
+    const idx = s.indexOf(marker);
+    if (idx === -1 || !s.toLowerCase().startsWith('data:')) return null;
+    const header = s.slice(5, idx);
+    const mime = (header.split(';')[0] || '').trim() || 'application/octet-stream';
+    let b64 = s.slice(idx + marker.length).replace(/\s/g, '');
     try {
       return { mime, bytes: Uint8Array.from(Buffer.from(b64, 'base64')) };
     } catch {

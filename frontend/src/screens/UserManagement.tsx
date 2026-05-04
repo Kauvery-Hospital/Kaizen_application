@@ -498,9 +498,9 @@ export const UserManagement: React.FC<{
 
       {/* Modal */}
       {activeUser && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto px-4 pt-8 pb-12 sm:pt-12">
           <div className="absolute inset-0 bg-black/40" onClick={() => setActiveUser(null)} />
-          <div className="relative w-full max-w-lg bg-white rounded-2xl border border-gray-200 shadow-2xl overflow-hidden">
+          <div className="relative mt-0 w-full max-w-lg max-h-[calc(100vh-4rem)] overflow-y-auto bg-white rounded-2xl border border-gray-200 shadow-2xl">
             <div className="px-6 py-5 border-b border-gray-200 flex items-start justify-between">
               <div>
                 <div className="text-xs font-black text-gray-500 uppercase tracking-wide">Manage access</div>

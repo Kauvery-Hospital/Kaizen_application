@@ -5,19 +5,22 @@ import { LoginPage } from './screens/LoginPage';
 import { Dashboard } from './screens/Dashboard';
 import { SuggestionList } from './screens/SuggestionList';
 import { SuggestionForm } from './components/SuggestionForm';
-import { SuggestionDetailModal } from './components/SuggestionDetailModal';
+import SuggestionDetailModal from './components/SuggestionDetailModal';
 import { NotificationsButton } from './components/NotificationsButton';
 import { PipelineView } from './screens/PipelineView';
 import { UserManagement } from './screens/UserManagement';
 import { BeOverview } from './screens/BeOverview';
 import { RoleListView } from './screens/RoleListView';
+import { HodApprovalDesk } from './screens/HodApprovalDesk';
 import { Role, Suggestion, Status, ViewType, User } from './types';
 import { clearSession, loadSession, saveSession } from './auth/session';
+import { resolveImplementationPatchActor } from './utils/implementationPatchActor';
 
 const getRoleScopedSuggestions = (
   allSuggestions: Suggestion[],
   role: Role,
-  currentUserName?: string
+  currentUserName?: string,
+  currentUserEmployeeCode?: string,
 ) => {
   if (role === Role.ADMIN) return allSuggestions;
 
@@ -29,15 +32,20 @@ const getRoleScopedSuggestions = (
   }
 
   if (role === Role.UNIT_COORDINATOR) {
-    return allSuggestions.filter(s =>
+    // Full unit pipeline: once screening approves, coordinators must still see ideas through
+    // assignment, implementation, head approvals, BE evaluation, and closure (backend list matches).
+    return allSuggestions.filter((s) =>
       [
         Status.IDEA_SUBMITTED,
         Status.APPROVED_FOR_ASSIGNMENT,
+        Status.ASSIGNED_FOR_IMPLEMENTATION,
         Status.IMPLEMENTATION_DONE,
         Status.BE_REVIEW_DONE,
+        Status.VERIFIED_PENDING_APPROVAL,
+        Status.BE_EVALUATION_PENDING,
         Status.REWARD_PENDING,
         Status.REWARDED,
-      ].includes(s.status)
+      ].includes(s.status),
     );
   }
 
@@ -46,11 +54,21 @@ const getRoleScopedSuggestions = (
   }
 
   if (role === Role.IMPLEMENTER) {
-    return allSuggestions.filter(s => {
-      const isAssignedToMe = currentUserName
-        ? s.assignedImplementer === currentUserName
-        : true;
-      return isAssignedToMe && [Status.ASSIGNED_FOR_IMPLEMENTATION, Status.IMPLEMENTATION_DONE, Status.BE_REVIEW_DONE].includes(s.status);
+    return allSuggestions.filter((s) => {
+      const sugCode = (s.assignedImplementerCode || '').trim().toLowerCase();
+      const myCode = (currentUserEmployeeCode || '').trim().toLowerCase();
+      const sugName = (s.assignedImplementer || '').trim().toLowerCase();
+      const myName = (currentUserName || '').trim().toLowerCase();
+      const isAssignedToMe = (() => {
+        if (myCode && sugCode) return sugCode === myCode;
+        if (myName && sugName) return sugName === myName;
+        if (!myCode && !myName) return true;
+        return false;
+      })();
+      return (
+        isAssignedToMe &&
+        [Status.ASSIGNED_FOR_IMPLEMENTATION, Status.BE_REVIEW_DONE].includes(s.status)
+      );
     });
   }
 
@@ -65,27 +83,36 @@ const getRoleScopedSuggestions = (
   }
 
   if (role === Role.HR_HEAD) {
-    return allSuggestions.filter(s => {
+    return allSuggestions.filter((s) => {
       if ([Status.REWARD_PENDING, Status.REWARDED].includes(s.status)) return true;
-      return (
+      if (!s.requiredApprovals?.includes(role)) return false;
+      if (
         s.status === Status.VERIFIED_PENDING_APPROVAL &&
-        s.requiredApprovals?.includes(role) &&
         !s.approvals?.[role]
-      );
+      )
+        return true;
+      if (s.approvals?.[role]) return true;
+      return false;
     });
   }
 
   if (role === Role.QUALITY_HOD || role === Role.FINANCE_HOD) {
-    return allSuggestions.filter(
-      s =>
+    return allSuggestions.filter((s) => {
+      if (!s.requiredApprovals?.includes(role)) return false;
+      if (
         s.status === Status.VERIFIED_PENDING_APPROVAL &&
-        s.requiredApprovals?.includes(role) &&
         !s.approvals?.[role]
-    );
+      )
+        return true;
+      if (s.approvals?.[role]) return true;
+      return false;
+    });
   }
 
   return allSuggestions;
 };
+
+const HOD_DESK_ROLES: Role[] = [Role.HR_HEAD, Role.QUALITY_HOD, Role.FINANCE_HOD];
 
 const App: React.FC = () => {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -93,7 +120,9 @@ const App: React.FC = () => {
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [selectedSuggestion, setSelectedSuggestion] = useState<Suggestion | null>(null);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
-  const [detailViewMode, setDetailViewMode] = useState<'default' | 'tracking'>('default');
+  const [detailViewMode, setDetailViewMode] = useState<
+    'default' | 'tracking' | 'hod-review'
+  >('default');
   const [unitOptions, setUnitOptions] = useState<
     { id: string; code: string; name: string }[]
   >([]);
@@ -127,7 +156,7 @@ const App: React.FC = () => {
       });
       setSelectedSuggestion(null);
       setIsDetailModalOpen(false);
-      setCurrentView('dashboard');
+      setCurrentView(HOD_DESK_ROLES.includes(nextRole) ? 'hod-desk' : 'dashboard');
     },
     [],
   );
@@ -185,11 +214,19 @@ const App: React.FC = () => {
     };
   }, [apiBase, authHeaders, currentUser?.accessToken]);
 
+  useEffect(() => {
+    if (!currentUser) return;
+    if (HOD_DESK_ROLES.includes(currentUser.role)) {
+      setCurrentView('hod-desk');
+    }
+  }, [currentUser?.id]);
+
   const currentRole: Role = currentUser?.role || Role.EMPLOYEE;
   const roleScopedSuggestions = getRoleScopedSuggestions(
     suggestions,
     currentRole,
-    currentUser?.name
+    currentUser?.name,
+    currentUser?.employeeCode,
   );
 
   useEffect(() => {
@@ -275,15 +312,23 @@ const App: React.FC = () => {
     }
   };
 
-  const handleUpdateStatus = useCallback(async (id: string, status: Status, extraData?: Partial<Suggestion>) => {
+  const handleUpdateStatus = useCallback(
+    async (
+      id: string,
+      status: Status,
+      extraData?: Partial<Suggestion>,
+      /** Use for implementation submit so multi-role users are not treated as Unit Coordinator */
+      actorRoleOverride?: Role,
+    ) => {
     try {
+      const actorRole = actorRoleOverride ?? currentUser?.role ?? Role.ADMIN;
       const res = await fetch(`${apiBase}/suggestions/${id}/status`, {
         method: 'PATCH',
         headers: authHeaders(),
         body: JSON.stringify({
           actor: {
             name: currentUser?.name || 'System User',
-            role: currentUser?.role || Role.ADMIN,
+            role: actorRole,
           },
           status,
           extraData,
@@ -297,9 +342,35 @@ const App: React.FC = () => {
       console.error('Failed to update status', err);
       throw err;
     }
-  }, [apiBase, authHeaders, currentUser]);
+  },
+  [apiBase, authHeaders, currentUser],
+);
 
   const renderContent = () => {
+    if (currentView === 'hod-desk') {
+      if (!HOD_DESK_ROLES.includes(currentRole)) {
+        return (
+          <div className="animate-fade-in">
+            <Dashboard
+              suggestions={roleScopedSuggestions}
+              role={currentRole}
+              userName={currentUser?.name}
+            />
+          </div>
+        );
+      }
+      return (
+        <HodApprovalDesk
+          suggestions={roleScopedSuggestions}
+          role={currentRole}
+          onSelectIdea={(s) => {
+            setDetailViewMode('hod-review');
+            setSelectedSuggestion(s);
+            setIsDetailModalOpen(true);
+          }}
+        />
+      );
+    }
     if (currentView === 'pipeline') {
       return (
         <PipelineView
@@ -319,7 +390,6 @@ const App: React.FC = () => {
       return (
         <div className="animate-fade-in">
           <BeOverview
-            suggestions={suggestions}
             apiBase={apiBase}
             accessToken={currentUser.accessToken}
             onOpenIdea={(s) => {
@@ -403,7 +473,7 @@ const App: React.FC = () => {
         );
       }
       return (
-        <div className="max-w-6xl mx-auto animate-fade-in">
+        <div className="w-full max-w-6xl mx-auto animate-fade-in [@media(orientation:landscape)]:max-w-none min-w-0">
           <div className="mb-4 flex items-center justify-between">
             <div>
               <div className="text-xs uppercase tracking-wide text-gray-500 font-bold">
@@ -431,22 +501,34 @@ const App: React.FC = () => {
             apiBase={apiBase}
             accessToken={currentUser.accessToken}
             onSubmit={async (data, meta) => {
-              // Reuse existing modal submit handler by updating status via API.
-              // The SuggestionDetailModal uses handleImplementationSubmit; here we call updateStatus directly.
-              await handleUpdateStatus(selectedSuggestion.id, Status.IMPLEMENTATION_DONE, {
-                ...data,
-                implementationProgress: 100,
-                implementationStage: 'Completed',
-                implementationDate: new Date().toISOString().split('T')[0],
-                // Keep a snapshot of the submitted template (used for preview/export later)
-                implementationDraft: data,
-              });
+              const implActor = resolveImplementationPatchActor(
+                selectedSuggestion,
+                currentUser,
+              );
+              await handleUpdateStatus(
+                selectedSuggestion.id,
+                Status.IMPLEMENTATION_DONE,
+                {
+                  ...data,
+                  implementationProgress: 100,
+                  implementationStage: 'Completed',
+                  implementationDate: new Date().toISOString().split('T')[0],
+                  implementationDraft: data,
+                },
+                implActor,
+              );
             }}
             onSaveDraft={(data) => {
-              // draft save keeps status the same
-              handleUpdateStatus(selectedSuggestion.id, selectedSuggestion.status as Status, {
-                implementationDraft: data,
-              });
+              const implActor = resolveImplementationPatchActor(
+                selectedSuggestion,
+                currentUser,
+              );
+              handleUpdateStatus(
+                selectedSuggestion.id,
+                selectedSuggestion.status as Status,
+                { implementationDraft: data },
+                implActor,
+              );
             }}
             onCancel={() => setCurrentView('dashboard')}
           />
@@ -467,7 +549,19 @@ const App: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-gray-50 to-gray-100 font-sans">
+    <div className="relative min-h-screen font-sans overflow-x-hidden">
+      <div
+        className="pointer-events-none fixed inset-0 bg-kauvery-mesh opacity-90"
+        aria-hidden="true"
+      />
+      <div
+        className="pointer-events-none fixed -top-32 right-0 h-[420px] w-[420px] rounded-full bg-gradient-to-br from-kauvery-pink/20 via-kauvery-violet/15 to-transparent blur-3xl"
+        aria-hidden="true"
+      />
+      <div
+        className="pointer-events-none fixed bottom-0 left-1/4 h-[320px] w-[480px] rounded-full bg-gradient-to-tr from-kauvery-purple/12 to-transparent blur-3xl"
+        aria-hidden="true"
+      />
       <Sidebar 
         currentView={currentView} 
         onViewChange={setCurrentView} 
@@ -484,18 +578,22 @@ const App: React.FC = () => {
         }}
       />
       
-      <div className="pl-64 flex flex-col min-h-screen">
+      <div className="relative pl-64 flex flex-col min-h-screen">
         {/* Top Navigation */}
-        <header className="h-16 bg-white/90 backdrop-blur border-b border-gray-200 px-8 flex items-center justify-between sticky top-0 z-30">
-          <div>
-            <div className="text-xs uppercase tracking-wide text-gray-500 font-bold">Kaizen Management</div>
-            <div className="text-sm font-bold text-gray-900">
+        <header className="h-16 bg-white/75 backdrop-blur-md border-b border-purple-200/40 px-8 flex items-center justify-between sticky top-0 z-30 shadow-kauvery-soft">
+          <div className="min-w-0">
+            <div className="text-[10px] uppercase tracking-[0.2em] text-kauvery-violet font-extrabold">
+              Kaizen Management
+            </div>
+            <div className="text-sm sm:text-base font-black bg-gradient-to-r from-kauvery-purple via-kauvery-violet to-kauvery-pink bg-clip-text text-transparent truncate">
               {currentView === 'dashboard'
                 ? 'Executive Overview'
                 : currentView === 'pipeline'
                   ? 'Pipeline Workspace'
                   : currentView === 'be-overview'
-                    ? 'BE Overview'
+                    ? 'Business Excellence reports'
+                  : currentView === 'hod-desk'
+                    ? 'Head approval desk'
                   : currentView === 'list'
                     ? 'All Suggestions'
                     : currentView === 'role-list'
@@ -514,22 +612,32 @@ const App: React.FC = () => {
               currentUserName={currentUser.name}
               currentUserEmployeeCode={currentUser.employeeCode}
               onOpenSuggestion={(s) => {
-                setDetailViewMode('tracking');
+                setDetailViewMode(
+                  HOD_DESK_ROLES.includes(currentRole) ? 'hod-review' : 'tracking',
+                );
                 setSelectedSuggestion(s);
                 setIsDetailModalOpen(true);
               }}
             />
-            <button
-              onClick={() => setCurrentView('create')}
-              className="bg-gradient-to-r from-kauvery-purple to-kauvery-violet hover:opacity-95 text-white px-4 py-2 rounded-lg text-sm font-bold shadow-lg shadow-purple-200 transition-all flex items-center gap-2"
-            >
-              <span className="material-icons-round text-sm">add</span>
-              New Idea
-            </button>
+            {!HOD_DESK_ROLES.includes(currentRole) && (
+              <button
+                onClick={() => setCurrentView('create')}
+                className="bg-gradient-to-r from-kauvery-purple via-kauvery-violet to-kauvery-pink hover:opacity-95 text-white px-4 py-2.5 rounded-xl text-sm font-black shadow-lg shadow-kauvery-soft ring-1 ring-white/20 transition-all flex items-center gap-2"
+              >
+                <span className="material-icons-round text-sm">add</span>
+                New Idea
+              </button>
+            )}
           </div>
         </header>
 
-        <main className="flex-1 p-6 overflow-y-auto">
+        <main
+          className={`flex-1 overflow-y-auto bg-gradient-to-br from-white/40 via-purple-50/25 to-pink-50/20 ${
+            currentView === 'template'
+              ? 'p-4 [@media(orientation:landscape)]:p-2 [@media(orientation:landscape)]:lg:p-4'
+              : 'p-6'
+          }`}
+        >
           {renderContent()}
         </main>
       </div>
@@ -546,6 +654,8 @@ const App: React.FC = () => {
         }}
         role={currentRole}
         currentUserName={currentUser.name}
+        userRoles={currentUser.roles?.length ? currentUser.roles : [currentUser.role]}
+        implementationActorUser={currentUser}
         onUpdateStatus={handleUpdateStatus}
         initialView={detailViewMode}
         apiBase={apiBase}

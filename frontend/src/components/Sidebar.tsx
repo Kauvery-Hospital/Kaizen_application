@@ -87,21 +87,29 @@ export const Sidebar: React.FC<SidebarProps> = ({
     },
   } as any;
   
-  const menuItems = [
-    { id: 'dashboard', label: 'Dashboard', icon: 'dashboard' },
-    { id: 'pipeline', label: 'Pipeline', icon: 'view_column' },
-    ...(currentRole === Role.BUSINESS_EXCELLENCE ||
-    currentRole === Role.BUSINESS_EXCELLENCE_HEAD
-      ? [{ id: 'be-overview', label: 'BE Overview', icon: 'manage_search' }]
-      : []),
-    { id: 'list', label: 'All Suggestions', icon: 'format_list_bulleted' },
-    ...(currentRole === Role.ADMIN || currentRole === Role.SUPER_ADMIN
-      ? [
-          { id: 'role-list', label: 'Role List', icon: 'shield' },
-          { id: 'users', label: 'User Management', icon: 'manage_accounts' },
-        ]
-      : []),
-  ];
+  const isHodRole = [
+    Role.HR_HEAD,
+    Role.QUALITY_HOD,
+    Role.FINANCE_HOD,
+  ].includes(currentRole);
+
+  const menuItems = isHodRole
+    ? [{ id: 'hod-desk', label: 'Approval desk', icon: 'task_alt' }]
+    : [
+        { id: 'dashboard', label: 'Dashboard', icon: 'dashboard' },
+        { id: 'pipeline', label: 'Pipeline', icon: 'view_column' },
+        ...(currentRole === Role.BUSINESS_EXCELLENCE ||
+        currentRole === Role.BUSINESS_EXCELLENCE_HEAD
+          ? [{ id: 'be-overview', label: 'BE reports', icon: 'assessment' }]
+          : []),
+        { id: 'list', label: 'All Suggestions', icon: 'format_list_bulleted' },
+        ...(currentRole === Role.ADMIN || currentRole === Role.SUPER_ADMIN
+          ? [
+              { id: 'role-list', label: 'Role List', icon: 'shield' },
+              { id: 'users', label: 'User Management', icon: 'manage_accounts' },
+            ]
+          : []),
+      ];
 
   return (
     <>
@@ -198,26 +206,27 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
       )}
 
-      <aside className="w-64 bg-gradient-to-b from-white via-white to-purple-50/50 backdrop-blur-xl border-r border-gray-200 h-screen flex flex-col fixed left-0 top-0 z-40 shadow-[12px_0_32px_rgba(15,23,42,0.06)]">
+      <aside className="w-64 bg-gradient-to-b from-[#fffafd] via-white to-purple-100/35 backdrop-blur-xl border-r border-purple-200/35 h-screen flex flex-col fixed left-0 top-0 z-40 shadow-[16px_0_40px_-8px_rgba(150,32,103,0.12)]">
         {/* Brand */}
-        <div className="h-16 flex items-center px-5 border-b border-gray-200/70 bg-white/60">
-          <div className="w-9 h-9 bg-gradient-to-br from-kauvery-purple to-kauvery-violet rounded-2xl flex items-center justify-center text-white font-black mr-3 shadow-md shadow-purple-200 ring-1 ring-purple-200">
+        <div className="relative h-[4.25rem] flex items-center px-5 border-b border-purple-100/80 bg-gradient-to-r from-white/90 via-purple-50/40 to-pink-50/30 overflow-hidden">
+          <div className="pointer-events-none absolute inset-0 bg-gradient-to-r from-kauvery-purple/[0.04] via-transparent to-kauvery-pink/[0.06]" />
+          <div className="relative w-10 h-10 bg-gradient-to-br from-kauvery-purple via-kauvery-violet to-kauvery-pink rounded-2xl flex items-center justify-center text-white text-sm font-black mr-3 shadow-lg shadow-kauvery-soft ring-2 ring-white/50">
             K
           </div>
-          <div className="min-w-0">
-            <div className="font-black text-gray-900 leading-tight truncate">
+          <div className="relative min-w-0">
+            <div className="font-black bg-gradient-to-r from-kauvery-purple to-kauvery-violet bg-clip-text text-transparent leading-tight truncate">
               Kaizen Flow
             </div>
-            <div className="text-[10px] text-gray-500 font-semibold uppercase tracking-wide truncate">
-              Workflow Suite
+            <div className="text-[10px] text-kauvery-violet/90 font-bold uppercase tracking-[0.12em] truncate">
+              Kauvery · Workflow
             </div>
           </div>
         </div>
 
         {/* Nav */}
         <div className="px-4 py-4">
-          <div className="text-[11px] font-extrabold text-gray-500 uppercase tracking-wider px-2 mb-2">
-            Main Menu
+          <div className="text-[10px] font-black text-kauvery-purple/80 uppercase tracking-[0.18em] px-2 mb-2">
+            Main menu
           </div>
           <nav className="space-y-1.5">
             {menuItems.map((item) => {
@@ -228,16 +237,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   onClick={() => onViewChange(item.id as ViewType)}
                   className={`group relative w-full flex items-center gap-3 px-3.5 py-2.5 text-sm font-extrabold rounded-xl transition-all ${
                     active
-                      ? 'text-kauvery-purple bg-gradient-to-r from-purple-50 to-white border border-purple-200 shadow-sm shadow-purple-100'
-                      : 'text-gray-800 hover:bg-white/70 hover:shadow-sm hover:shadow-slate-200/60'
+                      ? 'text-kauvery-purple bg-gradient-to-r from-purple-100/90 via-white to-pink-50/50 border border-purple-300/50 shadow-kauvery-card'
+                      : 'text-gray-800 border border-transparent hover:border-purple-200/50 hover:bg-gradient-to-r hover:from-purple-50/60 hover:to-rose-50/40 hover:shadow-sm'
                   }`}
                 >
                   {active && (
-                    <span className="absolute left-0 top-1.5 bottom-1.5 w-1 rounded-r-full bg-gradient-to-b from-kauvery-purple to-kauvery-violet" />
+                    <span className="absolute left-0 top-1.5 bottom-1.5 w-1 rounded-r-full bg-gradient-to-b from-kauvery-purple via-kauvery-violet to-kauvery-pink shadow-sm" />
                   )}
                   <span
                     className={`material-icons-round text-[18px] ${
-                      active ? 'text-kauvery-purple' : 'text-gray-500 group-hover:text-gray-700'
+                      active
+                        ? 'text-kauvery-purple'
+                        : 'text-gray-500 group-hover:text-kauvery-violet'
                     }`}
                   >
                     {item.icon}
@@ -250,10 +261,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
 
         {/* Footer / Profile */}
-        <div className="p-4 mt-auto border-t border-gray-200/70 bg-white/60">
-          <div className="bg-gradient-to-br from-white via-white to-purple-50 border border-gray-200 rounded-2xl p-4 shadow-sm">
+        <div className="p-4 mt-auto border-t border-purple-100/80 bg-gradient-to-t from-purple-50/30 to-transparent">
+          <div className="bg-gradient-to-br from-white via-purple-50/30 to-pink-50/40 border border-purple-200/40 rounded-2xl p-4 shadow-kauvery-card">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-purple-100 to-purple-50 flex items-center justify-center text-kauvery-purple font-black border border-purple-200 shadow-sm">
+              <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-kauvery-purple to-kauvery-violet flex items-center justify-center text-white text-sm font-black border border-white/30 shadow-md shadow-purple-300/40">
                 {currentRole.charAt(0)}
               </div>
               <div className="min-w-0 flex-1">

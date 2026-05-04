@@ -26,7 +26,25 @@
             },
             fontFamily: {
               sans: ['Poppins', 'sans-serif'],
-            }
+            },
+            boxShadow: {
+              'kauvery-soft': '0 12px 40px -12px rgba(150, 32, 103, 0.18)',
+              'kauvery-card': '0 4px 28px -6px rgba(162, 50, 147, 0.14), 0 0 0 1px rgba(150, 32, 103, 0.08)',
+              'kauvery-glow': '0 0 60px -12px rgba(238, 45, 103, 0.25)',
+            },
+            backgroundImage: {
+              'kauvery-mesh':
+                'radial-gradient(at 12% 18%, rgba(150,32,103,0.12) 0px, transparent 50%), radial-gradient(at 88% 12%, rgba(162,50,147,0.10) 0px, transparent 45%), radial-gradient(at 50% 90%, rgba(238,45,103,0.08) 0px, transparent 55%)',
+            },
+            keyframes: {
+              fadeIn: {
+                '0%': { opacity: '0', transform: 'translateY(8px)' },
+                '100%': { opacity: '1', transform: 'translateY(0)' },
+              },
+            },
+            animation: {
+              'fade-in': 'fadeIn 0.5s ease-out both',
+            },
           }
         }
       }
@@ -35,23 +53,41 @@
       @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&display=swap');
       body {
         font-family: 'Poppins', sans-serif;
-        background-color: #f8fafc;
-        color: #0f172a; /* Slate 900 */
+        background-color: #faf5f9;
+        background-image:
+          radial-gradient(ellipse 120% 80% at 0% -10%, rgba(150, 32, 103, 0.14), transparent 52%),
+          radial-gradient(ellipse 90% 60% at 100% 0%, rgba(162, 50, 147, 0.12), transparent 50%),
+          radial-gradient(ellipse 70% 50% at 50% 100%, rgba(238, 45, 103, 0.08), transparent 45%),
+          linear-gradient(180deg, #fdf8fc 0%, #f8f4fc 35%, #f5f3fa 100%);
+        color: #0f172a;
+        min-height: 100vh;
       }
-      /* Custom scrollbar */
+      /* Custom scrollbar — Kauvery tint */
       ::-webkit-scrollbar {
-        width: 8px;
-        height: 8px;
+        width: 9px;
+        height: 9px;
       }
       ::-webkit-scrollbar-track {
-        background: #f1f1f1; 
+        background: rgba(150, 32, 103, 0.06);
+        border-radius: 6px;
       }
       ::-webkit-scrollbar-thumb {
-        background: #94a3b8; 
-        border-radius: 4px;
+        background: linear-gradient(180deg, #c084b8, #962067);
+        border-radius: 6px;
+        border: 2px solid rgba(255, 255, 255, 0.5);
       }
       ::-webkit-scrollbar-thumb:hover {
-        background: #64748b; 
+        background: linear-gradient(180deg, #a855c7, #7c1d5a);
+      }
+      /* Template sheets: hide inner scrollbar; height is set by JS autosize + export capture */
+      .kaizen-template-capture-root textarea {
+        overflow-y: hidden !important;
+        resize: none !important;
+      }
+      @supports (field-sizing: content) {
+        .kaizen-template-capture-root textarea {
+          field-sizing: content;
+        }
       }
     </style>
   <script type="importmap">

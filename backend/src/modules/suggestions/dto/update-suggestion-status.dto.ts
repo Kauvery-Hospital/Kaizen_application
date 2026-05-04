@@ -14,6 +14,11 @@ class ActorDto {
 
   @IsEnum(AppRole)
   role!: AppRole;
+
+  /** HRMS employee code — used to match assignee when names differ from stored text */
+  @IsOptional()
+  @IsString()
+  employeeCode?: string;
 }
 
 export class UpdateSuggestionStatusDto {
