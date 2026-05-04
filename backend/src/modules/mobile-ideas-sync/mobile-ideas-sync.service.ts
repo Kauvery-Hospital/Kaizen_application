@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { Cron } from '@nestjs/schedule';
 import { Pool } from 'pg';
 import { PrismaService } from '../../database/prisma.service';
-import { SyncStatus } from '@prisma/client';
+import { SuggestionSource, SyncStatus } from '@prisma/client';
 
 const IDEA_PREFIX = 'KH';
 
@@ -154,13 +154,13 @@ export class MobileIdeasSyncService {
           continue;
         }
 
-        const existing = await this.prisma.suggestion.findUnique({
-          where: { source_sourceId: { source: 'MOBILE' as any, sourceId } },
+        const existing = await this.prisma.suggestion.findFirst({
+          where: { source: SuggestionSource.MOBILE, sourceId },
           select: { id: true, status: true },
         });
 
         const payload = {
-          source: 'MOBILE' as any,
+          source: SuggestionSource.MOBILE,
           sourceId,
           theme: titleFromText(String(r.suggestion || '')),
           unit: String(r.unit || '').trim() || 'NA',
