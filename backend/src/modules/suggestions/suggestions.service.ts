@@ -5,8 +5,9 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { RoleCode } from '@prisma/client';
+import { Prisma, RoleCode } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
+import { BeReportQueryDto } from './dto/be-report-query.dto';
 import { CreateSuggestionDto } from './dto/create-suggestion.dto';
 import { UpdateSuggestionStatusDto } from './dto/update-suggestion-status.dto';
 import { AppRole, AppStatus, WorkflowEvent } from './suggestions.types';
@@ -246,7 +247,12 @@ export class SuggestionsService {
     return { ideaFolder: expected, ideaPaths: paths };
   }
 
-  async list(role?: AppRole, currentUserName?: string, userId?: string) {
+  async list(
+    role?: AppRole,
+    currentUserName?: string,
+    userId?: string,
+    currentUserEmployeeCode?: string,
+  ) {
     if (!role) {
       return await this.prisma.suggestion.findMany({
         orderBy: { createdAt: 'desc' },
@@ -307,13 +313,354 @@ export class SuggestionsService {
         const unitForStage = this.coordinatorRoutingUnitForStatus(s);
         if (!unitForStage) return false;
         if (!allowed.has(unitForStage.toLowerCase())) return false;
-        return this.filterByRole(role, s as any, currentUserName);
+        return this.filterByRole(
+          role,
+          s as any,
+          currentUserName,
+          currentUserEmployeeCode,
+        );
       });
     }
 
     return suggestions.filter((s) =>
-      this.filterByRole(role, s as any, currentUserName),
+      this.filterByRole(role, s as any, currentUserName, currentUserEmployeeCode),
     );
+  }
+
+  private static readonly BE_REPORT_PRE_STATUSES: AppStatus[] = [
+    AppStatus.IDEA_SUBMITTED,
+    AppStatus.IDEA_REJECTED,
+    AppStatus.APPROVED_FOR_ASSIGNMENT,
+    AppStatus.ASSIGNED_FOR_IMPLEMENTATION,
+  ];
+
+  private beReportInclude() {
+    return {
+      implementedKaizen: {
+        select: {
+          implementedCode: true,
+          ideaCode: true,
+        },
+      },
+    };
+  }
+
+  private beReportPhaseWhere(phase: 'pre' | 'post'): Prisma.SuggestionWhereInput {
+    return phase === 'pre'
+      ? { status: { in: SuggestionsService.BE_REPORT_PRE_STATUSES as unknown as string[] } }
+      : { status: { notIn: SuggestionsService.BE_REPORT_PRE_STATUSES as unknown as string[] } };
+  }
+
+  private beReportTextSearch(
+    q: string | undefined,
+    phase: 'pre' | 'post',
+  ): Prisma.SuggestionWhereInput {
+    const n = String(q ?? '').trim();
+    if (!n) return {};
+    const or: Prisma.SuggestionWhereInput[] = [
+      { code: { contains: n, mode: 'insensitive' } },
+      { theme: { contains: n, mode: 'insensitive' } },
+      { unit: { contains: n, mode: 'insensitive' } },
+      { department: { contains: n, mode: 'insensitive' } },
+      { employeeName: { contains: n, mode: 'insensitive' } },
+      { status: { contains: n, mode: 'insensitive' } },
+      { assignedImplementer: { contains: n, mode: 'insensitive' } },
+    ];
+    if (phase === 'post') {
+      or.push({
+        implementedKaizen: {
+          is: {
+            implementedCode: { contains: n, mode: 'insensitive' },
+          },
+        },
+      });
+    }
+    return { OR: or };
+  }
+
+  /**
+   * Paginated BE reporting API. Use `view=summary` for KPIs; `pre` / `post` for registers;
+   * `employees` for directory; `employee-ideas` for one person’s idea list.
+   */
+  async beReport(dto: BeReportQueryDto) {
+    const skip = dto.skip ?? 0;
+    const take = dto.take ?? 50;
+
+    if (dto.view === 'summary') {
+      const preStatuses = SuggestionsService.BE_REPORT_PRE_STATUSES as unknown as string[];
+      const [total, pre, rewarded, unitRows, departmentRows] = await Promise.all([
+        this.prisma.suggestion.count(),
+        this.prisma.suggestion.count({ where: { status: { in: preStatuses } } }),
+        this.prisma.suggestion.count({
+          where: { status: AppStatus.REWARDED as string },
+        }),
+        this.prisma.suggestion.findMany({
+          distinct: ['unit'],
+          where: { unit: { not: '' } },
+          select: { unit: true },
+          orderBy: { unit: 'asc' },
+        }),
+        this.prisma.suggestion.findMany({
+          distinct: ['department'],
+          where: { department: { not: '' } },
+          select: { department: true },
+          orderBy: { department: 'asc' },
+        }),
+      ]);
+      const post = Math.max(0, total - pre);
+      const inProgressKaizen = Math.max(0, post - rewarded);
+      return {
+        total,
+        pre,
+        post,
+        rewarded,
+        inProgressKaizen,
+        units: unitRows.map((r) => r.unit).filter(Boolean),
+        departments: departmentRows.map((r) => r.department).filter(Boolean),
+      };
+    }
+
+    if (dto.view === 'pre' || dto.view === 'post') {
+      const phase = dto.view;
+      const where: Prisma.SuggestionWhereInput = {
+        AND: [this.beReportPhaseWhere(phase), this.beReportTextSearch(dto.q, phase)],
+      };
+      const [items, total] = await Promise.all([
+        this.prisma.suggestion.findMany({
+          where,
+          orderBy: { createdAt: 'desc' },
+          skip,
+          take,
+          include: this.beReportInclude(),
+        }),
+        this.prisma.suggestion.count({ where }),
+      ]);
+      return { items, total };
+    }
+
+    if (dto.view === 'employees') {
+      return this.beReportEmployees(dto, skip, take);
+    }
+
+    if (dto.view === 'employee-ideas') {
+      return this.beReportEmployeeIdeas(dto, skip, take);
+    }
+
+    throw new BadRequestException('Invalid be-report view');
+  }
+
+  private norm(v?: string | null): string {
+    return String(v ?? '').trim();
+  }
+
+  private lc(v?: string | null): string {
+    return this.norm(v).toLowerCase();
+  }
+
+  /** Stable lowercase key for matching person display names (spacing / Unicode). */
+  private personNameKey(v?: string | null): string {
+    try {
+      return this.norm(v)
+        .normalize('NFKC')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .toLowerCase();
+    } catch {
+      return this.lc(v);
+    }
+  }
+
+  private async beReportEmployees(dto: BeReportQueryDto, skip: number, take: number) {
+    const rows = await this.prisma.suggestion.findMany({
+      select: {
+        employeeName: true,
+        assignedImplementer: true,
+        assignedImplementerCode: true,
+        department: true,
+        unit: true,
+      },
+    });
+
+    type Row = (typeof rows)[number];
+    type ImplBucket = { rows: Row[]; keyedByCode: boolean };
+
+    const submittedBy = new Map<string, Row[]>();
+    const implementedBy = new Map<string, ImplBucket>();
+
+    for (const r of rows) {
+      const submitKey = this.personNameKey(r.employeeName) || 'unknown';
+      if (!submittedBy.has(submitKey)) submittedBy.set(submitKey, []);
+      submittedBy.get(submitKey)!.push(r);
+
+      const code = this.norm(r.assignedImplementerCode).toLowerCase();
+      const nameKey = this.personNameKey(r.assignedImplementer);
+      if (!code && !nameKey) continue;
+      const implKey = code || nameKey;
+      if (!implementedBy.has(implKey)) {
+        implementedBy.set(implKey, { rows: [], keyedByCode: Boolean(code) });
+      }
+      const bucket = implementedBy.get(implKey)!;
+      bucket.rows.push(r);
+      bucket.keyedByCode = bucket.keyedByCode || Boolean(code);
+    }
+
+    const filter = dto.employeeFilter ?? 'all';
+    const keys =
+      filter === 'submitter'
+        ? new Set<string>([...submittedBy.keys()])
+        : filter === 'implementer'
+          ? new Set<string>([...implementedBy.keys()])
+          : new Set<string>([...submittedBy.keys(), ...implementedBy.keys()]);
+
+    type EmpRow = {
+      key: string;
+      name: string;
+      matchedByCode?: boolean;
+      department?: string;
+      unit?: string;
+      submittedCount: number;
+      implementedCount: number;
+    };
+
+    const merged: EmpRow[] = [];
+    for (const key of keys) {
+      const submitted = submittedBy.get(key) || [];
+      const implBucket = implementedBy.get(key);
+      const implemented = implBucket?.rows ?? [];
+      const best = submitted[0] || implemented[0];
+
+      let name: string;
+      if (submitted.length && !implemented.length) {
+        name =
+          this.norm(submitted[0]?.employeeName) ||
+          (key === 'unknown' ? 'Unknown employee' : key);
+      } else if (!submitted.length && implemented.length) {
+        name =
+          this.norm(implemented[0]?.assignedImplementer) ||
+          this.norm(implemented[0]?.assignedImplementerCode) ||
+          (key === 'unknown' ? 'Unknown employee' : key);
+      } else {
+        name =
+          this.norm(submitted[0]?.employeeName) ||
+          this.norm(implemented[0]?.assignedImplementer) ||
+          (key === 'unknown' ? 'Unknown employee' : key);
+      }
+
+      merged.push({
+        key,
+        name,
+        matchedByCode: implBucket?.keyedByCode,
+        department: this.norm(best?.department) || undefined,
+        unit: this.norm(best?.unit) || undefined,
+        submittedCount: submitted.length,
+        implementedCount: implemented.length,
+      });
+    }
+
+    merged.sort(
+      (a, b) =>
+        b.submittedCount +
+        b.implementedCount -
+        (a.submittedCount + a.implementedCount),
+    );
+
+    const q = this.lc(dto.q);
+    const u = this.lc(dto.unit);
+    const d = this.lc(dto.department);
+    const unitFilter = dto.unit ?? 'all';
+    const deptFilter = dto.department ?? 'all';
+
+    let filtered = merged.filter((e) => {
+      if (unitFilter !== 'all' && this.lc(e.unit) !== u) return false;
+      if (deptFilter !== 'all' && this.lc(e.department) !== d) return false;
+      return true;
+    });
+
+    if (q) {
+      filtered = filtered.filter((e) => {
+        const hay = `${e.name} ${e.key} ${e.department || ''} ${e.unit || ''}`.toLowerCase();
+        return hay.includes(q);
+      });
+    }
+
+    const total = filtered.length;
+    const items = filtered.slice(skip, skip + take);
+    return { items, total };
+  }
+
+  private async beReportEmployeeIdeas(dto: BeReportQueryDto, skip: number, take: number) {
+    const rawKey = String(dto.employeeKey ?? '').trim();
+    const mode = dto.ideaMode ?? 'submitted';
+    if (!rawKey) {
+      return { items: [] as unknown[], total: 0 };
+    }
+
+    const key =
+      dto.employeeByCode && mode === 'implemented'
+        ? this.norm(rawKey).toLowerCase()
+        : rawKey === 'unknown'
+          ? 'unknown'
+          : this.personNameKey(rawKey);
+
+    const needle = String(dto.q ?? '').trim();
+    const p = needle ? `%${needle.replace(/%/g, '\\%').replace(/_/g, '\\_')}%` : '';
+
+    const employeeMatch =
+      mode === 'submitted'
+        ? key === 'unknown'
+          ? Prisma.sql`(s.employee_name IS NULL OR TRIM(s.employee_name) = '')`
+          : Prisma.sql`LOWER(TRIM(REGEXP_REPLACE(COALESCE(s.employee_name, ''), '[[:space:]]+', ' ', 'g'))) = ${key}`
+        : dto.employeeByCode
+          ? Prisma.sql`LOWER(TRIM(COALESCE(s.assigned_implementer_code, ''))) = ${key} AND TRIM(COALESCE(s.assigned_implementer_code, '')) <> ''`
+          : Prisma.sql`LOWER(TRIM(REGEXP_REPLACE(COALESCE(s.assigned_implementer, ''), '[[:space:]]+', ' ', 'g'))) = ${key} AND TRIM(COALESCE(s.assigned_implementer, '')) <> ''`;
+
+    const searchSql = needle
+      ? Prisma.sql` AND (
+          s.code ILIKE ${p}
+          OR s.theme ILIKE ${p}
+          OR s.unit ILIKE ${p}
+          OR s.department ILIKE ${p}
+          OR s.employee_name ILIKE ${p}
+          OR s.status ILIKE ${p}
+          OR s.assigned_implementer ILIKE ${p}
+          OR s.assigned_implementer_code ILIKE ${p}
+          OR EXISTS (
+            SELECT 1 FROM implemented_kaizen k
+            WHERE k.suggestion_id = s.id AND k.implemented_code ILIKE ${p}
+          )
+        )`
+      : Prisma.empty;
+
+    const idRows = await this.prisma.$queryRaw<{ id: string }[]>(Prisma.sql`
+      SELECT s.id
+      FROM suggestions s
+      WHERE ${employeeMatch}
+      ${searchSql}
+      ORDER BY s.created_at DESC
+      OFFSET ${skip} LIMIT ${take}
+    `);
+
+    const countRows = await this.prisma.$queryRaw<{ c: bigint }[]>(Prisma.sql`
+      SELECT COUNT(*)::bigint AS c
+      FROM suggestions s
+      WHERE ${employeeMatch}
+      ${searchSql}
+    `);
+    const total = Number(countRows[0]?.c ?? 0);
+
+    const ids = idRows.map((r) => r.id);
+    if (!ids.length) {
+      return { items: [], total };
+    }
+
+    const items = await this.prisma.suggestion.findMany({
+      where: { id: { in: ids } },
+      include: this.beReportInclude(),
+    });
+    const order = new Map(ids.map((id, i) => [id, i]));
+    items.sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
+
+    return { items, total };
   }
 
   findOne(id: string) {
@@ -387,8 +734,13 @@ export class SuggestionsService {
           throw new BadRequestException('Remarks are required when marking as not approved.');
         }
       }
-      // 3) Unit Coordinator sends back after BE review
-      if (dto.status === AppStatus.IMPLEMENTATION_DONE) {
+      // 3) Unit Coordinator send-back after BE review (not implementer resubmitting template)
+      if (
+        current.status === AppStatus.BE_REVIEW_DONE &&
+        dto.status === AppStatus.IMPLEMENTATION_DONE &&
+        (dto.actor.role === AppRole.UNIT_COORDINATOR ||
+          dto.actor.role === AppRole.ADMIN)
+      ) {
         const remark = String((safeExtra as any).coordinatorSuggestion ?? '').trim();
         if (!remark) {
           throw new BadRequestException('Remarks are required when marking as not approved.');
@@ -584,7 +936,7 @@ export class SuggestionsService {
   }
 
   private sanitizeExtraData(
-    actor: { name: string; role: AppRole },
+    actor: { name: string; role: AppRole; employeeCode?: string },
     current: any,
     extraData: Record<string, unknown>,
   ): Record<string, unknown> {
@@ -632,11 +984,25 @@ export class SuggestionsService {
     if (touchesWork) {
       const assignee = (current.assignedImplementer || '').trim().toLowerCase();
       const actorName = (actor.name || '').trim().toLowerCase();
-      const isAssignedImplementer =
-        actor.role === AppRole.IMPLEMENTER &&
-        (!assignee || (Boolean(actorName) && assignee === actorName));
+      const assigneeCode = (current.assignedImplementerCode || '').trim().toLowerCase();
+      const actorCode = (actor.employeeCode || '').trim().toLowerCase();
+      let isAssignedImplementer = false;
+      if (actor.role === AppRole.IMPLEMENTER) {
+        if (assigneeCode && actorCode) {
+          isAssignedImplementer = assigneeCode === actorCode;
+        } else if (!assignee && !assigneeCode) {
+          isAssignedImplementer = true;
+        } else if (assignee && actorName) {
+          isAssignedImplementer = assignee === actorName;
+        }
+      }
 
-      if (!isAssignedImplementer) {
+      const canSetImplementationFields =
+        isAssignedImplementer ||
+        actor.role === AppRole.BUSINESS_EXCELLENCE ||
+        actor.role === AppRole.ADMIN;
+
+      if (!canSetImplementationFields) {
         const {
           implementationProgress: _p,
           implementationUpdate: _u,
@@ -664,6 +1030,7 @@ export class SuggestionsService {
     role: AppRole,
     suggestion: any,
     currentUserName?: string,
+    currentUserEmployeeCode?: string,
   ) {
     if (role === AppRole.ADMIN) return true;
     if (role === AppRole.EMPLOYEE) {
@@ -681,24 +1048,38 @@ export class SuggestionsService {
         String(suggestion.employeeName || '').trim().toLowerCase() ===
           currentUserName.trim().toLowerCase();
       if (isOwn) return false;
+      // Include every in-flight status so assigned / verified / evaluation stages stay visible after screening approval.
       return [
         AppStatus.IDEA_SUBMITTED,
         AppStatus.APPROVED_FOR_ASSIGNMENT,
-        AppStatus.BE_REVIEW_DONE,
+        AppStatus.ASSIGNED_FOR_IMPLEMENTATION,
         AppStatus.IMPLEMENTATION_DONE,
+        AppStatus.BE_REVIEW_DONE,
+        AppStatus.VERIFIED_PENDING_APPROVAL,
+        AppStatus.BE_EVALUATION_PENDING,
+        AppStatus.REWARD_PENDING,
+        AppStatus.REWARDED,
       ].includes(suggestion.status);
     }
     if (role === AppRole.SELECTION_COMMITTEE)
       return suggestion.status === AppStatus.APPROVED_FOR_ASSIGNMENT;
     if (role === AppRole.IMPLEMENTER) {
-      const isAssignedToMe = currentUserName
-        ? suggestion.assignedImplementer === currentUserName
-        : true;
+      const sugCode = (suggestion.assignedImplementerCode || '')
+        .trim()
+        .toLowerCase();
+      const myCode = (currentUserEmployeeCode || '').trim().toLowerCase();
+      const sugName = (suggestion.assignedImplementer || '').trim().toLowerCase();
+      const myName = (currentUserName || '').trim().toLowerCase();
+      const isAssignedToMe = (() => {
+        if (myCode && sugCode) return sugCode === myCode;
+        if (myName && sugName) return sugName === myName;
+        if (!myCode && !myName) return true;
+        return false;
+      })();
       return (
         isAssignedToMe &&
         [
           AppStatus.ASSIGNED_FOR_IMPLEMENTATION,
-          AppStatus.IMPLEMENTATION_DONE,
           AppStatus.BE_REVIEW_DONE,
           AppStatus.BE_EVALUATION_PENDING,
           AppStatus.VERIFIED_PENDING_APPROVAL,
@@ -728,11 +1109,16 @@ export class SuggestionsService {
       const requiredApprovals = (suggestion.requiredApprovals ??
         []) as string[];
       const approvals = (suggestion.approvals ?? {}) as Record<string, boolean>;
-      return (
+      if (!requiredApprovals.includes(role)) return false;
+      // Pending this head’s sign-off
+      if (
         suggestion.status === AppStatus.VERIFIED_PENDING_APPROVAL &&
-        requiredApprovals.includes(role) &&
         !approvals[role]
-      );
+      )
+        return true;
+      // Already approved by this head (others pending, or workflow moved on)
+      if (approvals[role]) return true;
+      return false;
     }
     return true;
   }
@@ -761,6 +1147,7 @@ export class SuggestionsService {
       ],
       [`${AppStatus.BE_REVIEW_DONE}->${AppStatus.IMPLEMENTATION_DONE}`]: [
         AppRole.UNIT_COORDINATOR,
+        AppRole.IMPLEMENTER,
         AppRole.ADMIN,
       ],
       [`${AppStatus.APPROVED_FOR_ASSIGNMENT}->${AppStatus.ASSIGNED_FOR_IMPLEMENTATION}`]:

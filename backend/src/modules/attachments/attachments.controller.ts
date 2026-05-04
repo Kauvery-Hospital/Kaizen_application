@@ -18,7 +18,8 @@ import {
 import { AttachmentsService } from './attachments.service';
 
 const MAX_FILES = 20;
-const MAX_FILE_BYTES = 15 * 1024 * 1024;
+/** Per-file limit for idea + Kaizen template uploads (includes slide videos). */
+const MAX_FILE_BYTES = 100 * 1024 * 1024;
 
 @Controller('attachments')
 @UseGuards(JwtAuthGuard)

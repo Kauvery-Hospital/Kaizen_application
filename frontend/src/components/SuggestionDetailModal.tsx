@@ -1,6 +1,14 @@
 
 import React, { useEffect, useRef, useState } from 'react';
-import { Suggestion, Status, Role, RewardEvaluation, type Comment } from '../types';
+import {
+  Suggestion,
+  Status,
+  Role,
+  RewardEvaluation,
+  type Comment,
+  type User,
+} from '../types';
+import { resolveImplementationPatchActor } from '../utils/implementationPatchActor';
 import { STATUS_COLORS } from '../constants';
 import { HOD_DIRECTORY, HOD_DEPARTMENT_OPTIONS } from '../constants/hodDirectory';
 import { analyzeSuggestion } from '../services/geminiService';
@@ -14,12 +22,21 @@ interface ModalProps {
   onOpenTemplatePage?: (suggestion: Suggestion, opts?: { edit?: boolean }) => void;
   role: Role;
   currentUserName?: string;
-  onUpdateStatus: (id: string, status: Status, extraData?: Partial<Suggestion>) => Promise<void> | void;
-  initialView?: 'default' | 'tracking';
+  /** Defaults to `[role]` when omitted; used to pick Implementer vs sidebar role on PATCH */
+  userRoles?: Role[];
+  onUpdateStatus: (
+    id: string,
+    status: Status,
+    extraData?: Partial<Suggestion>,
+    actorRoleOverride?: Role,
+  ) => Promise<void> | void;
+  initialView?: 'default' | 'tracking' | 'hod-review';
   apiBase: string;
   accessToken: string;
   unitOptions: { id: string; code: string; name: string }[];
   departmentOptions: { id: string; name: string }[];
+  /** Used with {@link resolveImplementationPatchActor} so assignees are not treated as Unit Coordinator on submit */
+  implementationActorUser?: User | null;
 }
 
 export const SuggestionDetailModal: React.FC<ModalProps> = ({
@@ -29,12 +46,14 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
   onOpenTemplatePage,
   role,
   currentUserName = '',
+  userRoles,
   onUpdateStatus,
   initialView = 'default',
   apiBase,
   accessToken,
   unitOptions,
   departmentOptions,
+  implementationActorUser,
 }) => {
   const [toast, setToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const toastTimer = useRef<number | null>(null);
@@ -111,6 +130,8 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
   const [selectedDeptForHod, setSelectedDeptForHod] = useState('');
   const [selectedHodUserName, setSelectedHodUserName] = useState('');
   const [coordinatorSuggestion, setCoordinatorSuggestion] = useState('');
+
+  const effectiveRoles = userRoles?.length ? userRoles : [role];
 
   useEffect(() => {
     if (suggestion && isOpen) {
@@ -345,11 +366,19 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
         const changed = collectEditedFields(suggestion, data);
       (async () => {
         try {
-          await onUpdateStatus(suggestion.id, Status.IMPLEMENTATION_DONE, {
-          ...data,
-          beEditedFields: Array.from(new Set([...(suggestion.beEditedFields || []), ...changed])),
-          beReviewNotes: 'Template updated by Business Excellence review.',
-          });
+          const beActor = effectiveRoles.includes(Role.BUSINESS_EXCELLENCE)
+            ? Role.BUSINESS_EXCELLENCE
+            : undefined;
+          await onUpdateStatus(
+            suggestion.id,
+            Status.IMPLEMENTATION_DONE,
+            {
+              ...data,
+              beEditedFields: Array.from(new Set([...(suggestion.beEditedFields || []), ...changed])),
+              beReviewNotes: 'Template updated by Business Excellence review.',
+            },
+            beActor,
+          );
           showToast('success', 'Template updated');
           setIsImplementationMode(false);
           setIsBeTemplateEditMode(false);
@@ -361,14 +390,24 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
       }
       (async () => {
         try {
-          await onUpdateStatus(suggestion.id, Status.IMPLEMENTATION_DONE, {
-            ...data,
-            implementationProgress: 100,
-            implementationStage: 'Completed',
-            implementationDate: new Date().toISOString().split('T')[0],
-            // Keep a snapshot of the submitted template (used for preview/export later)
-            implementationDraft: data,
-          });
+          const implActor =
+            implementationActorUser != null && suggestion
+              ? resolveImplementationPatchActor(suggestion, implementationActorUser)
+              : effectiveRoles.includes(Role.IMPLEMENTER)
+                ? Role.IMPLEMENTER
+                : undefined;
+          await onUpdateStatus(
+            suggestion.id,
+            Status.IMPLEMENTATION_DONE,
+            {
+              ...data,
+              implementationProgress: 100,
+              implementationStage: 'Completed',
+              implementationDate: new Date().toISOString().split('T')[0],
+              implementationDraft: data,
+            },
+            implActor,
+          );
           showToast('success', 'Implementation report submitted');
           setIsImplementationMode(false);
         } catch {
@@ -380,10 +419,21 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
   const handleImplementationDraftSave = (data: Partial<Suggestion>) => {
       (async () => {
         try {
-          await onUpdateStatus(suggestion.id, Status.ASSIGNED_FOR_IMPLEMENTATION, {
-            ...data,
-            implementationUpdateDate: new Date().toISOString().split('T')[0],
-          });
+          const implActor =
+            implementationActorUser != null && suggestion
+              ? resolveImplementationPatchActor(suggestion, implementationActorUser)
+              : effectiveRoles.includes(Role.IMPLEMENTER)
+                ? Role.IMPLEMENTER
+                : undefined;
+          await onUpdateStatus(
+            suggestion.id,
+            suggestion.status as Status,
+            {
+              ...data,
+              implementationUpdateDate: new Date().toISOString().split('T')[0],
+            },
+            implActor,
+          );
           showToast('success', 'Draft saved');
         } catch {
           showToast('error', 'Failed to save draft');
@@ -393,14 +443,35 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
 
   // 4. Coordinator: Verify and Select Approvers
   const handleVerification = () => {
+      if (selectedApprovers.length === 0) {
+        showToast(
+          'error',
+          'Select at least one head (Quality, Finance, or HR). Each will approve in their queue.',
+        );
+        return;
+      }
       onUpdateStatus(suggestion.id, Status.VERIFIED_PENDING_APPROVAL, {
         coordinatorSuggestion,
         approvals: {},
         requiredApprovals: selectedApprovers,
         hodApproverNames,
-        // Populate template footer "Validated By — Department In-charger / HOD" with the approving Unit Coordinator.
         validatedBy: suggestion.validatedBy || currentUserName || 'Unit Coordinator',
       });
+  };
+
+  const HEAD_APPROVER_CHIPS: { role: Role; short: string }[] = [
+    { role: Role.QUALITY_HOD, short: 'Quality' },
+    { role: Role.FINANCE_HOD, short: 'Finance' },
+    { role: Role.HR_HEAD, short: 'HR' },
+  ];
+
+  const hodRoleLabel = (r: Role) => {
+    const map: Partial<Record<Role, string>> = {
+      [Role.QUALITY_HOD]: 'Head — Quality',
+      [Role.FINANCE_HOD]: 'Head — Finance',
+      [Role.HR_HEAD]: 'Head — HR',
+    };
+    return map[r] || String(r);
   };
 
   const handleBEReviewApproval = () => {
@@ -759,14 +830,12 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
       templatePaths.length > 0);
 
   const downloadRelFileAsBlob = async (relPath: string, filename: string) => {
-    debugger
     const rel = String(relPath || '').trim();
     if (!rel || !apiBase) throw new Error('Missing file path');
     const url = `${apiBase}/kaizen-files/${rel}`;
     // `/kaizen-files/*` is served as static assets; adding Authorization triggers a CORS preflight
     // that often fails for static routes. These files are public downloads.
     const res = await fetch(url, { method: 'GET', mode: 'cors', credentials: 'omit' });
-    console.log("res-->",res);
     if (!res.ok) throw new Error(await res.text());
     const blob = await res.blob();
     const blobUrl = URL.createObjectURL(blob);
@@ -869,8 +938,8 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
       return null;
     }
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900 bg-opacity-70 backdrop-blur-md p-4 overflow-y-auto">
-        <div className="w-full max-w-5xl my-8">
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900 bg-opacity-70 backdrop-blur-md p-4 [@media(orientation:landscape)]:p-2 overflow-y-auto">
+        <div className="w-full max-w-5xl my-8 [@media(orientation:landscape)]:max-w-none [@media(orientation:landscape)]:my-2 [@media(orientation:landscape)]:min-h-0">
           <SuggestionForm
             mode="implement"
             initialData={suggestion}
@@ -889,7 +958,7 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
   if (isTemplatePreviewMode || templateAssetPreview) {
     const previewLabel = templateAssetPreview ? templateAssetPreview.toUpperCase() : 'TEMPLATE';
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900 bg-opacity-70 backdrop-blur-md p-4 overflow-y-auto">
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900 bg-opacity-70 backdrop-blur-md p-4 [@media(orientation:landscape)]:p-2 overflow-y-auto">
         {toast && (
           <div className="fixed top-5 right-5 z-[60]">
             <div
@@ -904,7 +973,7 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
             </div>
           </div>
         )}
-        <div className="w-full max-w-6xl my-8 bg-white rounded-2xl border border-gray-200 shadow-2xl overflow-hidden">
+        <div className="w-full max-w-6xl my-8 [@media(orientation:landscape)]:max-w-none [@media(orientation:landscape)]:my-2 bg-white rounded-2xl border border-gray-200 shadow-2xl overflow-hidden min-w-0">
           <div className="px-6 py-4 border-b border-gray-200 bg-white flex justify-between items-start">
             <div>
               <div className="text-xs font-mono text-gray-600 font-bold">
@@ -950,7 +1019,6 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
                   try {
                     const out = await ensureFinalAssets();
                     if (!out) throw new Error('Failed');
-                    console.log("out-->",out);
                     await downloadRelFileAsBlob(
                       out.pptPath,
                       `${suggestion.code || suggestion.id}.pptx`,
@@ -1101,7 +1169,62 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
             </button>
         </div>
 
-        {initialView !== 'tracking' && <Tabs />}
+        {initialView !== 'tracking' && (
+          <>
+            {initialView === 'hod-review' && (
+              <div className="px-6 py-3 bg-gradient-to-r from-indigo-50 via-white to-purple-50 border-b border-indigo-100/80 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <div>
+                  <div className="text-[11px] font-black uppercase tracking-wide text-indigo-900/90">
+                    Head review
+                  </div>
+                  <p className="text-sm text-gray-800 font-semibold mt-0.5">
+                    Read the summary and submitted Kaizen template, then record your decision under Action
+                    &amp; Status.
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('overview')}
+                    className={`px-3 py-2 rounded-lg text-xs font-black border transition-colors ${
+                      activeTab === 'overview'
+                        ? 'bg-kauvery-purple text-white border-kauvery-purple'
+                        : 'bg-white text-gray-800 border-gray-300 hover:bg-gray-50'
+                    }`}
+                  >
+                    Summary
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => hasSubmittedTemplate && setActiveTab('template')}
+                    disabled={!hasSubmittedTemplate}
+                    className={`px-3 py-2 rounded-lg text-xs font-black border transition-colors ${
+                      !hasSubmittedTemplate
+                        ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed'
+                        : activeTab === 'template'
+                          ? 'bg-kauvery-purple text-white border-kauvery-purple'
+                          : 'bg-white text-gray-800 border-gray-300 hover:bg-gray-50'
+                    }`}
+                  >
+                    Submitted template
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('review')}
+                    className={`px-3 py-2 rounded-lg text-xs font-black border transition-colors ${
+                      activeTab === 'review'
+                        ? 'bg-kauvery-purple text-white border-kauvery-purple'
+                        : 'bg-white text-gray-800 border-gray-300 hover:bg-gray-50'
+                    }`}
+                  >
+                    Decision
+                  </button>
+                </div>
+              </div>
+            )}
+            <Tabs />
+          </>
+        )}
 
         {/* Content */}
         <div className="flex-1 overflow-y-auto p-6 bg-slate-50 text-gray-900">
@@ -1210,17 +1333,24 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
                       <div className="flex flex-wrap gap-2">
                         {(() => {
                           const b = suggestion.expectedBenefits || ({} as any);
-                          const items: Array<{ key: string; label: string; cls: string }> = [
-                            { key: 'productivity', label: 'Productivity', cls: 'bg-blue-50 border-blue-200 text-blue-900' },
-                            { key: 'quality', label: 'Quality', cls: 'bg-emerald-50 border-emerald-200 text-emerald-900' },
-                            { key: 'cost', label: 'Cost', cls: 'bg-amber-50 border-amber-200 text-amber-900' },
-                            { key: 'delivery', label: 'Delivery', cls: 'bg-indigo-50 border-indigo-200 text-indigo-900' },
-                            { key: 'safety', label: 'Safety', cls: 'bg-rose-50 border-rose-200 text-rose-900' },
-                            { key: 'energy', label: 'Energy', cls: 'bg-yellow-50 border-yellow-200 text-yellow-900' },
-                            { key: 'environment', label: 'Environment', cls: 'bg-teal-50 border-teal-200 text-teal-900' },
-                            { key: 'morale', label: 'Morale', cls: 'bg-purple-50 border-purple-200 text-purple-900' },
+                          const items: Array<{ key: string; label: string }> = [
+                            { key: 'productivity', label: 'Productivity' },
+                            { key: 'quality', label: 'Quality' },
+                            { key: 'cost', label: 'Cost' },
+                            { key: 'delivery', label: 'Delivery' },
+                            { key: 'safety', label: 'Safety' },
+                            { key: 'energy', label: 'Energy' },
+                            { key: 'environment', label: 'Environment' },
+                            { key: 'morale', label: 'Morale' },
                           ];
-                          const picked = items.filter((x) => Boolean((b as any)[x.key]));
+                          const tierOf = (raw: unknown): 'primary' | 'secondary' | null => {
+                            if (raw === 'secondary') return 'secondary';
+                            if (raw === 'primary' || raw === true) return 'primary';
+                            return null;
+                          };
+                          const picked = items
+                            .map((x) => ({ ...x, tier: tierOf((b as any)[x.key]) }))
+                            .filter((x) => x.tier !== null);
                           if (picked.length === 0) {
                             return (
                               <span className="text-xs font-semibold text-gray-600">
@@ -1231,9 +1361,14 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
                           return picked.map((x) => (
                             <span
                               key={x.key}
-                              className={`text-[11px] font-black px-2.5 py-1 rounded-full border ${x.cls}`}
+                              className={`text-[11px] font-black px-2.5 py-1 rounded-full border ${
+                                x.tier === 'secondary'
+                                  ? 'bg-amber-100 border-amber-300 text-amber-950'
+                                  : 'bg-emerald-100 border-emerald-300 text-emerald-950'
+                              }`}
                             >
                               {x.label}
+                              {x.tier === 'secondary' ? ' (secondary)' : ' (primary)'}
                             </span>
                           ));
                         })()}
@@ -1923,15 +2058,118 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
                 {role === Role.UNIT_COORDINATOR && suggestion.status === Status.BE_REVIEW_DONE && (
                   <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
                     <h4 className="text-sm font-black text-gray-900 mb-2">Unit Coordinator Approval</h4>
-                    <p className="text-xs text-gray-600 mb-4 font-semibold">Final coordinator approval after BE review, then send to BE Head scoring.</p>
+                    <p className="text-xs text-gray-600 mb-4 font-semibold">
+                      After BE review, choose which functional heads must approve. The idea appears only in those heads&apos;
+                      dashboards until each selected role has approved; then it moves to BE Head evaluation.
+                    </p>
 
                     <div className="mb-4">
-                      <label className="text-xs font-extrabold text-gray-700 block mb-1">Coordinator Suggestion</label>
+                      <label className="text-xs font-extrabold text-gray-700 block mb-1">
+                        Heads to approve <span className="text-red-600 font-black">*</span>
+                      </label>
+                      <p className="text-[11px] text-gray-500 mb-2">
+                        Toggle Quality, Finance, and HR as needed. Order does not matter — all selected must approve.
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        {HEAD_APPROVER_CHIPS.map(({ role: r, short }) => {
+                          const on = selectedApprovers.includes(r);
+                          return (
+                            <button
+                              key={r}
+                              type="button"
+                              onClick={() =>
+                                setSelectedApprovers((prev) =>
+                                  prev.includes(r) ? prev.filter((x) => x !== r) : [...prev, r],
+                                )
+                              }
+                              className={`px-3 py-2 rounded-lg text-xs font-black border transition-colors ${
+                                on
+                                  ? 'bg-kauvery-purple text-white border-kauvery-purple shadow-sm'
+                                  : 'bg-white text-gray-800 border-gray-300 hover:bg-gray-50'
+                              }`}
+                            >
+                              {short}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      {selectedApprovers.length > 0 && (
+                        <ul className="mt-3 space-y-1.5 text-[11px] text-gray-700 font-semibold">
+                          {selectedApprovers.map((r) => (
+                            <li
+                              key={r}
+                              className="flex items-center justify-between gap-2 rounded-md bg-slate-50 border border-slate-200 px-2 py-1.5"
+                            >
+                              <span>{hodRoleLabel(r)}</span>
+                              <button
+                                type="button"
+                                onClick={() => removeApprover(r)}
+                                className="text-red-700 hover:underline font-bold shrink-0"
+                              >
+                                Remove
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+
+                      <details className="mt-4 group">
+                        <summary className="text-xs font-extrabold text-gray-700 cursor-pointer list-none flex items-center gap-1">
+                          <span className="material-icons-round text-sm text-gray-500 group-open:rotate-90 transition-transform">
+                            chevron_right
+                          </span>
+                          Optional: add by department (Nursing, Pharmacy, etc.)
+                        </summary>
+                        <div className="mt-2 p-3 rounded-lg border border-dashed border-gray-300 bg-slate-50/80 space-y-2">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            <select
+                              value={selectedDeptForHod}
+                              onChange={(e) => {
+                                setSelectedDeptForHod(e.target.value);
+                                setSelectedHodUserName('');
+                              }}
+                              className="w-full border border-gray-300 rounded-lg px-2 py-2 text-xs font-medium text-gray-900 bg-white"
+                            >
+                              <option value="">Department…</option>
+                              {HOD_DEPARTMENT_OPTIONS.map((d) => (
+                                <option key={d} value={d}>
+                                  {d}
+                                </option>
+                              ))}
+                            </select>
+                            <select
+                              value={selectedHodUserName}
+                              onChange={(e) => setSelectedHodUserName(e.target.value)}
+                              disabled={!selectedDeptForHod}
+                              className="w-full border border-gray-300 rounded-lg px-2 py-2 text-xs font-medium text-gray-900 bg-white disabled:bg-gray-100"
+                            >
+                              <option value="">Named approver…</option>
+                              {selectedDeptForHod &&
+                                (HOD_DIRECTORY[selectedDeptForHod]?.users || []).map((u) => (
+                                  <option key={u} value={u}>
+                                    {u}
+                                  </option>
+                                ))}
+                            </select>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={addHodFromPicker}
+                            className="w-full sm:w-auto px-3 py-2 rounded-lg text-xs font-black border border-kauvery-purple text-kauvery-purple bg-white hover:bg-purple-50"
+                          >
+                            Add approver from department
+                          </button>
+                        </div>
+                      </details>
+                    </div>
+
+                    <div className="mb-4">
+                      <label className="text-xs font-extrabold text-gray-700 block mb-1">Coordinator remarks (optional)</label>
                       <textarea
                         value={coordinatorSuggestion}
                         onChange={e => setCoordinatorSuggestion(e.target.value)}
                         rows={2}
-                        placeholder="Add suggestion for implementer / audit note..."
+                        placeholder="Suggestion for implementer / audit note…"
                         className="w-full border border-gray-300 bg-white rounded-lg p-3 text-sm outline-none focus:ring-2 focus:ring-kauvery-purple text-gray-900 font-medium"
                       />
                     </div>
@@ -1978,7 +2216,7 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
                     </div>
                     <div className="flex flex-wrap gap-2">
                       <button onClick={handleVerification} className="bg-kauvery-purple text-white px-6 py-2 rounded-lg text-sm font-bold hover:bg-kauvery-violet shadow-sm">
-                        Approve & Send to BE Final Evaluation
+                        Send to selected heads for approval
                       </button>
                       <button
                         onClick={handleCoordinatorNotApproved}
@@ -2196,3 +2434,5 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
     </div>
   );
 };
+
+export default SuggestionDetailModal;

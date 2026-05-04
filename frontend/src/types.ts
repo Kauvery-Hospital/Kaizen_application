@@ -76,15 +76,16 @@ export interface Suggestion {
   dateSubmitted: string;
   employeeName: string; // Originator
   description: string; // Basic idea description
+  /** Idea phase may use booleans; Kaizen sheet may use primary / secondary highlights */
   expectedBenefits: {
-    productivity: boolean;
-    quality: boolean;
-    cost: boolean;
-    delivery: boolean;
-    safety: boolean;
-    energy: boolean;
-    environment: boolean;
-    morale: boolean;
+    productivity: boolean | 'primary' | 'secondary';
+    quality: boolean | 'primary' | 'secondary';
+    cost: boolean | 'primary' | 'secondary';
+    delivery: boolean | 'primary' | 'secondary';
+    safety: boolean | 'primary' | 'secondary';
+    energy: boolean | 'primary' | 'secondary';
+    environment: boolean | 'primary' | 'secondary';
+    morale: boolean | 'primary' | 'secondary';
   };
 
   /** Relative to server upload root, e.g. kaizen/EMP001/kaizen_idea */
@@ -159,6 +160,13 @@ export interface Suggestion {
   preparedBy?: string;
   validatedBy?: string;
   approvedBy?: string;
+  /** Sheet 2 signature block — user-entered (not auto-filled from directory) */
+  templateSigPreparedBy?: string;
+  /** Optional line under Prepared By, e.g. reporting relationship */
+  templateSigReportingTo?: string;
+  templateSigValidatedDeptHod?: string;
+  templateSigValidatedFinance?: string;
+  templateSigApprovedOpsHead?: string;
   result1?: string;
   result2?: string;
   result3?: string;
@@ -222,6 +230,7 @@ export type ViewType =
   | 'create'
   | 'pipeline'
   | 'be-overview'
+  | 'hod-desk'
   | 'users'
   | 'role-list'
   | 'template';

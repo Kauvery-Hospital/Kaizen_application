@@ -2,13 +2,14 @@
 import React, {
   useState,
   useEffect,
+  useLayoutEffect,
   useRef,
   useCallback,
   useMemo,
   useImperativeHandle,
 } from 'react';
+import { flushSync } from 'react-dom';
 import { Suggestion } from '../types';
-import { HOD_DIRECTORY } from '../constants/hodDirectory';
 import { toPng } from 'html-to-image';
 
 /** Tries common filenames / folder layouts under `frontend/public/images/` */
@@ -77,28 +78,113 @@ const HTML_TO_IMAGE_OPTS = {
 
 const EXPORT_FRAME = { width: 1920, height: 1080 } as const; // 16:9 landscape (sharper in PPT)
 
+/**
+ * Textareas keep a fixed height in the UI (scroll for overflow). html-to-image rasterizes
+ * that box only — long text is clipped like a scrollbar view. Before capture, expand each
+ * textarea to its full scrollHeight so PPT/PDF shows every line; then restore inline styles.
+ */
+function expandTextareasForExportCapture(root: HTMLElement): () => void {
+  const textareas = Array.from(root.querySelectorAll<HTMLTextAreaElement>('textarea'));
+  const backup = textareas.map((el) => ({
+    el,
+    height: el.style.height,
+    minHeight: el.style.minHeight,
+    maxHeight: el.style.maxHeight,
+    overflow: el.style.overflow,
+    overflowY: el.style.overflowY,
+  }));
+
+  for (const el of textareas) {
+    el.style.minHeight = '0';
+    el.style.maxHeight = 'none';
+    el.style.overflow = 'hidden';
+    el.style.overflowY = 'hidden';
+    el.style.height = '0px';
+    const full = el.scrollHeight;
+    el.style.height = `${Math.max(full, 24)}px`;
+  }
+
+  return () => {
+    for (const b of backup) {
+      b.el.style.height = b.height;
+      b.el.style.minHeight = b.minHeight;
+      b.el.style.maxHeight = b.maxHeight;
+      b.el.style.overflow = b.overflow;
+      b.el.style.overflowY = b.overflowY;
+    }
+  };
+}
+
+/** Live UI: stretch each textarea to its content so users do not rely on inner scrollbars. */
+function autosizeTextareasInElement(root: HTMLElement | null) {
+  if (!root) return;
+  root.querySelectorAll('textarea').forEach((node) => {
+    const el = node as HTMLTextAreaElement;
+    el.style.overflow = 'hidden';
+    el.style.overflowY = 'hidden';
+    el.style.height = '0px';
+    const full = el.scrollHeight;
+    el.style.height = `${Math.max(full, 28)}px`;
+  });
+}
+
+/** Fields inside capture sheets: print-style slate borders, subtle focus, autosize-friendly (resize-none). */
+const KTZ_TEXTAREA =
+  'w-full border border-slate-400 bg-white text-[11px] text-slate-900 leading-normal resize-none outline-none rounded-sm px-2 py-1.5 box-border focus:border-kauvery-purple focus:ring-1 focus:ring-kauvery-purple/30';
+const KTZ_SELECT =
+  'w-full border border-slate-400 bg-white rounded-sm px-2 py-1.5 text-xs text-slate-900 font-medium min-h-[2.5rem] box-border focus:border-kauvery-purple focus:ring-1 focus:ring-kauvery-purple/30';
+const KTZ_DATE =
+  'w-full border border-slate-400 bg-white rounded-sm px-2 py-1.5 text-xs text-slate-900 font-medium min-h-[2.5rem] box-border focus:border-kauvery-purple focus:ring-1 focus:ring-kauvery-purple/30';
+
+/** Sheet 2 PQCDSEM row: green = primary, yellow = secondary (stored in expectedBenefits JSON). */
+type PqcdsemLevel = 'none' | 'primary' | 'secondary';
+
+function readPqcdsemLevel(raw: unknown): PqcdsemLevel {
+  if (raw === 'primary' || raw === 'secondary') return raw;
+  if (raw === true) return 'primary';
+  return 'none';
+}
+
+function nextPqcdsemLevel(current: PqcdsemLevel): PqcdsemLevel {
+  if (current === 'none') return 'primary';
+  if (current === 'primary') return 'secondary';
+  return 'none';
+}
+
+function serializePqcdsemLevel(level: PqcdsemLevel): boolean | 'primary' | 'secondary' {
+  if (level === 'none') return false;
+  if (level === 'primary') return 'primary';
+  return 'secondary';
+}
+
 async function captureNodeAsLandscapePng(node: HTMLElement): Promise<string | null> {
   // Capture the template page into a fixed 16:9 landscape frame.
   // We scale the DOM to FIT the frame (contain) so all content is visible and zoom is consistent across sheets.
-  const w = Math.max(1, node.scrollWidth || node.clientWidth || 1);
-  const h = Math.max(1, node.scrollHeight || node.clientHeight || 1);
-  const scale = Math.min(EXPORT_FRAME.width / w, EXPORT_FRAME.height / h);
-  const dx = (EXPORT_FRAME.width - w * scale) / 2;
-  const dy = (EXPORT_FRAME.height - h * scale) / 2;
+  const restoreTextareas = expandTextareasForExportCapture(node);
+  try {
+    void node.offsetHeight;
+    const w = Math.max(1, node.scrollWidth || node.clientWidth || 1);
+    const h = Math.max(1, node.scrollHeight || node.clientHeight || 1);
+    const scale = Math.min(EXPORT_FRAME.width / w, EXPORT_FRAME.height / h);
+    const dx = (EXPORT_FRAME.width - w * scale) / 2;
+    const dy = (EXPORT_FRAME.height - h * scale) / 2;
 
-  const png = await toPng(node, {
-    ...(HTML_TO_IMAGE_OPTS as any),
-    width: EXPORT_FRAME.width,
-    height: EXPORT_FRAME.height,
-    style: {
-      transform: `translate(${dx}px, ${dy}px) scale(${scale})`,
-      transformOrigin: 'top left',
-      width: `${w}px`,
-      height: `${h}px`,
-      backgroundColor: '#ffffff',
-    },
-  } as any);
-  return png || null;
+    const png = await toPng(node, {
+      ...(HTML_TO_IMAGE_OPTS as any),
+      width: EXPORT_FRAME.width,
+      height: EXPORT_FRAME.height,
+      style: {
+        transform: `translate(${dx}px, ${dy}px) scale(${scale})`,
+        transformOrigin: 'top left',
+        width: `${w}px`,
+        height: `${h}px`,
+        backgroundColor: '#ffffff',
+      },
+    } as any);
+    return png || null;
+  } finally {
+    restoreTextareas();
+  }
 }
 
 /** Image fills the frame (object-cover). Optional native corner resize for team photo etc. */
@@ -229,6 +315,11 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
     preparedBy: '',
     validatedBy: '',
     approvedBy: '',
+    templateSigPreparedBy: '',
+    templateSigReportingTo: '',
+    templateSigValidatedDeptHod: '',
+    templateSigValidatedFinance: '',
+    templateSigApprovedOpsHead: '',
     result1: '',
     result2: '',
     result3: '',
@@ -267,6 +358,9 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
       },
     ] as ResultKpi[],
   });
+
+  /** Sheet 2 Why–Why: ≥3 rows; + adds up to 5 (declared before effects that sync from draft) */
+  const [whyWhyVisibleCount, setWhyWhyVisibleCount] = useState<3 | 4 | 5>(3);
 
   const [draftToast, setDraftToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [isDraftSaving, setIsDraftSaving] = useState(false);
@@ -367,6 +461,24 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
     }
   }, [initialData, mode, apiBase]);
 
+  useEffect(() => {
+    if (!initialData || mode === 'create') return;
+    const draft =
+      mode === 'implement' && (initialData as any)?.implementationDraft
+        ? (initialData as any).implementationDraft
+        : null;
+    const a = draft?.analysis ?? (initialData as any)?.analysis;
+    if (!a) {
+      setWhyWhyVisibleCount(3);
+      return;
+    }
+    const w4 = String(a.why4 ?? '').trim();
+    const w5 = String(a.why5 ?? '').trim();
+    if (w5) setWhyWhyVisibleCount(5);
+    else if (w4) setWhyWhyVisibleCount(4);
+    else setWhyWhyVisibleCount(3);
+  }, [initialData, mode]);
+
   const uploadSlide3Image = async (side: 'before' | 'after', files: FileList | null) => {
     if (!files || files.length === 0) return;
     const file = files[0];
@@ -438,6 +550,25 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
     }));
   };
 
+  const addWhyWhyRow = () => {
+    setWhyWhyVisibleCount((c) => (c < 5 ? ((c + 1) as 3 | 4 | 5) : c));
+  };
+
+  const removeLastWhyWhyRow = () => {
+    setWhyWhyVisibleCount((c) => {
+      if (c <= 3) return c;
+      const next = (c - 1) as 3 | 4 | 5;
+      setFormData((prev: any) => ({
+        ...prev,
+        analysis: {
+          ...prev.analysis,
+          ...(c === 5 ? { why5: '' } : { why4: '' }),
+        },
+      }));
+      return next;
+    });
+  };
+
   const handleTeamMemberPhotoUpload = async (
     employeeIdRaw: string,
     files: FileList | null,
@@ -506,11 +637,13 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
         try {
           // Let React paint export-safe placeholders (videos → static blocks).
           await new Promise<void>((r) => requestAnimationFrame(() => r()));
-          await new Promise((r) => setTimeout(r, 60));
+          await new Promise<void>((r) => requestAnimationFrame(() => r()));
+          await new Promise((r) => setTimeout(r, 80));
           for (let page = 1; page <= SHEETS; page++) {
-            setCurrentSheet(page);
+            flushSync(() => setCurrentSheet(page));
             await new Promise<void>((r) => requestAnimationFrame(() => r()));
-            await new Promise((r) => setTimeout(r, 80));
+            await new Promise<void>((r) => requestAnimationFrame(() => r()));
+            await new Promise((r) => setTimeout(r, 120));
             const node = templateSheetCaptureRef.current;
             if (!node) continue;
             const png = await captureNodeAsLandscapePng(node);
@@ -645,6 +778,22 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
   const templateSheetCaptureRef = useRef<HTMLDivElement | null>(null);
   const [isExportCaptureMode, setIsExportCaptureMode] = useState(false);
 
+  useLayoutEffect(() => {
+    if (isCreateMode) return;
+    let alive = true;
+    const run = () => {
+      if (alive) autosizeTextareasInElement(templateSheetCaptureRef.current);
+    };
+    run();
+    requestAnimationFrame(() => {
+      run();
+      requestAnimationFrame(run);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [isCreateMode, currentSheet, formData, isExportCaptureMode]);
+
   useImperativeHandle(
     ref,
     () => ({
@@ -654,12 +803,13 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
         try {
           const out: string[] = [];
           await new Promise<void>((r) => requestAnimationFrame(() => r()));
-          await new Promise((r) => setTimeout(r, 60));
+          await new Promise<void>((r) => requestAnimationFrame(() => r()));
+          await new Promise((r) => setTimeout(r, 80));
           for (let page = 1; page <= totalSheets; page++) {
-            setCurrentSheet(page);
-            // wait for React to paint the new sheet
+            flushSync(() => setCurrentSheet(page));
             await new Promise<void>((r) => requestAnimationFrame(() => r()));
-            await new Promise((r) => setTimeout(r, 80));
+            await new Promise<void>((r) => requestAnimationFrame(() => r()));
+            await new Promise((r) => setTimeout(r, 120));
             const node = templateSheetCaptureRef.current;
             if (!node) continue;
             const png = await captureNodeAsLandscapePng(node);
@@ -799,12 +949,29 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
       };
       const beforeNum = Number(k.before || 0);
       const afterNum = Number(k.after || 0);
-      const max = Math.max(beforeNum, afterNum, 1);
-      const beforePct = Math.max(8, Math.round((beforeNum / max) * 100));
-      const afterPct = Math.max(8, Math.round((afterNum / max) * 100));
+      const rawMax = Math.max(beforeNum, afterNum, 0);
+      // Absolute scale 0 → axisMax (reference-style chart); headroom above max value
+      const axisMax = rawMax <= 0 ? 1 : Math.max(1, Math.ceil(rawMax * 1.12));
+      const beforePct = axisMax > 0 ? (beforeNum / axisMax) * 100 : 0;
+      const afterPct = axisMax > 0 ? (afterNum / axisMax) * 100 : 0;
+      const hi = Math.ceil(axisMax);
+      const axisTicks =
+        hi <= 10
+          ? Array.from({ length: hi + 1 }, (_, j) => hi - j)
+          : [hi, Math.round(hi / 2), 0];
       const higher = Boolean(k.higherIsBetter);
       const improved = higher ? afterNum >= beforeNum : afterNum <= beforeNum;
-      return { ...k, beforeNum, afterNum, beforePct, afterPct, improved, safePage: 1 };
+      return {
+        ...k,
+        beforeNum,
+        afterNum,
+        beforePct,
+        afterPct,
+        axisMax,
+        axisTicks,
+        improved,
+        safePage: 1,
+      };
     });
     return fixed;
   }, [formData.resultKpis]);
@@ -830,19 +997,6 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
       approvedBy: dynamicApprovedBy,
     };
   };
-
-  const sheet2FooterDisplay = useMemo(() => {
-    const deptKey = formData.assignedDepartment || formData.department || '';
-    const hodForDept = deptKey ? HOD_DIRECTORY[deptKey] : undefined;
-    const validatedByName = String(formData.validatedBy || '').trim();
-    return {
-      reportingToHead: hodForDept?.users?.[0] || '—',
-      // Prefer the saved "validatedBy" (Unit Coordinator approval) over static directory mapping.
-      departmentInchargeHod: validatedByName || hodForDept?.users?.[0] || '—',
-      unitHeadFinance: HOD_DIRECTORY['Finance']?.users?.[0] || '—',
-      opsHead: HOD_DIRECTORY['Operations']?.users?.[0] || '—',
-    };
-  }, [formData.assignedDepartment, formData.department, formData.validatedBy]);
 
   const getDynamicHeaderFields = () => {
     const dynamicTitle = formData.theme || initialData?.theme || '';
@@ -984,7 +1138,7 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
   };
 
   return (
-    <div className="bg-white rounded-xl shadow-lg border border-gray-300 overflow-hidden">
+    <div className="bg-white rounded-xl shadow-lg border border-gray-300 overflow-hidden w-full min-w-0 max-w-full">
       
       <form onSubmit={handleSubmit}>
         
@@ -1039,11 +1193,11 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
 
                   <div className="mb-4">
                     <label className="block text-[11px] font-extrabold text-gray-700 uppercase tracking-wide mb-1">Area / Location</label>
-                    <input
-                      type="text"
+                    <textarea
                       required
+                      rows={2}
                       disabled={!isCreateMode}
-                      className="w-full bg-white border border-gray-300 rounded-md px-3 py-2.5 text-sm focus:ring-2 focus:ring-kauvery-purple outline-none text-gray-900 font-medium"
+                      className="w-full bg-white border border-gray-300 rounded-md px-3 py-2.5 text-sm focus:ring-2 focus:ring-kauvery-purple outline-none text-gray-900 font-medium resize-y min-h-[3rem] leading-relaxed"
                       value={formData.area}
                       onChange={e => setFormData({...formData, area: e.target.value})}
                     />
@@ -1051,11 +1205,11 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
 
                   <div className="mb-4">
                     <label className="block text-[11px] font-extrabold text-gray-700 uppercase tracking-wide mb-1">Idea Title / Short Description</label>
-                    <input
-                      type="text"
+                    <textarea
                       required
+                      rows={2}
                       disabled={!isCreateMode}
-                      className="w-full border border-gray-300 rounded-md px-3 py-2.5 text-sm outline-none transition-all bg-white focus:ring-2 focus:ring-kauvery-purple text-gray-900 font-medium"
+                      className="w-full border border-gray-300 rounded-md px-3 py-2.5 text-sm outline-none transition-all bg-white focus:ring-2 focus:ring-kauvery-purple text-gray-900 font-medium resize-y min-h-[3rem] leading-relaxed"
                       placeholder="E.g., Reduce patient wait time by optimizing queue..."
                       value={formData.theme}
                       onChange={e => setFormData({...formData, theme: e.target.value})}
@@ -1153,7 +1307,7 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
 
         {/* Section 2: Full Implementation Details (Only for Implement Mode) */}
         {!isCreateMode && (
-        <div className="p-8 space-y-8 animate-fade-in">
+        <div className="p-8 [@media(orientation:landscape)]:p-4 space-y-8 [@media(orientation:landscape)]:space-y-5 animate-fade-in w-full min-w-0">
             {editedFieldSet.size > 0 && (
               <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-xs text-amber-900 font-semibold">
                 BE edited fields: {Array.from(editedFieldSet).join(', ')}
@@ -1188,21 +1342,21 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
             {currentSheet === 1 && (
             <div
               ref={templateSheetCaptureRef}
-              className="bg-white border-2 border-gray-500 rounded-md overflow-hidden"
+              className="kaizen-template-capture-root bg-white border-2 border-slate-600 rounded-lg shadow-sm overflow-hidden"
             >
-              <div className="grid grid-cols-12">
+              <div className="grid grid-cols-12 items-stretch">
                 <div className="col-span-12 bg-kauvery-purple text-white text-center font-black text-lg py-2 border-b-2 border-gray-700">
                   Kaizen Sheet
                 </div>
-                <div className="col-span-6 bg-kauvery-purple text-white font-black px-2 py-1 border-r border-gray-700">
+                <div className="col-span-6 bg-kauvery-purple text-white font-black px-2 py-2 border-r border-gray-700 flex items-center min-h-[2.5rem]">
                   <span className="text-white/90">Title/Theme:</span>{' '}
-                  <span className="font-semibold">{getDynamicHeaderFields().title || '-'}</span>
+                  <span className="font-semibold break-words">{getDynamicHeaderFields().title || '-'}</span>
                 </div>
-                <div className="col-span-5 bg-kauvery-purple text-white font-black px-2 py-1 border-r border-gray-700">
+                <div className="col-span-5 bg-kauvery-purple text-white font-black px-2 py-2 border-r border-gray-700 flex items-center min-h-[2.5rem]">
                   <span className="text-white/90">Kaizen No:</span>{' '}
                   <span className="font-semibold">{getDynamicHeaderFields().kaizenNo || '-'}</span>
                 </div>
-                <div className="col-span-1 bg-white flex min-h-[36px] items-center justify-center border-l border-gray-200 p-1">
+                <div className="col-span-1 bg-white flex min-h-[2.5rem] items-center justify-center border-l border-gray-200 p-1">
                   <KauveryHeaderLogo />
                 </div>
               </div>
@@ -1387,29 +1541,29 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
             <>
             <div
               ref={templateSheetCaptureRef}
-              className="bg-white border-2 border-gray-500 rounded-md overflow-hidden"
+              className="kaizen-template-capture-root bg-white border-2 border-slate-600 rounded-lg shadow-sm overflow-hidden"
             >
               <div className="bg-kauvery-purple text-white text-center font-black text-lg py-2 border-b border-gray-700">
                 Kaizen Sheet
               </div>
-              <div className="grid grid-cols-12 border-b border-gray-500">
-                <div className="col-span-6 bg-kauvery-purple text-white font-black px-2 py-1 border-r border-gray-700">
+              <div className="grid grid-cols-12 border-b border-gray-500 items-stretch">
+                <div className="col-span-6 bg-kauvery-purple text-white font-black px-2 py-2 border-r border-gray-700 flex items-center min-h-[2.5rem]">
                   <span className="text-white/90">Title/Theme:</span>{' '}
-                  <span className="font-semibold">{getDynamicHeaderFields().title || '-'}</span>
+                  <span className="font-semibold break-words">{getDynamicHeaderFields().title || '-'}</span>
                 </div>
-                <div className="col-span-5 bg-kauvery-purple text-white font-black px-2 py-1 border-r border-gray-700">
+                <div className="col-span-5 bg-kauvery-purple text-white font-black px-2 py-2 border-r border-gray-700 flex items-center min-h-[2.5rem]">
                   <span className="text-white/90">Kaizen No:</span>{' '}
                   <span className="font-semibold">{getDynamicHeaderFields().kaizenNo || '-'}</span>
                 </div>
-                <div className="col-span-1 bg-white flex min-h-[36px] items-center justify-center border-l border-gray-200 p-1">
+                <div className="col-span-1 bg-white flex min-h-[2.5rem] items-center justify-center border-l border-gray-200 p-1">
                   <KauveryHeaderLogo />
                 </div>
               </div>
-              <div className="grid grid-cols-12 border-b border-gray-500 text-[11px] font-bold text-blue-900">
-                <div className="col-span-2 border-r border-gray-500 p-2">
-                  Category:
+              <div className="grid grid-cols-12 border-b border-slate-500 text-[11px] font-bold text-slate-800 items-stretch bg-slate-50/50">
+                <div className="col-span-2 border-r border-slate-400 p-2 flex flex-col gap-1.5 min-h-[5.25rem] bg-white">
+                  <span className="shrink-0 leading-tight text-slate-700 font-bold text-[11px]">Category:</span>
                   <select
-                    className="w-full border border-gray-300 mt-1 rounded px-1 py-1 text-xs text-gray-900 font-medium"
+                    className={`${KTZ_SELECT} mt-auto`}
                     value={formData.category || 'Clinical'}
                     onChange={e => setFormData({ ...formData, category: e.target.value })}
                   >
@@ -1417,68 +1571,80 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                     <option value="Supportive">Supportive</option>
                   </select>
                 </div>
-                <div className="col-span-2 border-r border-gray-500 p-2">
-                  Unit:
-                  <input
-                    className="w-full border border-gray-300 mt-1 rounded px-1 py-1 text-xs text-gray-900 font-medium"
+                <div className="col-span-2 border-r border-slate-400 p-2 flex flex-col gap-1.5 min-h-[5.25rem] bg-white">
+                  <span className="shrink-0 leading-tight text-slate-700 font-bold text-[11px]">Unit:</span>
+                  <textarea
+                    spellCheck={false}
+                    rows={2}
+                    className={`${KTZ_TEXTAREA} flex-1 min-h-[2.5rem]`}
                     value={formData.unit || ''}
                     onChange={e => setFormData({ ...formData, unit: e.target.value })}
                   />
                 </div>
-                <div className="col-span-2 border-r border-gray-500 p-2">
-                  Area / Location:
-                  <input
-                    className="w-full border border-gray-300 mt-1 rounded px-1 py-1 text-xs text-gray-900 font-medium"
+                <div className="col-span-2 border-r border-slate-400 p-2 flex flex-col gap-1.5 min-h-[5.25rem] bg-white">
+                  <span className="shrink-0 leading-tight text-slate-700 font-bold text-[11px]">Area / Location:</span>
+                  <textarea
+                    spellCheck={false}
+                    rows={2}
+                    className={`${KTZ_TEXTAREA} flex-1 min-h-[2.5rem]`}
                     value={formData.area || ''}
                     onChange={e => setFormData({ ...formData, area: e.target.value })}
                   />
                 </div>
-                <div className="col-span-2 border-r border-gray-500 p-2">
-                  Start Date:
+                <div className="col-span-2 border-r border-slate-400 p-2 flex flex-col gap-1.5 min-h-[5.25rem] bg-white">
+                  <span className="shrink-0 leading-tight text-slate-700 font-bold text-[11px]">Start Date:</span>
                   <input
                     type="date"
-                    className="w-full border border-gray-300 mt-1 rounded px-1 py-1 text-xs text-gray-900 font-medium"
+                    className={`${KTZ_DATE} mt-auto`}
                     value={formData.startDate || ''}
                     onChange={e => setFormData({ ...formData, startDate: e.target.value })}
                   />
                 </div>
-                <div className="col-span-2 border-r border-gray-500 p-2">
-                  Completion Date:
+                <div className="col-span-2 border-r border-slate-400 p-2 flex flex-col gap-1.5 min-h-[5.25rem] bg-white">
+                  <span className="shrink-0 leading-tight text-slate-700 font-bold text-[11px]">Completion Date:</span>
                   <input
                     type="date"
-                    className="w-full border border-gray-300 mt-1 rounded px-1 py-1 text-xs text-gray-900 font-medium"
+                    className={`${KTZ_DATE} mt-auto`}
                     value={formData.completionDate || ''}
                     onChange={e => setFormData({ ...formData, completionDate: e.target.value })}
                   />
                 </div>
-                <div className="col-span-2 p-2">
-                  Kaizen No:
-                  <div className="mt-1 text-sm font-semibold text-gray-900">{getDynamicHeaderFields().kaizenNo || '—'}</div>
+                <div className="col-span-2 p-2 flex flex-col gap-1.5 min-h-[5.25rem] justify-between">
+                  <span className="shrink-0 leading-tight">Kaizen No:</span>
+                  <div className="text-sm font-semibold text-gray-900 leading-tight min-h-[2.5rem] flex items-center border border-transparent px-0.5">
+                    {getDynamicHeaderFields().kaizenNo || '—'}
+                  </div>
                 </div>
               </div>
 
-              <div className="grid grid-cols-12 border-b border-gray-500">
+              <div className="grid grid-cols-12 border-b border-slate-500 items-stretch">
                 {/* Left: Problem / Present / Why-Why / Counter Measure */}
-                <div className="col-span-6 border-r border-gray-500 flex flex-col min-h-[520px]">
-                  <div className="text-xs font-black text-center border-b border-gray-500 py-1 bg-gray-50">Problem / Present Status</div>
+                <div className="col-span-6 border-r border-slate-400 flex flex-col min-w-0 bg-white">
+                  <div className="text-xs font-black text-center border-b border-slate-500 py-2 bg-slate-700 text-white tracking-wide">
+                    Problem / Present Status
+                  </div>
 
-                  <div className="flex border-b border-gray-300 flex-1 min-h-[120px]">
+                  <div className="flex border-b border-slate-300">
                     <div
-                      className="w-9 shrink-0 border-r border-gray-300 bg-gray-100 flex items-center justify-center py-2"
+                      className="w-11 shrink-0 border-r border-slate-400 bg-slate-100 flex items-stretch justify-center py-3 text-slate-700"
                       style={{ writingMode: 'vertical-rl' }}
                     >
-                      <span className="text-[11px] font-black tracking-wide">Problem</span>
+                      <span className="text-[11px] font-black tracking-[0.2em] my-auto uppercase">Problem</span>
                     </div>
-                    <div className="flex-1 flex flex-col">
+                    <div className="flex-1 flex flex-col min-w-0 divide-y divide-slate-200">
                       {(['What', 'Where', 'When'] as const).map((label, idx) => (
                         <div
                           key={label}
-                          className={`grid grid-cols-5 text-xs flex-1 ${idx < 2 ? 'border-b border-gray-200' : ''}`}
+                          className="grid grid-cols-[5.25rem_minmax(0,1fr)] text-xs items-stretch min-h-0"
                         >
-                          <div className="col-span-1 border-r border-gray-200 p-1.5 font-bold text-gray-800">{label}:</div>
-                          <div className="col-span-4 p-1.5">
-                            <input
-                              className="w-full border border-gray-300 rounded px-1 py-1 text-xs text-gray-900"
+                          <div className="border-r border-slate-300 bg-slate-50 px-2 py-2 font-bold text-slate-700 flex items-center justify-end text-right text-[11px] leading-snug">
+                            {label}:
+                          </div>
+                          <div className="p-1 flex min-h-0 bg-white">
+                            <textarea
+                              spellCheck={false}
+                              rows={2}
+                              className={`${KTZ_TEXTAREA} min-h-[2.75rem]`}
                               value={
                                 idx === 0
                                   ? formData.problem?.what || ''
@@ -1497,23 +1663,29 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                     </div>
                   </div>
 
-                  <div className="flex border-b border-gray-300 flex-1 min-h-[80px]">
+                  <div className="flex border-b border-slate-300">
                     <div
-                      className="w-9 shrink-0 border-r border-gray-300 bg-gray-100 flex items-center justify-center py-2"
+                      className="w-11 shrink-0 border-r border-slate-400 bg-slate-100 flex items-stretch justify-center py-3 text-slate-700"
                       style={{ writingMode: 'vertical-rl' }}
                     >
-                      <span className="text-[11px] font-black tracking-wide">Present Status</span>
+                      <span className="text-[10px] font-black tracking-wide my-auto text-center leading-tight">
+                        Present Status
+                      </span>
                     </div>
-                    <div className="flex-1 flex flex-col">
+                    <div className="flex-1 flex flex-col min-w-0 divide-y divide-slate-200">
                       {(['How', 'How Much'] as const).map((label, idx) => (
                         <div
                           key={label}
-                          className={`grid grid-cols-5 text-xs flex-1 ${idx === 0 ? 'border-b border-gray-200' : ''}`}
+                          className="grid grid-cols-[5.25rem_minmax(0,1fr)] text-xs items-stretch min-h-0"
                         >
-                          <div className="col-span-1 border-r border-gray-200 p-1.5 font-bold text-gray-800">{label}:</div>
-                          <div className="col-span-4 p-1.5">
-                            <input
-                              className="w-full border border-gray-300 rounded px-1 py-1 text-xs text-gray-900"
+                          <div className="border-r border-slate-300 bg-slate-50 px-2 py-2 font-bold text-slate-700 flex items-center justify-end text-right text-[11px] leading-snug">
+                            {label}:
+                          </div>
+                          <div className="p-1 flex min-h-0 bg-white">
+                            <textarea
+                              spellCheck={false}
+                              rows={2}
+                              className={`${KTZ_TEXTAREA} min-h-[2.75rem]`}
                               value={idx === 0 ? formData.problem?.how || '' : formData.howMuch || ''}
                               onChange={e =>
                                 idx === 0
@@ -1527,33 +1699,68 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                     </div>
                   </div>
 
-                  <div className="border-b border-gray-500 flex flex-col flex-1">
-                    <div className="bg-kauvery-purple text-white font-black text-[11px] text-center py-1">Why-Why Analysis</div>
-                    {[1, 2, 3].map(n => (
-                      <div key={n} className="grid grid-cols-6 text-xs border-b border-gray-300">
-                        <div className="col-span-1 p-1.5 text-red-600 font-black">Why ?</div>
-                        <div className="col-span-5 p-1.5">
-                          <input
-                            className="w-full border border-gray-300 rounded px-1 py-1 text-xs text-gray-900"
+                  <div className="border-b border-slate-500 flex flex-col flex-1">
+                    <div className="relative bg-kauvery-purple text-white font-black text-[11px] text-center py-2 tracking-wide pr-8">
+                      Why-Why Analysis
+                      {whyWhyVisibleCount < 5 && (
+                        <button
+                          type="button"
+                          title="Add Why (max 5 total)"
+                          aria-label="Add another Why row"
+                          className="absolute right-1 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-full bg-fuchsia-800 text-sm font-black leading-none text-white shadow-md ring-1 ring-white/90 hover:bg-fuchsia-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-1 focus-visible:ring-offset-kauvery-purple"
+                          onClick={addWhyWhyRow}
+                        >
+                          +
+                        </button>
+                      )}
+                    </div>
+                    {Array.from({ length: whyWhyVisibleCount }, (_, i) => i + 1).map((n) => (
+                      <div
+                        key={n}
+                        className="grid grid-cols-[5.25rem_minmax(0,1fr)] text-xs border-b border-slate-200 items-stretch bg-white"
+                      >
+                        <div className="px-2 py-2 text-kauvery-purple font-black flex items-center justify-end text-right border-r border-slate-300 bg-slate-50 text-[11px]">
+                          Why?
+                        </div>
+                        <div className="p-1 flex min-h-0">
+                          <textarea
+                            spellCheck={false}
+                            rows={2}
+                            className={`${KTZ_TEXTAREA} min-h-[2.75rem]`}
                             value={formData.analysis?.[`why${n}`] || ''}
-                            onChange={e => handleNestedChange('analysis', `why${n}`, e.target.value)}
+                            onChange={(e) => handleNestedChange('analysis', `why${n}`, e.target.value)}
                           />
                         </div>
                       </div>
                     ))}
-                    <div className="grid grid-cols-2 text-xs border-b border-gray-300">
-                      <div className="p-2 border-r border-gray-300">
-                        <span className="text-red-600 font-black">Root Cause:</span>
-                        <input
-                          className="w-full border border-gray-300 rounded px-1 py-1 mt-1 text-xs text-gray-900"
+                    {whyWhyVisibleCount > 3 && (
+                      <div className="flex justify-end border-b border-slate-200 bg-white px-2 py-1.5">
+                        <button
+                          type="button"
+                          className="text-[10px] font-bold text-slate-500 underline decoration-slate-300 underline-offset-2 hover:text-kauvery-purple"
+                          onClick={removeLastWhyWhyRow}
+                        >
+                          Remove last Why
+                        </button>
+                      </div>
+                    )}
+                    <div className="grid grid-cols-2 text-xs border-b border-slate-300 items-stretch min-h-[8rem] bg-white">
+                      <div className="p-2 border-r border-slate-300 flex flex-col gap-1.5 min-h-0">
+                        <span className="text-kauvery-purple font-black shrink-0 text-[11px]">Root Cause:</span>
+                        <textarea
+                          spellCheck={false}
+                          rows={3}
+                          className={`${KTZ_TEXTAREA} flex-1 min-h-[4rem]`}
                           value={formData.analysis?.rootCause || ''}
                           onChange={e => handleNestedChange('analysis', 'rootCause', e.target.value)}
                         />
                       </div>
-                      <div className="p-2">
-                        <span className="text-blue-800 font-black">Idea to Eliminate:</span>
-                        <input
-                          className="w-full border border-gray-300 rounded px-1 py-1 mt-1 text-xs text-gray-900"
+                      <div className="p-2 flex flex-col gap-1.5 min-h-0">
+                        <span className="text-kauvery-purple font-black shrink-0 text-[11px]">Idea to Eliminate:</span>
+                        <textarea
+                          spellCheck={false}
+                          rows={3}
+                          className={`${KTZ_TEXTAREA} flex-1 min-h-[4rem]`}
                           value={formData.ideaToEliminate || ''}
                           onChange={e => setFormData({ ...formData, ideaToEliminate: e.target.value })}
                         />
@@ -1561,10 +1768,13 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                     </div>
                   </div>
 
-                  <div className="p-2 flex-1 min-h-[100px] bg-emerald-50/40 border-t border-gray-400">
-                    <div className="text-green-700 font-black text-xs mb-1">Counter Measure</div>
+                  <div className="p-2 flex-1 min-h-[88px] bg-emerald-50/50 border-t border-slate-300">
+                    <div className="text-emerald-800 font-black text-[11px] mb-1.5 uppercase tracking-wide">
+                      Counter Measure
+                    </div>
                     <textarea
-                      className={`w-full border rounded px-2 py-2 text-xs min-h-[88px] text-gray-900 ${editedFieldSet.has('counterMeasure') ? 'border-amber-400 bg-amber-50' : 'border-gray-300 bg-white'}`}
+                      spellCheck={false}
+                      className={`${KTZ_TEXTAREA} min-h-[5rem] ${editedFieldSet.has('counterMeasure') ? 'border-amber-400 bg-amber-50/80 ring-1 ring-amber-200' : ''}`}
                       value={formData.counterMeasure || ''}
                       onChange={e => setFormData({ ...formData, counterMeasure: e.target.value })}
                     />
@@ -1572,18 +1782,20 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                 </div>
 
                 {/* Right: PQCDSEM, Standardization, Quantitative Results, Horizontal Deployment */}
-                <div className="col-span-6 flex flex-col">
-                  <div className="text-xs font-black text-center border-b border-gray-500 py-1 bg-gray-50">PQCDSEM</div>
-                  <div className="text-[9px] leading-snug px-2 py-1.5 text-gray-700 border-b border-gray-300 bg-white">
-                    <span className="font-bold text-blue-800">P</span> Productivity ·{' '}
-                    <span className="font-bold text-blue-800">Q</span> Quality ·{' '}
-                    <span className="font-bold text-blue-800">C</span> Cost ·{' '}
-                    <span className="font-bold text-blue-800">D</span> Delivery ·{' '}
-                    <span className="font-bold text-blue-800">S</span> Safety ·{' '}
-                    <span className="font-bold text-blue-800">E</span> Environment/Energy ·{' '}
-                    <span className="font-bold text-blue-800">M</span> Morale
+                <div className="col-span-6 flex flex-col min-w-0 bg-white">
+                  <div className="text-xs font-black text-center border-b border-slate-500 py-2 bg-slate-700 text-white tracking-wide">
+                    PQCDSEM
                   </div>
-                  <div className="grid grid-cols-7 text-[11px] font-bold text-blue-800 border-b border-gray-300 bg-gray-50/80">
+                  <div className="text-[9px] leading-snug px-2 py-2 text-slate-600 border-b border-slate-200 bg-slate-50">
+                    <span className="font-bold text-kauvery-purple">P</span> Productivity ·{' '}
+                    <span className="font-bold text-kauvery-purple">Q</span> Quality ·{' '}
+                    <span className="font-bold text-kauvery-purple">C</span> Cost ·{' '}
+                    <span className="font-bold text-kauvery-purple">D</span> Delivery ·{' '}
+                    <span className="font-bold text-kauvery-purple">S</span> Safety ·{' '}
+                    <span className="font-bold text-kauvery-purple">E</span> Environment/Energy ·{' '}
+                    <span className="font-bold text-kauvery-purple">M</span> Morale
+                  </div>
+                  <div className="grid grid-cols-7 text-[11px] font-black border-b border-black bg-white">
                     {(
                       [
                         ['P', 'productivity'],
@@ -1594,29 +1806,50 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                         ['E', 'environment'],
                         ['M', 'morale'],
                       ] as const
-                    ).map(([letter, mapKey]) => (
-                      <label
-                        key={mapKey}
-                        className="flex flex-col items-center justify-center py-2 border-r border-gray-200 last:border-r-0 gap-1"
-                      >
-                        <span className="text-sm font-black">{letter}</span>
-                        <input
-                          type="checkbox"
-                          className="scale-90"
-                          checked={!!formData.expectedBenefits?.[mapKey]}
-                          onChange={e => handleNestedChange('expectedBenefits', mapKey, e.target.checked)}
-                        />
-                      </label>
-                    ))}
+                    ).map(([letter, mapKey]) => {
+                      const level = readPqcdsemLevel(formData.expectedBenefits?.[mapKey]);
+                      const cellCls =
+                        level === 'primary'
+                          ? 'bg-emerald-600 text-white'
+                          : level === 'secondary'
+                            ? 'bg-amber-300 text-slate-900'
+                            : 'bg-white text-kauvery-purple';
+                      return (
+                        <button
+                          key={mapKey}
+                          type="button"
+                          title="Click: off → primary (green) → secondary (yellow) → off"
+                          className={`flex flex-col items-center justify-center py-2.5 border-r border-black last:border-r-0 min-h-[2.75rem] cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-kauvery-purple focus-visible:ring-inset ${cellCls}`}
+                          onClick={() =>
+                            handleNestedChange(
+                              'expectedBenefits',
+                              mapKey,
+                              serializePqcdsemLevel(nextPqcdsemLevel(level)),
+                            )
+                          }
+                        >
+                          <span className="text-sm font-black">{letter}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div className="text-[9px] leading-snug px-2 py-1 text-slate-600 border-b border-slate-200 bg-white">
+                    Click each letter: <span className="font-bold text-emerald-700">green = primary</span>
+                    {' · '}
+                    <span className="font-bold text-amber-700">yellow = secondary</span>
+                    {' · white = not highlighted'}
                   </div>
 
-                  <div className="text-xs font-black text-center border-b border-gray-300 py-1">Standardization</div>
-                  <div className="px-2 py-2 border-b border-gray-300 text-xs">
+                  <div className="text-xs font-black text-center border-b border-slate-300 py-2 bg-slate-100 text-slate-800 tracking-wide">
+                    Standardization
+                  </div>
+                  <div className="px-2 py-2 border-b border-slate-200 text-xs bg-white">
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                       {(['opl', 'sop', 'manual', 'others'] as const).map(s => (
-                        <label key={s} className="flex items-center gap-1 font-bold text-gray-800">
+                        <label key={s} className="flex items-center gap-2 font-bold text-slate-800">
                           <input
                             type="checkbox"
+                            className="h-3.5 w-3.5 rounded border-slate-400 text-kauvery-purple focus:ring-kauvery-purple"
                             checked={!!formData.standardization?.[s]}
                             onChange={e => handleNestedChange('standardization', s, e.target.checked)}
                           />
@@ -1625,9 +1858,11 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                       ))}
                     </div>
                     {formData.standardization?.others && (
-                      <input
-                        className="mt-2 w-full border border-gray-300 rounded px-2 py-1 text-xs text-gray-900"
+                      <textarea
+                        spellCheck={false}
+                        rows={2}
                         placeholder="Others (specify)"
+                        className={`${KTZ_TEXTAREA} mt-2 min-h-[2.75rem]`}
                         value={formData.standardization?.othersDescription || ''}
                         onChange={e =>
                           handleNestedChange('standardization', 'othersDescription', e.target.value)
@@ -1636,21 +1871,30 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                     )}
                   </div>
 
-                  <div className="text-xs font-black text-center border-b border-gray-300 py-1 bg-gray-50">Quantitative Results</div>
-                  <div className="flex-1 min-h-[120px] p-2 border-b border-gray-300">
+                  <div className="text-xs font-black text-center border-b border-slate-300 py-2 bg-slate-100 text-slate-800 tracking-wide">
+                    Quantitative Results
+                  </div>
+                  <div className="p-3 border-b border-slate-200 bg-white">
                     <textarea
-                      className={`w-full h-full min-h-[112px] border rounded px-2 py-2 text-xs text-gray-900 resize-y ${editedFieldSet.has('quantitativeResults') ? 'border-amber-400 bg-amber-50' : 'border-gray-300 bg-white'}`}
+                      spellCheck={false}
                       placeholder="Enter measurable outcomes..."
+                      className={`${KTZ_TEXTAREA} min-h-[5.5rem] ${editedFieldSet.has('quantitativeResults') ? 'border-amber-400 bg-amber-50/80 ring-1 ring-amber-200' : ''}`}
                       value={formData.quantitativeResults || ''}
                       onChange={e => setFormData({ ...formData, quantitativeResults: e.target.value })}
                     />
                   </div>
 
-                  <div className="flex-1 min-h-[72px] p-2 mt-auto">
-                    <div className="text-xs font-black text-gray-800 mb-1">Horizontal Deployment</div>
-                    <p className="text-[10px] text-gray-600 mb-1">Yes / No — If yes, describe</p>
+                  <div className="text-xs font-black text-center border-b border-slate-300 py-2 bg-slate-100 text-slate-800 tracking-wide">
+                    Horizontal Deployment
+                  </div>
+                  <div className="p-3 pb-3 border-b border-slate-200 bg-white">
+                    <p className="text-[10px] text-slate-600 leading-snug mb-2 font-medium">
+                      Yes / No — If yes, describe where this Kaizen was replicated or extended.
+                    </p>
                     <textarea
-                      className={`w-full border rounded px-2 py-2 text-xs min-h-[56px] text-gray-900 ${editedFieldSet.has('horizontalDeployment') ? 'border-amber-400 bg-amber-50' : 'border-gray-300 bg-white'}`}
+                      spellCheck={false}
+                      placeholder="e.g., rolled out to sister units, other departments…"
+                      className={`${KTZ_TEXTAREA} min-h-[4.25rem] ${editedFieldSet.has('horizontalDeployment') ? 'border-amber-400 bg-amber-50/80 ring-1 ring-amber-200' : ''}`}
                       value={formData.horizontalDeployment || ''}
                       onChange={e => setFormData({ ...formData, horizontalDeployment: e.target.value })}
                     />
@@ -1658,75 +1902,81 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                 </div>
               </div>
 
-              <div className="grid grid-cols-12 border-b border-gray-500 text-[10px]">
-                <div className="col-span-3 bg-kauvery-purple text-white font-black text-center py-1.5 border-r border-gray-500">
-                  Team Members
-                </div>
-                <div className="col-span-3 bg-kauvery-purple text-white font-black text-center py-1.5 border-r border-gray-500">
-                  Prepared By <span className="font-normal text-white/90">(Idea initiated by)</span>
-                </div>
-                <div className="col-span-3 bg-kauvery-purple text-white font-black text-center py-1.5 border-r border-gray-500 leading-tight">
-                  Validated By — Department In-charger / HOD
-                </div>
-                <div className="col-span-3 bg-kauvery-purple text-white font-black text-center py-1.5 leading-tight">
-                  Validated By — Unit Head of Finance
-                  <div className="text-[8px] font-semibold text-white/90 normal-case mt-0.5">
-                    (Note: If cost saving is {'>'} ₹ 5 Lakhs)
+              {/* Signature / approval — reference layout; all values typed by user (saved in draft / submit) */}
+              <div className="border-t border-slate-500">
+                <div className="grid grid-cols-12 border-b border-slate-500 text-[10px] sm:text-[11px] items-stretch">
+                  <div className="col-span-3 bg-kauvery-purple text-white font-black text-center py-2.5 px-1 border-r border-white/25 flex items-center justify-center">
+                    Prepared By
+                  </div>
+                  <div className="col-span-6 bg-kauvery-purple text-white font-black text-center py-2.5 px-2 border-r border-white/25 flex items-center justify-center">
+                    Validated By
+                  </div>
+                  <div className="col-span-3 bg-kauvery-purple text-white font-black text-center py-2.5 px-1 flex items-center justify-center leading-tight">
+                    Approved By: <span className="font-normal text-white/90 ml-1">FD — Ops. Head</span>
                   </div>
                 </div>
-              </div>
-              <div className="grid grid-cols-12 border-b border-gray-500 text-xs">
-                <div className="col-span-3 border-r border-gray-500 p-2">
-                  <input
-                    className="w-full border border-gray-300 rounded px-2 py-1.5 text-xs bg-gray-100 text-gray-800 font-semibold"
-                    value={getDynamicFlowFields().teamMembers}
-                    readOnly
-                  />
-                </div>
-                <div className="col-span-3 border-r border-gray-500 p-2">
-                  <input
-                    className="w-full border border-gray-300 rounded px-2 py-1.5 text-xs bg-gray-100 text-gray-800 font-semibold"
-                    value={getDynamicFlowFields().preparedBy}
-                    readOnly
-                  />
-                  <div className="mt-2 text-[10px] text-gray-600 font-bold">
-                    Reporting to:{' '}
-                    <span className="text-gray-900 font-semibold">{sheet2FooterDisplay.reportingToHead}</span>
+                <div className="grid grid-cols-12 border-b border-slate-400 text-[9px] sm:text-[10px] bg-white">
+                  <div className="col-span-3 border-r border-slate-300 px-1 py-2 text-slate-700 font-bold text-center flex items-center justify-center">
+                    (Idea initiated by)
+                  </div>
+                  <div className="col-span-3 border-r border-slate-300 px-1 py-2 text-slate-700 font-bold text-center flex items-center justify-center leading-snug">
+                    Department In-charger / HOD
+                  </div>
+                  <div className="col-span-3 border-r border-slate-300 px-1 py-2 text-slate-700 font-bold text-center flex flex-col items-center justify-center leading-snug">
+                    <span>Unit – Head of Finance</span>
+                    <span className="text-[8px] font-semibold text-slate-500 normal-case mt-0.5">
+                      (Note: If cost saving is {'>'} ₹ 5 Lakhs)
+                    </span>
+                  </div>
+                  <div className="col-span-3 px-1 py-2 text-slate-700 font-bold text-center flex items-center justify-center">
+                    Ops. Head
                   </div>
                 </div>
-                <div className="col-span-3 border-r border-gray-500 p-2">
-                  <input
-                    className="w-full border border-gray-300 rounded px-2 py-1.5 text-xs bg-gray-100 text-gray-800 font-semibold"
-                    value={sheet2FooterDisplay.departmentInchargeHod}
-                    readOnly
-                  />
+                <div className="grid grid-cols-12 border-b border-slate-500 text-xs items-stretch bg-white">
+                  <div className="col-span-3 border-r border-slate-400 p-2 flex flex-col gap-2">
+                    <input
+                      type="text"
+                      className={`${KTZ_DATE} bg-white font-semibold`}
+                      placeholder="Name"
+                      value={formData.templateSigPreparedBy ?? ''}
+                      onChange={(e) => setFormData({ ...formData, templateSigPreparedBy: e.target.value })}
+                    />
+                    <textarea
+                      spellCheck={false}
+                      placeholder="Reporting to (optional)"
+                      className={`${KTZ_TEXTAREA} min-h-[2.25rem] text-[10px]`}
+                      value={formData.templateSigReportingTo ?? ''}
+                      onChange={(e) => setFormData({ ...formData, templateSigReportingTo: e.target.value })}
+                    />
+                  </div>
+                  <div className="col-span-3 border-r border-slate-400 p-2 flex flex-col">
+                    <input
+                      type="text"
+                      className={`${KTZ_DATE} bg-white font-semibold`}
+                      placeholder="Name / role"
+                      value={formData.templateSigValidatedDeptHod ?? ''}
+                      onChange={(e) => setFormData({ ...formData, templateSigValidatedDeptHod: e.target.value })}
+                    />
+                  </div>
+                  <div className="col-span-3 border-r border-slate-400 p-2 flex flex-col">
+                    <input
+                      type="text"
+                      className={`${KTZ_DATE} bg-white font-semibold`}
+                      placeholder="Name / role"
+                      value={formData.templateSigValidatedFinance ?? ''}
+                      onChange={(e) => setFormData({ ...formData, templateSigValidatedFinance: e.target.value })}
+                    />
+                  </div>
+                  <div className="col-span-3 p-2 flex flex-col">
+                    <input
+                      type="text"
+                      className={`${KTZ_DATE} bg-white font-semibold`}
+                      placeholder="Name"
+                      value={formData.templateSigApprovedOpsHead ?? ''}
+                      onChange={(e) => setFormData({ ...formData, templateSigApprovedOpsHead: e.target.value })}
+                    />
+                  </div>
                 </div>
-                <div className="col-span-3 border-r border-gray-500 p-2">
-                  <input
-                    className="w-full border border-gray-300 rounded px-2 py-1.5 text-xs bg-gray-100 text-gray-800 font-semibold"
-                    value={sheet2FooterDisplay.unitHeadFinance}
-                    readOnly
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-12 text-xs border-b border-gray-500">
-                <div className="col-span-8 bg-kauvery-purple text-white font-black text-center py-1.5 border-r border-gray-500">
-                  Approved By: <span className="font-normal text-white/90">FD — Ops. Head</span>
-                </div>
-                <div className="col-span-4 bg-kauvery-purple text-white font-black text-center py-1.5">
-                  Signature / Date
-                </div>
-              </div>
-              <div className="grid grid-cols-12 text-xs">
-                <div className="col-span-8 border-r border-gray-500 p-2">
-                  <input
-                    className="w-full border border-gray-300 rounded px-2 py-1.5 text-xs bg-gray-100 text-gray-800 font-semibold"
-                    value={sheet2FooterDisplay.opsHead}
-                    readOnly
-                  />
-                </div>
-                <div className="col-span-4 p-2 text-gray-400 text-[10px] font-medium">—</div>
               </div>
 
               <div className="flex justify-end border-t border-gray-400">
@@ -1739,7 +1989,7 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
             {currentSheet === 3 && (
             <div
               ref={templateSheetCaptureRef}
-              className="bg-white border-2 border-gray-500 rounded-md overflow-hidden"
+              className="kaizen-template-capture-root bg-white border-2 border-slate-600 rounded-lg shadow-sm overflow-hidden"
             >
               {/* Slide 3 — Before / After: title bar + Kauvery logo (reference layout) */}
               <div className="bg-kauvery-purple text-white flex items-center min-h-[52px] border-b-2 border-gray-800">
@@ -1777,9 +2027,9 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 min-h-[520px] divide-x divide-gray-900 bg-white">
+              <div className="grid grid-cols-2 min-h-[520px] divide-x divide-gray-900 bg-white items-stretch">
                 {/* Before — image field matches Sheet 1 team photo: full-area cover, click to replace */}
-                <div className="flex flex-col min-h-[480px] p-2">
+                <div className="flex flex-col min-h-[480px] p-2 h-full">
                   <div className="relative flex-1 min-h-[400px] border border-gray-400 bg-gray-100 flex flex-col items-center justify-center overflow-visible py-3 px-2">
                     <input
                       id="before-slide3-file"
@@ -1817,7 +2067,7 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                   </div>
                 </div>
                 {/* After — same pattern as Sheet 1 */}
-                <div className="flex flex-col min-h-[480px] p-2">
+                <div className="flex flex-col min-h-[480px] p-2 h-full">
                   <div className="relative flex-1 min-h-[400px] border border-gray-400 bg-gray-100 flex flex-col items-center justify-center overflow-visible py-3 px-2">
                     <input
                       id="after-slide3-file"
@@ -1865,19 +2115,19 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
             {currentSheet === 4 && (
             <div
               ref={templateSheetCaptureRef}
-              className="bg-white border-2 border-gray-500 rounded-md overflow-hidden"
+              className="kaizen-template-capture-root bg-white border-2 border-slate-600 rounded-lg shadow-sm overflow-hidden"
             >
               <div className="bg-kauvery-purple text-white text-center font-black text-lg py-2 border-b border-gray-700">
                 Kaizen Sheet
               </div>
-              <div className="grid grid-cols-12 border-b border-gray-500">
-                <div className="col-span-9 bg-kauvery-purple text-white font-black px-2 py-1 border-r border-gray-700">
-                  Title/Theme: <span className="font-semibold">{getDynamicHeaderFields().title || '-'}</span>
+              <div className="grid grid-cols-12 border-b border-gray-500 items-stretch">
+                <div className="col-span-9 bg-kauvery-purple text-white font-black px-2 py-2 border-r border-gray-700 flex items-center min-h-[2.5rem]">
+                  Title/Theme: <span className="font-semibold break-words ml-1">{getDynamicHeaderFields().title || '-'}</span>
                 </div>
-                <div className="col-span-2 bg-kauvery-purple text-white font-black px-2 py-1 border-r border-gray-700">
-                  Kaizen No: <span className="font-semibold">{getDynamicHeaderFields().kaizenNo || '-'}</span>
+                <div className="col-span-2 bg-kauvery-purple text-white font-black px-2 py-2 border-r border-gray-700 flex items-center min-h-[2.5rem]">
+                  Kaizen No: <span className="font-semibold ml-1">{getDynamicHeaderFields().kaizenNo || '-'}</span>
                 </div>
-                <div className="col-span-1 bg-white flex min-h-[36px] items-center justify-center border-l border-gray-200 p-1">
+                <div className="col-span-1 bg-white flex min-h-[2.5rem] items-center justify-center border-l border-gray-200 p-1">
                   <KauveryHeaderLogo />
                 </div>
               </div>
@@ -1891,9 +2141,9 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                 <div className="bg-kauvery-purple text-white text-center font-black py-1">After</div>
               </div>
 
-              <div className="grid grid-cols-2 min-h-[520px]">
+              <div className="grid grid-cols-2 min-h-[520px] items-stretch">
                 {/* BEFORE */}
-                <div className="border-r border-gray-500 bg-gray-100 p-2 flex flex-col">
+                <div className="border-r border-gray-500 bg-gray-100 p-2 flex flex-col h-full min-h-0 min-w-0">
                   <div className="relative flex-1 min-h-[380px] border border-gray-400 bg-white rounded overflow-hidden">
                     {formData.processBeforeVideoPath ? (
                       <button
@@ -1942,19 +2192,10 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                       onChange={(e) => handleProcessVideoUpload('before', e.target.files)}
                     />
                   </div>
-                  <div className="mt-2">
-                    <label className="text-[11px] font-extrabold text-gray-700 uppercase block mb-1">Caption</label>
-                    <input
-                      className="w-full border border-gray-300 rounded bg-white px-2 py-2 text-xs font-semibold text-gray-900"
-                      value={formData.processBeforeVideoCaption || ''}
-                      onChange={(e) => setFormData({ ...formData, processBeforeVideoCaption: e.target.value })}
-                      placeholder="Enter caption for Before video..."
-                    />
-                  </div>
                 </div>
 
                 {/* AFTER */}
-                <div className="bg-gray-100 p-2 flex flex-col">
+                <div className="bg-gray-100 p-2 flex flex-col h-full min-h-0 min-w-0">
                   <div className="relative flex-1 min-h-[380px] border border-gray-400 bg-white rounded overflow-hidden">
                     {formData.processAfterVideoPath ? (
                       <button
@@ -2003,15 +2244,6 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                       onChange={(e) => handleProcessVideoUpload('after', e.target.files)}
                     />
                   </div>
-                  <div className="mt-2">
-                    <label className="text-[11px] font-extrabold text-gray-700 uppercase block mb-1">Caption</label>
-                    <input
-                      className="w-full border border-gray-300 rounded bg-white px-2 py-2 text-xs font-semibold text-gray-900"
-                      value={formData.processAfterVideoCaption || ''}
-                      onChange={(e) => setFormData({ ...formData, processAfterVideoCaption: e.target.value })}
-                      placeholder="Enter caption for After video..."
-                    />
-                  </div>
                 </div>
               </div>
 
@@ -2025,19 +2257,19 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
             <>
             <div
               ref={templateSheetCaptureRef}
-              className="bg-white border-2 border-gray-500 rounded-md overflow-hidden"
+              className="kaizen-template-capture-root bg-white border-2 border-slate-600 rounded-lg shadow-sm overflow-hidden"
             >
               <div className="bg-kauvery-purple text-white text-center font-black text-lg py-2 border-b border-gray-700">
                 Kaizen Sheet
               </div>
-              <div className="grid grid-cols-12 border-b border-gray-500">
-                <div className="col-span-9 bg-kauvery-purple text-white font-black px-2 py-1 border-r border-gray-700">
-                  Title/Theme: <span className="font-semibold">{getDynamicHeaderFields().title || '-'}</span>
+              <div className="grid grid-cols-12 border-b border-gray-500 items-stretch">
+                <div className="col-span-9 bg-kauvery-purple text-white font-black px-2 py-2 border-r border-gray-700 flex items-center min-h-[2.5rem]">
+                  Title/Theme: <span className="font-semibold break-words ml-1">{getDynamicHeaderFields().title || '-'}</span>
                 </div>
-                <div className="col-span-2 bg-kauvery-purple text-white font-black px-2 py-1 border-r border-gray-700">
-                  Kaizen No: <span className="font-semibold">{getDynamicHeaderFields().kaizenNo || '-'}</span>
+                <div className="col-span-2 bg-kauvery-purple text-white font-black px-2 py-2 border-r border-gray-700 flex items-center min-h-[2.5rem]">
+                  Kaizen No: <span className="font-semibold ml-1">{getDynamicHeaderFields().kaizenNo || '-'}</span>
                 </div>
-                <div className="col-span-1 bg-white flex min-h-[36px] items-center justify-center border-l border-gray-200 p-1">
+                <div className="col-span-1 bg-white flex min-h-[2.5rem] items-center justify-center border-l border-gray-200 p-1">
                   <KauveryHeaderLogo />
                 </div>
               </div>
@@ -2061,13 +2293,18 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                 ))}
               </div>
 
-              <div className="grid grid-cols-3 min-h-[500px] border-b border-gray-500">
+              <div className="grid grid-cols-3 min-h-[500px] border-b border-gray-500 items-stretch">
                 {visibleResultKpis.map((row: any, idx: number) => (
-                  <div key={row.id} className={`${idx < 2 ? 'border-r border-gray-500' : ''} bg-gray-100 p-2 flex flex-col`}>
-                    <div className="flex items-start justify-between mb-1">
-                      <div className="space-y-1">
-                        <input
-                          className="w-full border border-gray-300 rounded px-1 py-1 text-[11px] font-black text-gray-900 bg-white"
+                  <div
+                    key={row.id}
+                    className={`${idx < 2 ? 'border-r border-gray-500' : ''} bg-gray-100 p-2 flex flex-col min-h-0 min-w-0`}
+                  >
+                    <div className="mb-2 grid grid-cols-[minmax(0,1fr)_5.25rem] gap-x-2 gap-y-1 items-start">
+                      <div className="min-w-0 space-y-1.5">
+                        <textarea
+                          spellCheck={false}
+                          rows={2}
+                          className={`${KTZ_TEXTAREA} min-h-[2.5rem] font-black text-slate-900`}
                           placeholder={`KPI title`}
                           value={row.title || ''}
                           onChange={(e) => {
@@ -2082,9 +2319,11 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                             });
                           }}
                         />
-                        <div className="flex items-center gap-2">
-                          <input
-                            className="flex-1 border border-gray-300 rounded px-1 py-1 text-[10px] font-bold text-gray-900 bg-white"
+                        <div className="flex flex-col gap-1.5 sm:flex-row sm:items-start">
+                          <textarea
+                            spellCheck={false}
+                            rows={2}
+                            className={`min-w-0 flex-1 ${KTZ_TEXTAREA} text-[10px] font-bold min-h-[2.5rem]`}
                             placeholder="Metric label (e.g., ₹ / minutes / % / count)"
                             value={row.metricLabel || ''}
                             onChange={(e) => {
@@ -2099,9 +2338,10 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                               });
                             }}
                           />
-                          <label className="inline-flex items-center gap-1 text-[10px] font-black text-gray-700 whitespace-nowrap">
+                          <label className="inline-flex items-center gap-1.5 text-[10px] font-black text-gray-700 shrink-0 sm:pt-1">
                             <input
                               type="checkbox"
+                              className="shrink-0"
                               checked={!!row.higherIsBetter}
                               onChange={(e) => {
                                 const v = e.target.checked;
@@ -2115,16 +2355,23 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                                 });
                               }}
                             />
-                            Higher is better
+                            <span className="leading-tight">Higher is better</span>
                           </label>
                         </div>
                       </div>
-                      <div className="text-center leading-none">
+                      <div className="text-center leading-none flex flex-col items-center justify-start pt-0.5 w-full">
                         {(() => {
                           const same = Number(row.beforeNum || 0) === Number(row.afterNum || 0);
                           const isGood = row.improved && !same;
                           const label = same ? 'No change' : isGood ? 'Good' : 'Bad';
-                          const icon = same ? 'remove' : isGood ? 'arrow_downward' : 'arrow_upward';
+                          const higherBetter = !!row.higherIsBetter;
+                          const icon = same
+                            ? 'remove'
+                            : isGood
+                              ? higherBetter
+                                ? 'arrow_upward'
+                                : 'arrow_downward'
+                              : 'arrow_upward';
                           const iconClass = same
                             ? 'text-gray-500'
                             : isGood
@@ -2140,46 +2387,122 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                               <span className={`material-icons-round text-3xl ${iconClass}`}>
                                 {icon}
                               </span>
-                              <div className={`text-[26px] font-black ${textClass}`}>{label}</div>
+                              <div className={`text-lg sm:text-[22px] font-black ${textClass} leading-tight mt-0.5`}>
+                                {label}
+                              </div>
                             </>
                           );
                         })()}
                       </div>
                     </div>
 
-                    <div className="relative flex-1 min-h-[260px] border border-gray-300 bg-white p-2">
-                      <div className="absolute left-1 top-1/2 -translate-y-1/2 -rotate-90 text-[10px] font-bold text-gray-600 whitespace-nowrap">
-                        {row.metricLabel || '—'}
+                    <div className="relative flex flex-1 min-h-[260px] min-w-0 border border-gray-300 bg-white rounded-sm overflow-hidden">
+                      <div
+                        className="w-6 shrink-0 flex items-center justify-center border-r border-gray-200 bg-slate-50 py-2"
+                        aria-hidden
+                      >
+                        <span
+                          className="block text-[9px] font-black text-gray-700 whitespace-nowrap"
+                          style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}
+                        >
+                          {row.metricLabel || '—'}
+                        </span>
                       </div>
-                      <div className="absolute left-7 right-2 top-2 bottom-7">
-                        <div className="absolute inset-0 flex items-end justify-around gap-8">
-                          <div className="w-16 relative h-full flex flex-col justify-end items-center">
-                            <div className="text-[10px] font-bold text-gray-700 mb-1">{row.beforeNum || 0}</div>
-                            <div className="w-full bg-red-600 border border-red-700" style={{ height: `${row.beforePct}%` }} />
+                      <div className="w-7 shrink-0 flex flex-col justify-between border-r border-gray-300 bg-white py-2 pl-0.5 pr-1 text-[9px] font-bold text-gray-800 tabular-nums">
+                        {(Array.isArray(row.axisTicks) ? row.axisTicks : [0]).map((t: number) => (
+                          <span key={t} className="leading-none text-right">
+                            {Number.isInteger(t) ? t : t.toFixed(1)}
+                          </span>
+                        ))}
+                      </div>
+                      <div className="relative flex-1 min-w-0 flex flex-col pb-7 pt-2 px-2">
+                        <div className="relative flex-1 min-h-[180px]">
+                          <svg
+                            className="absolute inset-0 size-full pointer-events-none text-gray-200"
+                            viewBox="0 0 100 100"
+                            preserveAspectRatio="none"
+                          >
+                            {(() => {
+                              const hi = Math.ceil(Number(row.axisMax) || 1);
+                              const step = hi <= 14 ? 1 : Math.max(1, Math.ceil(hi / 8));
+                              const lines: React.ReactNode[] = [];
+                              for (let v = step; v < hi; v += step) {
+                                const y = 100 - (v / hi) * 100;
+                                lines.push(
+                                  <line key={v} x1="0" y1={y} x2="100" y2={y} stroke="currentColor" strokeWidth="0.55" />,
+                                );
+                              }
+                              return lines;
+                            })()}
+                          </svg>
+                          <div className="absolute inset-0 grid grid-cols-2 items-end">
+                            <div className="relative z-[1] flex h-full flex-col justify-end items-center">
+                              <div className="text-[10px] font-black text-gray-900 mb-0.5 tabular-nums">
+                                {String(row.before ?? '').trim() !== ''
+                                  ? row.before
+                                  : row.beforeNum ?? 0}
+                              </div>
+                              <div
+                                className="w-[72%] max-w-[4rem] rounded-sm bg-red-600 shadow-sm ring-1 ring-red-800/30"
+                                style={{ height: `${Math.min(100, Math.max(0, row.beforePct))}%` }}
+                              />
+                            </div>
+                            <div className="relative z-[1] flex h-full flex-col justify-end items-center">
+                              <div className="text-[10px] font-black text-gray-900 mb-0.5 tabular-nums">
+                                {String(row.after ?? '').trim() !== ''
+                                  ? row.after
+                                  : row.afterNum ?? 0}
+                              </div>
+                              <div
+                                className="w-[72%] max-w-[4rem] rounded-sm bg-emerald-800 shadow-sm ring-1 ring-emerald-950/30"
+                                style={{ height: `${Math.min(100, Math.max(0, row.afterPct))}%` }}
+                              />
+                            </div>
                           </div>
-                          <div className="w-16 relative h-full flex flex-col justify-end items-center">
-                            <div className="text-[10px] font-bold text-gray-700 mb-1">{row.afterNum || 0}</div>
-                            <div className="w-full bg-green-700 border border-green-800" style={{ height: `${row.afterPct}%` }} />
-                          </div>
+                          <svg
+                            className="absolute inset-0 z-[2] size-full pointer-events-none overflow-visible"
+                            viewBox="0 0 100 100"
+                            preserveAspectRatio="none"
+                          >
+                            <line
+                              x1="25"
+                              y1={100 - Math.min(100, Math.max(0, row.beforePct))}
+                              x2="75"
+                              y2={100 - Math.min(100, Math.max(0, row.afterPct))}
+                              stroke="#2563eb"
+                              strokeWidth="1.75"
+                              strokeDasharray="5 4"
+                              strokeLinecap="round"
+                            />
+                            <path
+                              d={(() => {
+                                const bp = Math.min(100, Math.max(0, row.beforePct));
+                                const ap = Math.min(100, Math.max(0, row.afterPct));
+                                const x2 = 75;
+                                const y2 = 100 - ap;
+                                const x1 = 25;
+                                const y1 = 100 - bp;
+                                const dx = x2 - x1;
+                                const dy = y2 - y1;
+                                const len = Math.hypot(dx, dy) || 1;
+                                const ux = dx / len;
+                                const uy = dy / len;
+                                const nx = -uy;
+                                const ny = ux;
+                                const s = 2.4;
+                                const ax = x2 - ux * 4.5;
+                                const ay = y2 - uy * 4.5;
+                                return `M ${x2} ${y2} L ${ax + nx * s} ${ay + ny * s} L ${ax - nx * s} ${ay - ny * s} Z`;
+                              })()}
+                              fill="#2563eb"
+                            />
+                          </svg>
                         </div>
-                        <svg className="absolute inset-0 pointer-events-none" viewBox="0 0 100 100" preserveAspectRatio="none">
-                          <line
-                            x1="25"
-                            y1={100 - row.beforePct}
-                            x2="75"
-                            y2={100 - row.afterPct}
-                            stroke="#1d4ed8"
-                            strokeWidth="1.5"
-                            strokeDasharray="4 3"
-                          />
-                          <path d={`M 75 ${100 - row.afterPct} l -2 -1 l 1 3 z`} fill="#1d4ed8" />
-                        </svg>
+                        <div className="grid shrink-0 grid-cols-2 gap-2 border-t border-gray-400 pt-1.5 text-[11px] font-black text-gray-800">
+                          <span className="text-center">Before</span>
+                          <span className="text-center">After</span>
+                        </div>
                       </div>
-                      <div className="absolute left-7 right-2 bottom-2 flex items-center justify-around text-[11px] font-bold text-gray-700">
-                        <span>Before</span>
-                        <span>After</span>
-                      </div>
-                      <div className="absolute left-7 right-2 bottom-6 border-t border-gray-400" />
                     </div>
 
                     <div className="grid grid-cols-2 gap-1 mt-2">
@@ -2226,12 +2549,16 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                 ))}
               </div>
 
-              <div className="grid grid-cols-3 text-xs font-bold border-b border-gray-500">
+              <div className="grid grid-cols-3 text-xs font-bold border-b border-gray-500 items-stretch">
                 {visibleResultKpis.map((row: any, idx: number) => (
-                  <div key={`${row.id}-result`} className={`${idx < 2 ? 'border-r border-gray-500' : ''} p-1`}>
-                    <div className="underline italic text-sm mb-1">Result:</div>
+                  <div
+                    key={`${row.id}-result`}
+                    className={`${idx < 2 ? 'border-r border-gray-500' : ''} p-2 flex flex-col min-h-0 min-w-0`}
+                  >
+                    <div className="underline italic text-sm mb-1.5 shrink-0">Result:</div>
                     <textarea
-                      className="w-full border rounded px-1 py-1 text-xs font-medium min-h-[84px] resize-none border-gray-300 bg-white"
+                      spellCheck={false}
+                      className={`${KTZ_TEXTAREA} min-h-[5rem] font-medium`}
                       value={row.resultNote || ''}
                       onChange={(e) => {
                         const v = e.target.value;

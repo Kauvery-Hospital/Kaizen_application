@@ -374,14 +374,17 @@ export const Dashboard: React.FC<DashboardProps> = ({ suggestions: allSuggestion
 
   return (
     <div className="space-y-6 animate-fade-in">
-      <div className="bg-white border border-gray-200 rounded-2xl p-6 shadow-sm">
-        <div className="flex flex-col lg:flex-row lg:justify-between lg:items-end gap-4">
+      <div className="relative overflow-hidden rounded-3xl border border-purple-200/50 bg-gradient-to-br from-white via-purple-50/35 to-pink-50/25 p-6 sm:p-7 shadow-kauvery-soft">
+        <div className="pointer-events-none absolute -right-20 -top-20 h-56 w-56 rounded-full bg-kauvery-pink/10 blur-3xl" />
+        <div className="pointer-events-none absolute -left-16 bottom-0 h-44 w-44 rounded-full bg-kauvery-violet/10 blur-3xl" />
+        <div className="relative flex flex-col lg:flex-row lg:justify-between lg:items-end gap-4">
           <div>
-              <h2 className="text-2xl font-extrabold text-gray-900">
+              <h2 className="text-2xl sm:text-3xl font-black bg-gradient-to-r from-kauvery-purple via-kauvery-violet to-kauvery-pink bg-clip-text text-transparent">
                 {userName ? `Welcome, ${userName}` : roleHeader}
               </h2>
-              <p className="text-gray-700 font-semibold">
-                Signed in as <span className="font-extrabold text-gray-900">{role}</span>.
+              <p className="text-gray-700 font-semibold mt-1">
+                Signed in as{' '}
+                <span className="font-extrabold text-kauvery-purple">{role}</span>.
               </p>
           </div>
         </div>
@@ -391,7 +394,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ suggestions: allSuggestion
             <button
               type="button"
               onClick={() => setShowFilterMenu(v => !v)}
-              className="inline-flex items-center gap-2 border border-gray-300 rounded-lg px-3 py-2 text-sm font-bold text-gray-800 bg-white hover:bg-gray-50"
+              className="inline-flex items-center gap-2 border border-purple-200 rounded-xl px-3 py-2 text-sm font-black text-kauvery-purple bg-white/80 hover:bg-purple-50 shadow-sm transition-colors"
             >
               <span className="material-icons-round text-base">filter_alt</span>
               Filter

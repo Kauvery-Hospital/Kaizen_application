@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  ForbiddenException,
   Get,
   Param,
   Patch,
@@ -20,6 +21,7 @@ import { SuggestionsService } from './suggestions.service';
 import { PptxExportService } from './pptx-export.service';
 import { CreateSuggestionDto } from './dto/create-suggestion.dto';
 import { UpdateSuggestionStatusDto } from './dto/update-suggestion-status.dto';
+import { BeReportQueryDto } from './dto/be-report-query.dto';
 import { ListSuggestionsQueryDto } from './dto/list-suggestions-query.dto';
 import { AppRole } from './suggestions.types';
 
@@ -60,7 +62,27 @@ export class SuggestionsController {
       role,
       query.currentUserName ?? req.user.name,
       req.user.sub,
+      req.user.employeeCode,
     );
+  }
+
+  @Get('be-report')
+  beReport(
+    @Req() req: { user: JwtAccessPayload },
+    @Query() query: BeReportQueryDto,
+  ) {
+    const allowed = mapTokenRolesToAppRoles(req.user.roles ?? []);
+    const ok = allowed.some(
+      (r) =>
+        r === AppRole.BUSINESS_EXCELLENCE ||
+        r === AppRole.BUSINESS_EXCELLENCE_HEAD,
+    );
+    if (!ok) {
+      throw new ForbiddenException(
+        'Only Business Excellence Member or Head can access this report.',
+      );
+    }
+    return this.suggestionsService.beReport(query);
   }
 
   @Get(':id')
@@ -130,6 +152,7 @@ export class SuggestionsController {
         ...dto.actor,
         name: dto.actor?.name || req.user.name,
         role: actorRole,
+        employeeCode: dto.actor?.employeeCode ?? req.user.employeeCode,
       },
     }, req.user.sub);
   }

@@ -25,9 +25,10 @@ export class CreateSuggestionDto {
   @IsString()
   description?: string;
 
+  /** Booleans from idea form; strings primary/secondary from Kaizen sheet */
   @IsOptional()
   @IsObject()
-  expectedBenefits?: Record<string, boolean>;
+  expectedBenefits?: Record<string, boolean | string>;
 
   @IsOptional()
   @IsObject()
