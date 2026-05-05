@@ -35,6 +35,7 @@ const API_PREFIXES = [
   '/attachments',
   '/workflow',
   '/hrms-sync',
+  '/mobile-ideas-sync',
   '/hrms',
   '/ai',
   '/health',
