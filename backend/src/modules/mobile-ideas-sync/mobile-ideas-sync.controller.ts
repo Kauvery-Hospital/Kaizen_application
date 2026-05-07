@@ -1,4 +1,11 @@
-import { BadRequestException, Controller, Logger, Post, Query, UseGuards } from '@nestjs/common';
+import {
+  BadRequestException,
+  Controller,
+  Logger,
+  Post,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import { RequireTokenRoles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { TokenRolesGuard } from '../auth/guards/token-roles.guard';
@@ -25,4 +32,3 @@ export class MobileIdeasSyncController {
     }
   }
 }
-

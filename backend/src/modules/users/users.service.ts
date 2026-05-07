@@ -1,4 +1,8 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { Prisma, RoleCode } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
 import { AssignRoleDto } from './dto/assign-role.dto';
@@ -84,9 +88,7 @@ export class UsersService {
         ? { code: unitCode, name: String(unitMaster?.name ?? unitCode) }
         : null,
       department:
-        (hrmsEmp?.department as string | undefined) ??
-        user?.department ??
-        null,
+        (hrmsEmp?.department as string | undefined) ?? user?.department ?? null,
       designation: user?.designation ?? null,
     };
   }
@@ -147,9 +149,7 @@ export class UsersService {
     const dept = department?.trim();
     const users = await this.prisma.user.findMany({
       where: {
-        ...(dept
-          ? { department: { equals: dept, mode: 'insensitive' } }
-          : {}),
+        ...(dept ? { department: { equals: dept, mode: 'insensitive' } } : {}),
         ...(q
           ? {
               OR: [
@@ -174,15 +174,16 @@ export class UsersService {
     const employeeCodes = users
       .map((u) => String(u.employeeCode || '').trim())
       .filter(Boolean);
-    const hrms: Array<{ employee_id: string; unit: string | null }> = employeeCodes.length
-      ? ((await (this.prisma as any).$queryRaw(
-          Prisma.sql`
+    const hrms: Array<{ employee_id: string; unit: string | null }> =
+      employeeCodes.length
+        ? await (this.prisma as any).$queryRaw(
+            Prisma.sql`
             SELECT employee_id::text as employee_id, unit::text as unit
             FROM hrms_employees
             WHERE TRIM(employee_id::text) IN (${Prisma.join(employeeCodes)})
           `,
-        )) as any)
-      : [];
+          )
+        : [];
     const unitByEmployeeCode = new Map<string, string | null>();
     (Array.isArray(hrms) ? hrms : []).forEach((r: any) => {
       const code = String(r.employee_id || '').trim();
@@ -199,7 +200,9 @@ export class UsersService {
       const rows = await (this.prisma as any).userRoleUnitScope.findMany({
         where: {
           userId: { in: userIds },
-          roleCode: { in: [RoleCode.UNIT_COORDINATOR, RoleCode.SELECTION_COMMITTEE] },
+          roleCode: {
+            in: [RoleCode.UNIT_COORDINATOR, RoleCode.SELECTION_COMMITTEE],
+          },
         },
         select: { userId: true, roleCode: true, unitCode: true },
         take: 50000,
@@ -210,11 +213,13 @@ export class UsersService {
         const role = String(r.roleCode || '');
         const unit = String(r.unitCode || '').trim();
         if (!unit) return;
-        const entry =
-          unitScopesByUserRole.get(uid) || ({} as any);
-        const key = role === 'UNIT_COORDINATOR' ? 'UNIT_COORDINATOR' : 'SELECTION_COMMITTEE';
-        entry[key] = Array.from(new Set([...(entry[key] || []), unit])).sort((a, b) =>
-          a.localeCompare(b),
+        const entry = unitScopesByUserRole.get(uid) || ({} as any);
+        const key =
+          role === 'UNIT_COORDINATOR'
+            ? 'UNIT_COORDINATOR'
+            : 'SELECTION_COMMITTEE';
+        entry[key] = Array.from(new Set([...(entry[key] || []), unit])).sort(
+          (a, b) => a.localeCompare(b),
         );
         unitScopesByUserRole.set(uid, entry);
       });
@@ -225,8 +230,11 @@ export class UsersService {
       employeeCode: u.employeeCode,
       name: u.name,
       email: u.email,
-      unitCode: unitByEmployeeCode.get(String(u.employeeCode || '').trim()) ?? null,
-      unitScopes: includeUnitScopes ? (unitScopesByUserRole.get(u.id) ?? {}) : undefined,
+      unitCode:
+        unitByEmployeeCode.get(String(u.employeeCode || '').trim()) ?? null,
+      unitScopes: includeUnitScopes
+        ? (unitScopesByUserRole.get(u.id) ?? {})
+        : undefined,
       department: u.department,
       designation: u.designation,
       isActive: u.isActive,
@@ -301,7 +309,9 @@ export class UsersService {
   }
 
   async getUnitScopes(userId: string, roleCodeRaw: string) {
-    const roleCode = String(roleCodeRaw || '').trim().toUpperCase();
+    const roleCode = String(roleCodeRaw || '')
+      .trim()
+      .toUpperCase();
     if (!roleCode) return [];
     const allowed = new Set<string>(Object.values(RoleCode) as any);
     if (!allowed.has(roleCode)) return [];

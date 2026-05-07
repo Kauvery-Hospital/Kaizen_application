@@ -42,7 +42,9 @@ export class HrmsSyncService {
   @Cron(process.env.HRMS_SYNC_CRON ?? '0 */30 * * * *')
   async scheduledSync(): Promise<void> {
     if (!this.isEmployeeSyncEnabled()) {
-      this.logger.log('Scheduled HRMS employee sync skipped (EMPLOYEE_SYNC=false).');
+      this.logger.log(
+        'Scheduled HRMS employee sync skipped (EMPLOYEE_SYNC=false).',
+      );
       return;
     }
     try {
@@ -120,7 +122,7 @@ export class HrmsSyncService {
         await (this.prisma as any).hrms_employees.upsert({
           where: { employee_id: employee.employeeId },
           create: mirrorCreate,
-          update: { ...mirrorCreate, updated_at: new Date() } as any,
+          update: { ...mirrorCreate, updated_at: new Date() },
         });
 
         await this.prisma.hrmsEmployeeStaging.upsert({
@@ -232,9 +234,7 @@ export class HrmsSyncService {
     const trimmed = (raw ?? '').trim().toLowerCase();
     const safeEmp = this.sanitizeEmployeeCodeForEmail(employeeId);
     const base =
-      trimmed && trimmed.includes('@')
-        ? trimmed
-        : `${safeEmp}@hrms.local`;
+      trimmed && trimmed.includes('@') ? trimmed : `${safeEmp}@hrms.local`;
 
     const conflictInHrms = await (this.prisma as any).hrms_employees.findFirst({
       where: {

@@ -91,16 +91,16 @@ export class SuggestionsController {
   }
 
   @Get(':id/pptx')
-  async downloadPptx(
-    @Param('id') id: string,
-    @Res() res: Response,
-  ) {
+  async downloadPptx(@Param('id') id: string, @Res() res: Response) {
     const buf = await this.pptxExport.buildSuggestionPptx(id);
     res.setHeader(
       'Content-Type',
       'application/vnd.openxmlformats-officedocument.presentationml.presentation',
     );
-    res.setHeader('Content-Disposition', `attachment; filename="kaizen-${id}.pptx"`);
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="kaizen-${id}.pptx"`,
+    );
     res.send(buf);
   }
 
@@ -112,13 +112,21 @@ export class SuggestionsController {
   ) {
     // `id` is kept in the route for authorization/auditing symmetry with other suggestion endpoints.
     // The PPT is built purely from the rendered slides sent by the client.
-    const buf = await this.pptxExport.buildRenderedSlidesPptx(body?.slides ?? []);
-    const base = String(body?.fileNameBase || `kaizen-${id}`).replace(/[^a-zA-Z0-9-_]/g, '');
+    const buf = await this.pptxExport.buildRenderedSlidesPptx(
+      body?.slides ?? [],
+    );
+    const base = String(body?.fileNameBase || `kaizen-${id}`).replace(
+      /[^a-zA-Z0-9-_]/g,
+      '',
+    );
     res.setHeader(
       'Content-Type',
       'application/vnd.openxmlformats-officedocument.presentationml.presentation',
     );
-    res.setHeader('Content-Disposition', `attachment; filename="${base || `kaizen-${id}`}.pptx"`);
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${base || `kaizen-${id}`}.pptx"`,
+    );
     res.send(buf);
   }
 
@@ -146,14 +154,18 @@ export class SuggestionsController {
         ? dto.actor.role
         : allowedRoles[0];
 
-    return this.suggestionsService.updateStatus(id, {
-      ...dto,
-      actor: {
-        ...dto.actor,
-        name: dto.actor?.name || req.user.name,
-        role: actorRole,
-        employeeCode: dto.actor?.employeeCode ?? req.user.employeeCode,
+    return this.suggestionsService.updateStatus(
+      id,
+      {
+        ...dto,
+        actor: {
+          ...dto.actor,
+          name: dto.actor?.name || req.user.name,
+          role: actorRole,
+          employeeCode: dto.actor?.employeeCode ?? req.user.employeeCode,
+        },
       },
-    }, req.user.sub);
+      req.user.sub,
+    );
   }
 }

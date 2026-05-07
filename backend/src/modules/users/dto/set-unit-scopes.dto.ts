@@ -1,4 +1,10 @@
-import { IsArray, IsEnum, IsOptional, IsString, MinLength } from 'class-validator';
+import {
+  IsArray,
+  IsEnum,
+  IsOptional,
+  IsString,
+  MinLength,
+} from 'class-validator';
 import { RoleCode } from '@prisma/client';
 
 export class SetUnitScopesDto {
@@ -14,4 +20,3 @@ export class SetUnitScopesDto {
   @MinLength(1)
   assignedBy?: string;
 }
-

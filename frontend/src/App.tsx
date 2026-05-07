@@ -62,12 +62,24 @@ const getRoleScopedSuggestions = (
       const isAssignedToMe = (() => {
         if (myCode && sugCode) return sugCode === myCode;
         if (myName && sugName) return sugName === myName;
+        // Be resilient to minor name mismatches (HRMS vs login display name).
+        if (myName && sugName) {
+          if (sugName.includes(myName) || myName.includes(sugName)) return true;
+        }
         if (!myCode && !myName) return true;
         return false;
       })();
       return (
         isAssignedToMe &&
-        [Status.ASSIGNED_FOR_IMPLEMENTATION, Status.BE_REVIEW_DONE].includes(s.status)
+        [
+          Status.ASSIGNED_FOR_IMPLEMENTATION,
+          Status.IMPLEMENTATION_DONE,
+          Status.BE_REVIEW_DONE,
+          Status.VERIFIED_PENDING_APPROVAL,
+          Status.BE_EVALUATION_PENDING,
+          Status.REWARD_PENDING,
+          Status.REWARDED,
+        ].includes(s.status)
       );
     });
   }
@@ -355,6 +367,7 @@ const App: React.FC = () => {
               suggestions={roleScopedSuggestions}
               role={currentRole}
               userName={currentUser?.name}
+              onNewIdea={() => setCurrentView('create')}
             />
           </div>
         );
@@ -539,7 +552,12 @@ const App: React.FC = () => {
     // Default Dashboard for all roles (role-scoped graphs)
     return (
       <div className="animate-fade-in">
-        <Dashboard suggestions={roleScopedSuggestions} role={currentRole} userName={currentUser?.name} />
+        <Dashboard
+          suggestions={roleScopedSuggestions}
+          role={currentRole}
+          userName={currentUser?.name}
+          onNewIdea={() => setCurrentView('create')}
+        />
       </div>
     );
   };
@@ -587,9 +605,13 @@ const App: React.FC = () => {
             </div>
             <div className="text-sm sm:text-base font-black bg-gradient-to-r from-kauvery-purple via-kauvery-violet to-kauvery-pink bg-clip-text text-transparent truncate">
               {currentView === 'dashboard'
-                ? 'Executive Overview'
+                ? currentRole === Role.EMPLOYEE
+                  ? 'My Kaizen overview'
+                  : 'Executive Overview'
                 : currentView === 'pipeline'
-                  ? 'Pipeline Workspace'
+                  ? currentRole === Role.EMPLOYEE
+                    ? 'My ideas pipeline'
+                    : 'Pipeline Workspace'
                   : currentView === 'be-overview'
                     ? 'Business Excellence reports'
                   : currentView === 'hod-desk'

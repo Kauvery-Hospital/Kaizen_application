@@ -346,6 +346,25 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
     processAfterVideoCaption: '',
     slide3BeforeImagePath: '',
     slide3AfterImagePath: '',
+    beforeAfterSlides: [{ beforeImagePath: '', afterImagePath: '', beforeCaption: '', afterCaption: '' }] as Array<{
+      beforeImagePath: string;
+      afterImagePath: string;
+      beforeCaption: string;
+      afterCaption: string;
+    }>,
+    processVideoSlides: [
+      {
+        processBeforeVideoPath: '',
+        processAfterVideoPath: '',
+        processBeforeVideoCaption: '',
+        processAfterVideoCaption: '',
+      },
+    ] as Array<{
+      processBeforeVideoPath: string;
+      processAfterVideoPath: string;
+      processBeforeVideoCaption: string;
+      processAfterVideoCaption: string;
+    }>,
     resultKpis: [
       {
         id: `KPI-${Date.now()}`,
@@ -374,6 +393,8 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
   const [processAfterPreviews, setProcessAfterPreviews] = useState<ProcessPreviewItem[]>([]);
 
   const previewUrlRegistry = useRef<Set<string>>(new Set());
+  const formDataRef = useRef(formData);
+  formDataRef.current = formData;
   const teamPhotoInputRef = useRef<HTMLInputElement>(null);
   const beforeImageInputRef = useRef<HTMLInputElement>(null);
   const afterImageInputRef = useRef<HTMLInputElement>(null);
@@ -410,37 +431,104 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
           : null;
       setFormData((prev: any) => {
         const merged = { ...prev, ...initialData, ...(draft || {}) };
-        const list: ResultKpi[] = Array.isArray(merged.resultKpis) ? merged.resultKpis : [];
+        const basIsArray = Array.isArray((merged as any).beforeAfterSlides);
+        const bas = basIsArray ? ((merged as any).beforeAfterSlides as any[]) : [];
+        if (!basIsArray) {
+          (merged as any).beforeAfterSlides = [
+            {
+              beforeImagePath: String((merged as any).slide3BeforeImagePath || '').trim(),
+              afterImagePath: String((merged as any).slide3AfterImagePath || '').trim(),
+              beforeCaption: '',
+              afterCaption: '',
+            },
+          ];
+        } else {
+          (merged as any).beforeAfterSlides = bas.map((row: any) => ({
+            beforeImagePath: String(row?.beforeImagePath ?? '').trim(),
+            afterImagePath: String(row?.afterImagePath ?? '').trim(),
+            beforeCaption: String(row?.beforeCaption ?? '').trim(),
+            afterCaption: String(row?.afterCaption ?? '').trim(),
+          }));
+        }
+
+        const pvsIsArray = Array.isArray((merged as any).processVideoSlides);
+        const pvsIn = pvsIsArray ? ((merged as any).processVideoSlides as any[]) : [];
+        if (!pvsIsArray) {
+          (merged as any).processVideoSlides = [
+            {
+              processBeforeVideoPath: String((merged as any).processBeforeVideoPath || '').trim(),
+              processAfterVideoPath: String((merged as any).processAfterVideoPath || '').trim(),
+              processBeforeVideoCaption: String((merged as any).processBeforeVideoCaption || '').trim(),
+              processAfterVideoCaption: String((merged as any).processAfterVideoCaption || '').trim(),
+            },
+          ];
+        } else {
+          (merged as any).processVideoSlides = pvsIn.map((row: any) => ({
+            processBeforeVideoPath: String(row?.processBeforeVideoPath ?? (merged as any).processBeforeVideoPath ?? '').trim(),
+            processAfterVideoPath: String(row?.processAfterVideoPath ?? (merged as any).processAfterVideoPath ?? '').trim(),
+            processBeforeVideoCaption: String(row?.processBeforeVideoCaption ?? '').trim(),
+            processAfterVideoCaption: String(row?.processAfterVideoCaption ?? '').trim(),
+          }));
+        }
+        const p0 = ((merged as any).processVideoSlides as any[])?.[0];
+        (merged as any).processBeforeVideoPath = String(p0?.processBeforeVideoPath || '');
+        (merged as any).processAfterVideoPath = String(p0?.processAfterVideoPath || '');
+
+        const listRaw: ResultKpi[] = Array.isArray(merged.resultKpis) ? merged.resultKpis : [];
         const fromLegacy: ResultKpi[] = [
           {
             id: 'KPI-1',
-            title: list[0]?.title ?? 'Hand injury reduced',
-            metricLabel: list[0]?.metricLabel ?? 'No. of Hand Injury',
-            before: list[0]?.before ?? merged.result1Before ?? '',
-            after: list[0]?.after ?? merged.result1After ?? '',
-            resultNote: list[0]?.resultNote ?? merged.result1 ?? '',
-            higherIsBetter: Boolean(list[0]?.higherIsBetter) ?? false,
+            title: listRaw[0]?.title ?? 'Hand injury reduced',
+            metricLabel: listRaw[0]?.metricLabel ?? 'No. of Hand Injury',
+            before: listRaw[0]?.before ?? merged.result1Before ?? '',
+            after: listRaw[0]?.after ?? merged.result1After ?? '',
+            resultNote: listRaw[0]?.resultNote ?? merged.result1 ?? '',
+            higherIsBetter: Boolean(listRaw[0]?.higherIsBetter) ?? false,
           },
           {
             id: 'KPI-2',
-            title: list[1]?.title ?? 'Patient shifting time reduced',
-            metricLabel: list[1]?.metricLabel ?? 'Time in Minutes',
-            before: list[1]?.before ?? merged.result2Before ?? '',
-            after: list[1]?.after ?? merged.result2After ?? '',
-            resultNote: list[1]?.resultNote ?? merged.result2 ?? '',
-            higherIsBetter: Boolean(list[1]?.higherIsBetter) ?? false,
+            title: listRaw[1]?.title ?? 'Patient shifting time reduced',
+            metricLabel: listRaw[1]?.metricLabel ?? 'Time in Minutes',
+            before: listRaw[1]?.before ?? merged.result2Before ?? '',
+            after: listRaw[1]?.after ?? merged.result2After ?? '',
+            resultNote: listRaw[1]?.resultNote ?? merged.result2 ?? '',
+            higherIsBetter: Boolean(listRaw[1]?.higherIsBetter) ?? false,
           },
           {
             id: 'KPI-3',
-            title: list[2]?.title ?? 'Cost reduced',
-            metricLabel: list[2]?.metricLabel ?? 'In ₹',
-            before: list[2]?.before ?? merged.result3Before ?? '',
-            after: list[2]?.after ?? merged.result3After ?? '',
-            resultNote: list[2]?.resultNote ?? merged.result3 ?? '',
-            higherIsBetter: Boolean(list[2]?.higherIsBetter) ?? false,
+            title: listRaw[2]?.title ?? 'Cost reduced',
+            metricLabel: listRaw[2]?.metricLabel ?? 'In ₹',
+            before: listRaw[2]?.before ?? merged.result3Before ?? '',
+            after: listRaw[2]?.after ?? merged.result3After ?? '',
+            resultNote: listRaw[2]?.resultNote ?? merged.result3 ?? '',
+            higherIsBetter: Boolean(listRaw[2]?.higherIsBetter) ?? false,
           },
         ];
-        merged.resultKpis = fromLegacy;
+        if (listRaw.length > 3) {
+          let extended = listRaw.map((k, idx) => ({
+            id: (k.id || `KPI-${idx + 1}`).toString(),
+            title: (k.title ?? '').toString(),
+            metricLabel: (k.metricLabel ?? '').toString(),
+            before: k.before ?? '',
+            after: k.after ?? '',
+            resultNote: (k.resultNote ?? '').toString(),
+            higherIsBetter: Boolean(k.higherIsBetter),
+          }));
+          while (extended.length % 3 !== 0) {
+            extended.push({
+              id: `KPI-${Date.now()}-${extended.length}`,
+              title: '',
+              metricLabel: '',
+              before: '',
+              after: '',
+              resultNote: '',
+              higherIsBetter: false,
+            });
+          }
+          merged.resultKpis = extended;
+        } else {
+          merged.resultKpis = fromLegacy;
+        }
         return merged;
       });
 
@@ -452,8 +540,22 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
       }
 
       // Restore slide-3 Before/After images if saved in draft / suggestion.
-      const b3 = String((draft as any)?.slide3BeforeImagePath || (initialData as any)?.slide3BeforeImagePath || '').trim();
-      const a3 = String((draft as any)?.slide3AfterImagePath || (initialData as any)?.slide3AfterImagePath || '').trim();
+      const ba0 =
+        (draft as any)?.beforeAfterSlides?.[0] ||
+        (initialData as any)?.beforeAfterSlides?.[0] ||
+        null;
+      const b3 = String(
+        ba0?.beforeImagePath ||
+          (draft as any)?.slide3BeforeImagePath ||
+          (initialData as any)?.slide3BeforeImagePath ||
+          '',
+      ).trim();
+      const a3 = String(
+        ba0?.afterImagePath ||
+          (draft as any)?.slide3AfterImagePath ||
+          (initialData as any)?.slide3AfterImagePath ||
+          '',
+      ).trim();
       if (apiBase) {
         if (b3) setBeforeImagePreviewUrls([`${apiBase}/kaizen-files/${b3}`]);
         if (a3) setAfterImagePreviewUrls([`${apiBase}/kaizen-files/${a3}`]);
@@ -479,7 +581,11 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
     else setWhyWhyVisibleCount(3);
   }, [initialData, mode]);
 
-  const uploadSlide3Image = async (side: 'before' | 'after', files: FileList | null) => {
+  const uploadBeforeAfterImage = async (
+    slideIdx: number,
+    side: 'before' | 'after',
+    files: FileList | null,
+  ) => {
     if (!files || files.length === 0) return;
     const file = files[0];
     if (!apiBase || !accessToken) return;
@@ -492,13 +598,15 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
           (initialData as any)?.empNo ||
           'IMG',
       ).trim();
-    const prefix = `${implCode}_${side}_slide3`;
+    const prefix = `${implCode}_${side}_before_after_${slideIdx + 1}`;
 
     // delete previous if exists
-    const prevPath =
-      side === 'before'
-        ? String(formData.slide3BeforeImagePath || '').trim()
-        : String(formData.slide3AfterImagePath || '').trim();
+    const bas = Array.isArray((formData as any).beforeAfterSlides)
+      ? ((formData as any).beforeAfterSlides as any[])
+      : [];
+    const prevPath = String(
+      side === 'before' ? bas?.[slideIdx]?.beforeImagePath || '' : bas?.[slideIdx]?.afterImagePath || '',
+    ).trim();
     if (prevPath) {
       try {
         await fetch(
@@ -519,17 +627,26 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
     const rel = out?.filePaths?.[0];
     if (!rel) return;
 
-    // Update saved path + preview URL
-    if (side === 'before') {
-      beforeImagePreviewUrls.forEach(revokePreviewUrl);
-      setBeforeImagePreviewUrls([`${apiBase}/kaizen-files/${rel}`]);
-      setFormData((prev: any) => ({ ...prev, slide3BeforeImagePath: rel }));
-    } else {
-      afterImagePreviewUrls.forEach(revokePreviewUrl);
-      setAfterImagePreviewUrls([`${apiBase}/kaizen-files/${rel}`]);
-      setFormData((prev: any) => ({ ...prev, slide3AfterImagePath: rel }));
-    }
+    setFormData((prev: any) => {
+      const list = Array.isArray(prev.beforeAfterSlides) ? [...prev.beforeAfterSlides] : [];
+      while (list.length <= slideIdx)
+        list.push({ beforeImagePath: '', afterImagePath: '', beforeCaption: '', afterCaption: '' });
+      const row = list[slideIdx] || { beforeImagePath: '', afterImagePath: '', beforeCaption: '', afterCaption: '' };
+      list[slideIdx] = side === 'before' ? { ...row, beforeImagePath: rel } : { ...row, afterImagePath: rel };
+
+      const legacyPatch =
+        slideIdx === 0
+          ? side === 'before'
+            ? { slide3BeforeImagePath: rel }
+            : { slide3AfterImagePath: rel }
+          : {};
+
+      return { ...prev, beforeAfterSlides: list, ...legacyPatch };
+    });
+    // Preview URLs refresh via effect when active BA slide / paths change.
   };
+
+  // (Removed) "Additional slides" concept.
 
   useEffect(() => {
     // If draft had empty/undefined rows, normalize to 1 empty row for UX
@@ -624,62 +741,10 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
     }));
   };
 
-  const finalizeTemplateFiles = useCallback(
-    async (): Promise<{ pptPath: string; pdfPath: string } | null> => {
-      if (!apiBase || !accessToken) return null;
-      const suggestionId = (initialData as any)?.id ? String((initialData as any).id) : '';
-      if (!suggestionId) return null;
-
-      const slides = await (async () => {
-        const out: string[] = [];
-        const SHEETS = 5;
-        setIsExportCaptureMode(true);
-        try {
-          // Let React paint export-safe placeholders (videos → static blocks).
-          await new Promise<void>((r) => requestAnimationFrame(() => r()));
-          await new Promise<void>((r) => requestAnimationFrame(() => r()));
-          await new Promise((r) => setTimeout(r, 80));
-          for (let page = 1; page <= SHEETS; page++) {
-            flushSync(() => setCurrentSheet(page));
-            await new Promise<void>((r) => requestAnimationFrame(() => r()));
-            await new Promise<void>((r) => requestAnimationFrame(() => r()));
-            await new Promise((r) => setTimeout(r, 120));
-            const node = templateSheetCaptureRef.current;
-            if (!node) continue;
-            const png = await captureNodeAsLandscapePng(node);
-            if (png) out.push(png);
-          }
-          return out;
-        } finally {
-          setIsExportCaptureMode(false);
-        }
-      })();
-
-      if (!slides.length) return null;
-
-      const res = await fetch(
-        `${apiBase}/suggestions/${encodeURIComponent(suggestionId)}/template/finalize`,
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            slides,
-            fileNameBase: (initialData as any)?.code || (initialData as any)?.id,
-          }),
-        },
-      );
-      if (!res.ok) return null;
-      const out = (await res.json()) as { pptPath: string; pdfPath: string };
-      if (!out?.pptPath || !out?.pdfPath) return null;
-      return out;
-    },
-    [apiBase, accessToken, initialData],
-  );
+  // (removed) group photo upload
 
   const handleProcessVideoUpload = async (
+    slideIdx: number,
     side: 'before' | 'after',
     files: FileList | null,
   ) => {
@@ -687,10 +752,15 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
     const file = files[0];
     if (!apiBase || !accessToken) return;
 
-    const prevPath =
+    const bas = Array.isArray((formData as any).processVideoSlides)
+      ? ((formData as any).processVideoSlides as any[])
+      : [];
+    const row = bas[slideIdx] || {};
+    const prevPath = String(
       side === 'before'
-        ? (formData.processBeforeVideoPath || '').toString().trim()
-        : (formData.processAfterVideoPath || '').toString().trim();
+        ? row.processBeforeVideoPath || ''
+        : row.processAfterVideoPath || '',
+    ).trim();
     if (prevPath) {
       try {
         await fetch(
@@ -705,7 +775,7 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
         (initialData as any)?.assignedImplementerCode ||
         (initialData as any)?.empNo ||
         'VIDEO') as string;
-    const prefix = `${String(prefixBase).trim()}_${side}_video`;
+    const prefix = `${String(prefixBase).trim()}_${side}_video_${slideIdx + 1}`;
 
     const fd = new FormData();
     fd.append('files', file);
@@ -718,19 +788,43 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
     const rel = out?.filePaths?.[0];
     if (!rel) return;
 
-    setFormData((prev: any) => ({
-      ...prev,
-      processBeforeVideoPath: side === 'before' ? rel : prev.processBeforeVideoPath,
-      processAfterVideoPath: side === 'after' ? rel : prev.processAfterVideoPath,
-    }));
+    setFormData((prev: any) => {
+      const list = Array.isArray(prev.processVideoSlides) ? [...prev.processVideoSlides] : [];
+      while (list.length <= slideIdx) {
+        list.push({
+          processBeforeVideoPath: '',
+          processAfterVideoPath: '',
+          processBeforeVideoCaption: '',
+          processAfterVideoCaption: '',
+        });
+      }
+      const r = list[slideIdx] || {
+        processBeforeVideoPath: '',
+        processAfterVideoPath: '',
+        processBeforeVideoCaption: '',
+        processAfterVideoCaption: '',
+      };
+      list[slideIdx] =
+        side === 'before'
+          ? { ...r, processBeforeVideoPath: rel }
+          : { ...r, processAfterVideoPath: rel };
+      const next: any = { ...prev, processVideoSlides: list };
+      if (slideIdx === 0) {
+        next.processBeforeVideoPath = list[0].processBeforeVideoPath;
+        next.processAfterVideoPath = list[0].processAfterVideoPath;
+      }
+      return next;
+    });
   };
 
   const handleBeforeImagesUpload = (files: FileList | null) => {
-    void uploadSlide3Image('before', files);
+    const idx = Math.max(0, currentSheet - 3);
+    void uploadBeforeAfterImage(idx, 'before', files);
   };
 
   const handleAfterImagesUpload = (files: FileList | null) => {
-    void uploadSlide3Image('after', files);
+    const idx = Math.max(0, currentSheet - 3);
+    void uploadBeforeAfterImage(idx, 'after', files);
   };
 
   const handleProcessFilesUpload = (side: 'before' | 'after', files: FileList | null) => {
@@ -773,10 +867,312 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
 
   const isCreateMode = mode === 'create';
   const [currentSheet, setCurrentSheet] = useState(1);
-  const totalSheets = 5;
+  const [resultsGraphCount, setResultsGraphCount] = useState<1 | 2 | 3>(1);
+  const beforeAfterCount = Array.isArray((formData as any).beforeAfterSlides)
+    ? ((formData as any).beforeAfterSlides as any[]).length
+    : 0;
+  const processVideoSlidesList = Array.isArray((formData as any).processVideoSlides)
+    ? ((formData as any).processVideoSlides as {
+        processBeforeVideoPath: string;
+        processAfterVideoPath: string;
+        processBeforeVideoCaption: string;
+        processAfterVideoCaption: string;
+      }[])
+    : [];
+  const processVideoCount = processVideoSlidesList.length;
+  /** Sheet indices: 1–2 fixed; 3…(2+N) Before/After; Np process video; Nr result pages (×3 KPIs). */
+  const lastBaSheet = 2 + beforeAfterCount;
+  const firstProcessSheet = lastBaSheet + 1;
+  const lastProcessSheet = firstProcessSheet + processVideoCount - 1;
+  const resultKpisFlat = Array.isArray((formData as any).resultKpis)
+    ? ((formData as any).resultKpis as ResultKpi[])
+    : [];
+  const resultPagesCount = resultKpisFlat.length ? Math.ceil(resultKpisFlat.length / 3) : 0;
+  const firstKpiSheet = lastProcessSheet + 1;
+  const lastKpiSheet = firstKpiSheet + resultPagesCount - 1;
+  const totalSheets = 2 + beforeAfterCount + processVideoCount + resultPagesCount;
+  const kpiPageIdx =
+    currentSheet >= firstKpiSheet && currentSheet <= lastKpiSheet
+      ? currentSheet - firstKpiSheet
+      : 0;
+  /** Which template the Add-slide modal should offer (matches current slide section). */
+  const addSlideModalKind: 'beforeAfter' | 'processVideo' | 'results' =
+    currentSheet >= 3 && currentSheet <= lastBaSheet
+      ? 'beforeAfter'
+      : currentSheet >= firstProcessSheet && currentSheet <= lastProcessSheet
+        ? 'processVideo'
+        : currentSheet >= firstKpiSheet && currentSheet <= lastKpiSheet
+          ? 'results'
+          : 'beforeAfter';
+  const [isAddSlideModalOpen, setIsAddSlideModalOpen] = useState(false);
   const editedFieldSet = useMemo(() => new Set(editedFieldKeys), [editedFieldKeys]);
   const templateSheetCaptureRef = useRef<HTMLDivElement | null>(null);
   const [isExportCaptureMode, setIsExportCaptureMode] = useState(false);
+
+  useEffect(() => {
+    setCurrentSheet((s) => Math.min(s, totalSheets));
+  }, [totalSheets]);
+
+  useEffect(() => {
+    if (isCreateMode || !apiBase) return;
+    if (currentSheet < 3 || currentSheet > lastBaSheet) return;
+    const idx = currentSheet - 3;
+    const bas = Array.isArray((formData as any).beforeAfterSlides)
+      ? ((formData as any).beforeAfterSlides as {
+          beforeImagePath?: string;
+          afterImagePath?: string;
+          beforeCaption?: string;
+          afterCaption?: string;
+        }[])
+      : [];
+    const row = bas[idx];
+    const b = String(row?.beforeImagePath || '').trim();
+    const a = String(row?.afterImagePath || '').trim();
+    setBeforeImagePreviewUrls((prev) => {
+      prev.forEach(revokePreviewUrl);
+      return b ? [`${apiBase}/kaizen-files/${b}`] : [];
+    });
+    setAfterImagePreviewUrls((prev) => {
+      prev.forEach(revokePreviewUrl);
+      return a ? [`${apiBase}/kaizen-files/${a}`] : [];
+    });
+  }, [
+    isCreateMode,
+    apiBase,
+    currentSheet,
+    lastBaSheet,
+    formData.beforeAfterSlides,
+    revokePreviewUrl,
+  ]);
+
+  const handleInsertBeforeAfterSlide = useCallback(() => {
+    let insertAt = 0;
+    flushSync(() => {
+      setFormData((prev: any) => {
+        const list = Array.isArray(prev.beforeAfterSlides) ? [...prev.beforeAfterSlides] : [];
+        const lba = 2 + list.length;
+        insertAt = list.length;
+        if (currentSheet >= 3 && currentSheet <= lba) insertAt = currentSheet - 3 + 1;
+        list.splice(insertAt, 0, { beforeImagePath: '', afterImagePath: '', beforeCaption: '', afterCaption: '' });
+        return { ...prev, beforeAfterSlides: list };
+      });
+    });
+    setCurrentSheet(3 + insertAt);
+    setIsAddSlideModalOpen(false);
+  }, [currentSheet]);
+
+  const handleDeleteCurrentBeforeAfterSlide = useCallback(async () => {
+    if (currentSheet < 3 || currentSheet > lastBaSheet) return;
+    if (currentSheet < 3 || currentSheet > lastBaSheet) return;
+    if (!apiBase || !accessToken) return;
+    const baIdx = currentSheet - 3;
+    const snap = formDataRef.current;
+    const bas = Array.isArray(snap?.beforeAfterSlides) ? snap.beforeAfterSlides : [];
+    const row = bas[baIdx];
+    const pathsToDelete = [
+      String(row?.beforeImagePath || '').trim(),
+      String(row?.afterImagePath || '').trim(),
+    ].filter(Boolean);
+    for (const p of pathsToDelete) {
+      try {
+        await fetch(
+          `${apiBase}/attachments/kaizen-file?path=${encodeURIComponent(p)}`,
+          { method: 'DELETE', headers: { Authorization: `Bearer ${accessToken}` } },
+        );
+      } catch {
+        // ignore
+      }
+    }
+    setFormData((prev: any) => {
+      const list = Array.isArray(prev.beforeAfterSlides) ? [...prev.beforeAfterSlides] : [];
+      if (baIdx < 0 || baIdx >= list.length) return prev;
+      list.splice(baIdx, 1);
+      const next: any = {
+        ...prev,
+        beforeAfterSlides: list,
+      };
+      const first = next.beforeAfterSlides?.[0];
+      next.slide3BeforeImagePath = String(first?.beforeImagePath || '');
+      next.slide3AfterImagePath = String(first?.afterImagePath || '');
+      return next;
+    });
+  }, [apiBase, accessToken, currentSheet, lastBaSheet]);
+
+  const newEmptyResultKpi = (): ResultKpi => ({
+    id: `KPI-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+    title: '',
+    metricLabel: '',
+    before: '',
+    after: '',
+    resultNote: '',
+    higherIsBetter: false,
+  });
+
+  const handleInsertProcessVideoSlide = useCallback(() => {
+    let insertAt = 0;
+    let targetSheet = 0;
+    flushSync(() => {
+      setFormData((prev: any) => {
+        const baN = Math.max(1, Array.isArray(prev.beforeAfterSlides) ? prev.beforeAfterSlides.length : 1);
+        const lba = 2 + baN;
+        const fp = lba + 1;
+        const list = Array.isArray(prev.processVideoSlides) ? [...prev.processVideoSlides] : [];
+        const lp = fp + list.length - 1;
+        insertAt = list.length;
+        if (currentSheet >= fp && currentSheet <= lp) insertAt = currentSheet - fp + 1;
+        list.splice(insertAt, 0, {
+          processBeforeVideoPath: '',
+          processAfterVideoPath: '',
+          processBeforeVideoCaption: '',
+          processAfterVideoCaption: '',
+        });
+        targetSheet = fp + insertAt;
+        const next: any = { ...prev, processVideoSlides: list };
+        const z = list[0];
+        next.processBeforeVideoPath = String(z?.processBeforeVideoPath || '');
+        next.processAfterVideoPath = String(z?.processAfterVideoPath || '');
+        return next;
+      });
+    });
+    setCurrentSheet(targetSheet);
+    setIsAddSlideModalOpen(false);
+  }, [currentSheet]);
+
+  const handleDeleteCurrentProcessVideoSlide = useCallback(async () => {
+    if (currentSheet < firstProcessSheet || currentSheet > lastProcessSheet) return;
+    if (!apiBase || !accessToken) return;
+    const pvIdx = currentSheet - firstProcessSheet;
+    const snap = formDataRef.current;
+    const rows = Array.isArray(snap?.processVideoSlides) ? snap.processVideoSlides : [];
+    const row = rows[pvIdx] as { processBeforeVideoPath?: string; processAfterVideoPath?: string } | undefined;
+    const pathsToDelete = [
+      String(row?.processBeforeVideoPath || '').trim(),
+      String(row?.processAfterVideoPath || '').trim(),
+    ].filter(Boolean);
+    for (const p of pathsToDelete) {
+      try {
+        await fetch(
+          `${apiBase}/attachments/kaizen-file?path=${encodeURIComponent(p)}`,
+          { method: 'DELETE', headers: { Authorization: `Bearer ${accessToken}` } },
+        );
+      } catch {
+        // ignore
+      }
+    }
+    setFormData((prev: any) => {
+      const list = Array.isArray(prev.processVideoSlides) ? [...prev.processVideoSlides] : [];
+      if (pvIdx < 0 || pvIdx >= list.length) return prev;
+      list.splice(pvIdx, 1);
+      const next: any = {
+        ...prev,
+        processVideoSlides: list,
+      };
+      const z = next.processVideoSlides?.[0];
+      next.processBeforeVideoPath = String(z?.processBeforeVideoPath || '');
+      next.processAfterVideoPath = String(z?.processAfterVideoPath || '');
+      return next;
+    });
+  }, [
+    apiBase,
+    accessToken,
+    currentSheet,
+    firstProcessSheet,
+    lastProcessSheet,
+  ]);
+
+  const handleInsertResultsSlide = useCallback(() => {
+    let targetSheet = 0;
+    flushSync(() => {
+      setFormData((prev: any) => {
+        const baN = Math.max(1, Array.isArray(prev.beforeAfterSlides) ? prev.beforeAfterSlides.length : 1);
+        const lba = 2 + baN;
+        const procN = Math.max(1, Array.isArray(prev.processVideoSlides) ? prev.processVideoSlides.length : 1);
+        const fk = lba + procN + 1;
+        const kpis = Array.isArray(prev.resultKpis) ? [...prev.resultKpis] : [];
+        while (kpis.length % 3 !== 0) kpis.push(newEmptyResultKpi());
+        const pages = kpis.length / 3;
+        const lk = fk + pages - 1;
+        let pageInsert = pages;
+        if (currentSheet >= fk && currentSheet <= lk) pageInsert = currentSheet - fk + 1;
+        const at = pageInsert * 3;
+        kpis.splice(at, 0, newEmptyResultKpi(), newEmptyResultKpi(), newEmptyResultKpi());
+        targetSheet = fk + pageInsert;
+        return { ...prev, resultKpis: kpis };
+      });
+    });
+    setCurrentSheet(targetSheet);
+    setIsAddSlideModalOpen(false);
+  }, [currentSheet]);
+
+  const handleDeleteCurrentResultsSlide = useCallback(() => {
+    if (currentSheet < firstKpiSheet || currentSheet > lastKpiSheet) return;
+    const pageIdx = currentSheet - firstKpiSheet;
+    setFormData((prev: any) => {
+      let kpis = Array.isArray(prev.resultKpis) ? [...prev.resultKpis] : [];
+      while (kpis.length % 3 !== 0) kpis.push(newEmptyResultKpi());
+      const pages = kpis.length / 3;
+      if (pageIdx < 0 || pageIdx >= pages) return prev;
+      kpis.splice(pageIdx * 3, 3);
+      return { ...prev, resultKpis: kpis };
+    });
+  }, [currentSheet, firstKpiSheet, lastKpiSheet]);
+
+  const renderDynamicSlideChrome = (opts: {
+    zone: 'beforeAfter' | 'processVideo' | 'results';
+    deleteEnabled: boolean;
+  }) => {
+    if (isCreateMode || isTemplatePreview || currentSheet < 3) return null;
+    const delTitle =
+      opts.zone === 'beforeAfter'
+        ? 'Delete this Before/After slide'
+        : opts.zone === 'processVideo'
+          ? 'Delete this Process video slide'
+          : 'Delete this Results slide';
+    const disabledTitle =
+      opts.zone === 'beforeAfter'
+        ? 'At least one Before/After slide is required'
+        : opts.zone === 'processVideo'
+          ? 'At least one Process video slide is required'
+          : 'At least one Results slide is required';
+    const addTitle =
+      opts.zone === 'beforeAfter'
+        ? 'Add Before/After slide after this one'
+        : opts.zone === 'processVideo'
+          ? 'Add Process video slide after this one'
+          : 'Add Results slide after this one';
+    return (
+      <div className="absolute right-2 top-2 z-30 flex gap-1">
+        <button
+          type="button"
+          title={opts.deleteEnabled ? delTitle : disabledTitle}
+          disabled={!opts.deleteEnabled}
+          onClick={() => {
+            if (!opts.deleteEnabled) return;
+            if (opts.zone === 'beforeAfter') void handleDeleteCurrentBeforeAfterSlide();
+            else if (opts.zone === 'processVideo') void handleDeleteCurrentProcessVideoSlide();
+            else handleDeleteCurrentResultsSlide();
+          }}
+          className={`inline-flex size-9 items-center justify-center rounded-lg border shadow-sm ${
+            opts.deleteEnabled
+              ? 'border-rose-200 bg-white text-rose-700 hover:bg-rose-50'
+              : 'border-gray-200 bg-gray-100 text-gray-400 cursor-not-allowed'
+          }`}
+          aria-label="Delete slide"
+        >
+          <span className="material-icons-round text-xl">delete</span>
+        </button>
+        <button
+          type="button"
+          title={addTitle}
+          onClick={() => setIsAddSlideModalOpen(true)}
+          className="inline-flex size-9 items-center justify-center rounded-lg border border-purple-200 bg-white text-kauvery-purple shadow-sm hover:bg-purple-50"
+          aria-label="Add slide"
+        >
+          <span className="material-icons-round text-xl">add</span>
+        </button>
+      </div>
+    );
+  };
 
   useLayoutEffect(() => {
     if (isCreateMode) return;
@@ -822,6 +1218,59 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
       },
     }),
     [isCreateMode, totalSheets],
+  );
+
+  const finalizeTemplateFiles = useCallback(
+    async (): Promise<{ pptPath: string; pdfPath: string } | null> => {
+      if (!apiBase || !accessToken) return null;
+      const suggestionId = (initialData as any)?.id ? String((initialData as any).id) : '';
+      if (!suggestionId) return null;
+
+      const slides = await (async () => {
+        const out: string[] = [];
+        setIsExportCaptureMode(true);
+        try {
+          await new Promise<void>((r) => requestAnimationFrame(() => r()));
+          await new Promise<void>((r) => requestAnimationFrame(() => r()));
+          await new Promise((r) => setTimeout(r, 80));
+          for (let page = 1; page <= totalSheets; page++) {
+            flushSync(() => setCurrentSheet(page));
+            await new Promise<void>((r) => requestAnimationFrame(() => r()));
+            await new Promise<void>((r) => requestAnimationFrame(() => r()));
+            await new Promise((r) => setTimeout(r, 120));
+            const node = templateSheetCaptureRef.current;
+            if (!node) continue;
+            const png = await captureNodeAsLandscapePng(node);
+            if (png) out.push(png);
+          }
+          return out;
+        } finally {
+          setIsExportCaptureMode(false);
+        }
+      })();
+
+      if (!slides.length) return null;
+
+      const res = await fetch(
+        `${apiBase}/suggestions/${encodeURIComponent(suggestionId)}/template/finalize`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            slides,
+            fileNameBase: (initialData as any)?.code || (initialData as any)?.id,
+          }),
+        },
+      );
+      if (!res.ok) return null;
+      const out = (await res.json()) as { pptPath: string; pdfPath: string };
+      if (!out?.pptPath || !out?.pdfPath) return null;
+      return out;
+    },
+    [apiBase, accessToken, initialData, totalSheets],
   );
 
   const fetchHrmsEmployee = useCallback(
@@ -882,6 +1331,36 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
     });
   }, []);
 
+  const handleDeleteTeamMember = useCallback((idx: number) => {
+    setFormData((prev: any) => {
+      const rows: TeamMemberRow[] = Array.isArray(prev.teamMemberRows)
+        ? [...prev.teamMemberRows]
+        : [];
+      if (idx < 0 || idx >= rows.length) return prev;
+
+      const removedId = String(rows[idx]?.employeeId || '').trim();
+      rows.splice(idx, 1);
+      if (rows.length === 0) rows.push({ employeeId: '', name: '', unit: '', department: '' });
+
+      const nextPhotoPaths: Record<string, string> = { ...(prev.teamMemberPhotoPaths || {}) };
+      if (removedId && nextPhotoPaths[removedId]) {
+        delete nextPhotoPaths[removedId];
+      }
+
+      const teamMembers = rows
+        .map((r) => String(r.name || '').trim())
+        .filter(Boolean)
+        .join(', ');
+
+      return {
+        ...prev,
+        teamMemberRows: rows,
+        teamMemberPhotoPaths: nextPhotoPaths,
+        teamMembers,
+      };
+    });
+  }, []);
+
   // Default first team member as the assigned implementer (implement mode)
   useEffect(() => {
     if (mode !== 'implement') return;
@@ -937,9 +1416,10 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
   }, [mode, initialData, fetchHrmsEmployee]);
   const visibleResultKpis = useMemo(() => {
     const all: ResultKpi[] = Array.isArray(formData.resultKpis) ? formData.resultKpis : [];
+    const start = kpiPageIdx * 3;
     const fixed = [0, 1, 2].map((i) => {
-      const k = all[i] || {
-        id: `KPI-${i + 1}`,
+      const k = all[start + i] || {
+        id: `KPI-${start + i + 1}`,
         title: '',
         metricLabel: '',
         before: '',
@@ -959,8 +1439,7 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
         hi <= 10
           ? Array.from({ length: hi + 1 }, (_, j) => hi - j)
           : [hi, Math.round(hi / 2), 0];
-      const higher = Boolean(k.higherIsBetter);
-      const improved = higher ? afterNum >= beforeNum : afterNum <= beforeNum;
+      const improved = afterNum >= beforeNum;
       return {
         ...k,
         beforeNum,
@@ -970,11 +1449,11 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
         axisMax,
         axisTicks,
         improved,
-        safePage: 1,
+        safePage: kpiPageIdx + 1,
       };
     });
     return fixed;
-  }, [formData.resultKpis]);
+  }, [formData.resultKpis, kpiPageIdx]);
 
   const getDynamicFlowFields = () => {
     const dynamicTeamMembers =
@@ -1008,6 +1487,30 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
       kaizenNo: dynamicKaizenNo,
     };
   };
+
+  const renderTemplateHeader = () => (
+    <div className="grid grid-cols-12 border-b-2 border-gray-800 items-stretch">
+      <div className="col-span-6 bg-kauvery-purple text-white font-black px-3 py-2.5 border-r border-white/25 flex items-center min-h-[2.5rem]">
+        <span className="text-white/90">Title/Theme:</span>{' '}
+        <textarea
+          value={getDynamicHeaderFields().title || ''}
+          readOnly={isTemplatePreview}
+          rows={1}
+          placeholder="—"
+          onChange={(e) => setFormData((prev: any) => ({ ...prev, theme: e.target.value }))}
+          className="ml-1 flex-1 min-w-0 bg-transparent text-white font-semibold leading-snug resize-none outline-none border border-transparent focus:border-white/30 focus:ring-0 placeholder:text-white/70 overflow-hidden"
+          style={{ overflowWrap: 'anywhere' }}
+        />
+      </div>
+      <div className="col-span-5 bg-kauvery-purple text-white font-black px-3 py-2.5 border-r border-white/25 flex items-center min-h-[2.5rem]">
+        <span className="text-white/90">Kaizen No:</span>{' '}
+        <span className="font-semibold">{getDynamicHeaderFields().kaizenNo || '—'}</span>
+      </div>
+      <div className="col-span-1 bg-white flex min-h-[2.5rem] items-center justify-center border-l border-gray-200 p-1">
+        <KauveryHeaderLogo />
+      </div>
+    </div>
+  );
 
   const sanitizeTeamRows = useCallback((input: any) => {
     const rows: TeamMemberRow[] = Array.isArray(input?.teamMemberRows)
@@ -1044,35 +1547,51 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
     }
 
     const rawKpis: ResultKpi[] = Array.isArray(input?.resultKpis) ? input.resultKpis : [];
-    const cleanedKpis = rawKpis
-      .map((k) => ({
-        id: (k.id || `KPI-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`).toString(),
-        title: (k.title || '').toString().trim(),
-        metricLabel: (k.metricLabel || '').toString().trim(),
-        before: (k.before ?? '').toString(),
-        after: (k.after ?? '').toString(),
-        resultNote: (k.resultNote || '').toString().trim(),
-        higherIsBetter: Boolean(k.higherIsBetter),
-      }))
-      // keep only meaningful KPI rows
-      .filter((k) => Boolean(k.title || k.metricLabel || k.before || k.after || k.resultNote));
-
-    const fixed3: ResultKpi[] = [0, 1, 2].map((i) => ({
-      id: `KPI-${i + 1}`,
-      title: cleanedKpis[i]?.title || '',
-      metricLabel: cleanedKpis[i]?.metricLabel || '',
-      before: cleanedKpis[i]?.before ?? '',
-      after: cleanedKpis[i]?.after ?? '',
-      resultNote: cleanedKpis[i]?.resultNote || '',
-      higherIsBetter: Boolean(cleanedKpis[i]?.higherIsBetter),
+    let resultKpisOut: ResultKpi[] = rawKpis.map((k, idx) => ({
+      id: (k.id || `KPI-${idx + 1}`).toString(),
+      title: (k.title || '').toString().trim(),
+      metricLabel: (k.metricLabel || '').toString().trim(),
+      before: (k.before ?? '').toString(),
+      after: (k.after ?? '').toString(),
+      resultNote: (k.resultNote || '').toString().trim(),
+      higherIsBetter: Boolean(k.higherIsBetter),
     }));
+    if (resultKpisOut.length > 0) {
+      while (resultKpisOut.length % 3 !== 0) {
+        const j = resultKpisOut.length;
+        resultKpisOut.push({
+          id: `KPI-pad-${j}`,
+          title: '',
+          metricLabel: '',
+          before: '',
+          after: '',
+          resultNote: '',
+          higherIsBetter: false,
+        });
+      }
+    }
+
+    const pvsIn = Array.isArray((input as any)?.processVideoSlides)
+      ? ((input as any).processVideoSlides as any[])
+      : [];
+    let processVideoSlidesOut = pvsIn.map((row: any) => ({
+      processBeforeVideoPath: String(row?.processBeforeVideoPath ?? '').trim(),
+      processAfterVideoPath: String(row?.processAfterVideoPath ?? '').trim(),
+      processBeforeVideoCaption: String(row?.processBeforeVideoCaption ?? '').trim(),
+      processAfterVideoCaption: String(row?.processAfterVideoCaption ?? '').trim(),
+    }));
+    // Allow empty (user can delete all process slides)
+    const pv0 = processVideoSlidesOut?.[0];
 
     return {
       ...input,
       teamMemberRows: unique.length ? unique : [{ employeeId: '', name: '', unit: '', department: '' }],
       teamMembers,
       teamMemberPhotoPaths: photoPaths,
-      resultKpis: fixed3,
+      resultKpis: resultKpisOut,
+      processVideoSlides: processVideoSlidesOut,
+      processBeforeVideoPath: String(pv0?.processBeforeVideoPath || ''),
+      processAfterVideoPath: String(pv0?.processAfterVideoPath || ''),
     };
   }, []);
 
@@ -1126,7 +1645,8 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
     const dynamicFlowFields = getDynamicFlowFields();
     try {
       setIsDraftSaving(true);
-      await onSaveDraft(sanitizeTeamRows({ ...formData, ...dynamicFlowFields }));
+      const payload: any = sanitizeTeamRows({ ...formData, ...dynamicFlowFields });
+      await onSaveDraft(payload);
       setDraftToast({ type: 'success', message: 'Draft saved' });
       window.setTimeout(() => setDraftToast(null), 2000);
     } catch {
@@ -1140,8 +1660,25 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
   return (
     <div className="bg-white rounded-xl shadow-lg border border-gray-300 overflow-hidden w-full min-w-0 max-w-full">
       
-      <form onSubmit={handleSubmit}>
-        
+      <form
+        onSubmit={handleSubmit}
+        onKeyDownCapture={(e) => {
+          // Prevent accidental submits when user presses Enter inside single-line fields.
+          // Textareas should still accept newlines.
+          if (e.key !== 'Enter') return;
+          if (e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return;
+          const el = e.target as HTMLElement | null;
+          if (!el) return;
+          const tag = el.tagName?.toLowerCase?.() || '';
+          if (tag === 'textarea') return;
+          if (tag === 'input') {
+            const type = ((el as HTMLInputElement).type || '').toLowerCase();
+            // allow Enter for explicit "action" inputs if any exist
+            if (type === 'submit' || type === 'button' || type === 'checkbox' || type === 'radio') return;
+            e.preventDefault();
+          }
+        }}
+      >
         {/* Section 1: Header / Basic Idea Details */}
         {!isTemplatePreview && (
         <div className={`${isCreateMode ? 'bg-white p-0 border-b-0' : 'bg-gray-50 p-8 border-b border-gray-300'}`}>
@@ -1339,27 +1876,14 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
               </div>
             </div>
 
+            {/* Lock ONLY form fields during preview, keep page navigation clickable */}
+            <fieldset disabled={isTemplatePreview} className={isTemplatePreview ? 'select-text' : undefined}>
             {currentSheet === 1 && (
             <div
               ref={templateSheetCaptureRef}
               className="kaizen-template-capture-root bg-white border-2 border-slate-600 rounded-lg shadow-sm overflow-hidden"
             >
-              <div className="grid grid-cols-12 items-stretch">
-                <div className="col-span-12 bg-kauvery-purple text-white text-center font-black text-lg py-2 border-b-2 border-gray-700">
-                  Kaizen Sheet
-                </div>
-                <div className="col-span-6 bg-kauvery-purple text-white font-black px-2 py-2 border-r border-gray-700 flex items-center min-h-[2.5rem]">
-                  <span className="text-white/90">Title/Theme:</span>{' '}
-                  <span className="font-semibold break-words">{getDynamicHeaderFields().title || '-'}</span>
-                </div>
-                <div className="col-span-5 bg-kauvery-purple text-white font-black px-2 py-2 border-r border-gray-700 flex items-center min-h-[2.5rem]">
-                  <span className="text-white/90">Kaizen No:</span>{' '}
-                  <span className="font-semibold">{getDynamicHeaderFields().kaizenNo || '-'}</span>
-                </div>
-                <div className="col-span-1 bg-white flex min-h-[2.5rem] items-center justify-center border-l border-gray-200 p-1">
-                  <KauveryHeaderLogo />
-                </div>
-              </div>
+              {renderTemplateHeader()}
 
               <div className="relative min-h-[290px] border-t border-gray-500 bg-gray-100 overflow-visible py-4 px-2">
                 {(() => {
@@ -1367,7 +1891,7 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                     ? (formData.teamMemberRows as TeamMemberRow[])
                     : [];
                   const memberIds = rows
-                    .map(r => (r.employeeId || '').trim())
+                    .map((r) => (r.employeeId || '').trim())
                     .filter(Boolean)
                     .slice(0, 5);
 
@@ -1401,9 +1925,7 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                           <button
                             type="button"
                             className="absolute inset-0 z-10"
-                            onClick={() =>
-                              document.getElementById(`team-photo-${employeeId}`)?.click()
-                            }
+                            onClick={() => document.getElementById(`team-photo-${employeeId}`)?.click()}
                             aria-label={`Replace photo for ${employeeId}`}
                           >
                             <img
@@ -1431,7 +1953,7 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                           type="file"
                           accept="image/*"
                           className="hidden"
-                          onChange={e => handleTeamMemberPhotoUpload(employeeId, e.target.files)}
+                          onChange={(e) => handleTeamMemberPhotoUpload(employeeId, e.target.files)}
                         />
                       </div>
                     );
@@ -1489,7 +2011,7 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                     ? (formData.teamMemberRows as TeamMemberRow[])
                     : ([] as TeamMemberRow[])
                   ).slice(0, 5).map((row, idx) => (
-                    <div key={idx} className="grid grid-cols-12 gap-2 mb-2">
+                    <div key={idx} className="relative grid grid-cols-12 gap-2 mb-2 items-center pr-5">
                       <div className="col-span-3">
                         <input
                           className="w-full border border-gray-300 rounded px-2 py-1 text-sm text-gray-900 font-medium"
@@ -1506,7 +2028,7 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                               });
                             }
                           }}
-                          placeholder="EMP1001"
+                          placeholder="EMP. No"
                         />
                       </div>
                       <div className="col-span-3">
@@ -1530,6 +2052,15 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                           readOnly
                         />
                       </div>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteTeamMember(idx)}
+                        className="absolute top-0 right-0 w-4 h-4 rounded border border-gray-300 bg-white text-red-600 hover:bg-red-50 flex items-center justify-center"
+                        title="Remove team member"
+                        aria-label="Remove team member"
+                      >
+                        <span className="material-icons-round text-[12px] leading-none">close</span>
+                      </button>
                     </div>
                   ))}
                 </div>
@@ -1543,22 +2074,7 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
               ref={templateSheetCaptureRef}
               className="kaizen-template-capture-root bg-white border-2 border-slate-600 rounded-lg shadow-sm overflow-hidden"
             >
-              <div className="bg-kauvery-purple text-white text-center font-black text-lg py-2 border-b border-gray-700">
-                Kaizen Sheet
-              </div>
-              <div className="grid grid-cols-12 border-b border-gray-500 items-stretch">
-                <div className="col-span-6 bg-kauvery-purple text-white font-black px-2 py-2 border-r border-gray-700 flex items-center min-h-[2.5rem]">
-                  <span className="text-white/90">Title/Theme:</span>{' '}
-                  <span className="font-semibold break-words">{getDynamicHeaderFields().title || '-'}</span>
-                </div>
-                <div className="col-span-5 bg-kauvery-purple text-white font-black px-2 py-2 border-r border-gray-700 flex items-center min-h-[2.5rem]">
-                  <span className="text-white/90">Kaizen No:</span>{' '}
-                  <span className="font-semibold">{getDynamicHeaderFields().kaizenNo || '-'}</span>
-                </div>
-                <div className="col-span-1 bg-white flex min-h-[2.5rem] items-center justify-center border-l border-gray-200 p-1">
-                  <KauveryHeaderLogo />
-                </div>
-              </div>
+              {renderTemplateHeader()}
               <div className="grid grid-cols-12 border-b border-slate-500 text-[11px] font-bold text-slate-800 items-stretch bg-slate-50/50">
                 <div className="col-span-2 border-r border-slate-400 p-2 flex flex-col gap-1.5 min-h-[5.25rem] bg-white">
                   <span className="shrink-0 leading-tight text-slate-700 font-bold text-[11px]">Category:</span>
@@ -1986,37 +2502,26 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
             </>
             )}
 
-            {currentSheet === 3 && (
+            {currentSheet >= 3 && currentSheet <= lastBaSheet && (
+            <div className="relative">
+              {renderDynamicSlideChrome({ zone: 'beforeAfter', deleteEnabled: true })}
             <div
               ref={templateSheetCaptureRef}
               className="kaizen-template-capture-root bg-white border-2 border-slate-600 rounded-lg shadow-sm overflow-hidden"
             >
-              {/* Slide 3 — Before / After: title bar + Kauvery logo (reference layout) */}
-              <div className="bg-kauvery-purple text-white flex items-center min-h-[52px] border-b-2 border-gray-800">
-                <div className="flex-1 min-w-[72px]" aria-hidden />
-                <div className="flex items-center justify-center px-4 py-2">
-                  <span className="font-black text-lg tracking-wide">Kaizen Sheet</span>
-                </div>
-                <div className="flex-1 flex items-center justify-end pr-3 py-1.5 min-w-[72px]">
-                  <div
-                    className="bg-white rounded-sm shadow-md w-[72px] h-[52px] border border-gray-200 overflow-hidden"
-                    title="Kauvery"
-                  >
-                    <KauveryHeaderLogo variant="hero" />
+              {(() => {
+                const baIdx = Math.max(0, currentSheet - 3);
+                const total = beforeAfterCount;
+                return (
+                  <div className="bg-slate-50 border-b border-slate-200 px-3 py-1.5 text-[11px] font-black text-slate-700 flex items-center justify-between">
+                    <div>Before/After slide</div>
+                    <div className="text-slate-600">
+                      {baIdx + 1} / {total}
+                    </div>
                   </div>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 border-b-2 border-gray-800">
-                <div className="bg-kauvery-purple text-white font-black px-3 py-2.5 text-sm border-r border-white/25">
-                  <span className="text-white/90">Title/Theme:</span>{' '}
-                  <span className="font-semibold">{getDynamicHeaderFields().title || '—'}</span>
-                </div>
-                <div className="bg-kauvery-purple text-white font-black px-3 py-2.5 text-sm">
-                  <span className="text-white/90">Kaizen No:</span>{' '}
-                  <span className="font-semibold">{getDynamicHeaderFields().kaizenNo || '—'}</span>
-                </div>
-              </div>
+                );
+              })()}
+              {renderTemplateHeader()}
 
               <div className="grid grid-cols-2 border-b-2 border-gray-800">
                 <div className="bg-kauvery-purple text-white text-center font-black py-2.5 text-sm border-r border-white/25 tracking-wide">
@@ -2065,6 +2570,38 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                       </label>
                     )}
                   </div>
+                  <div className="mt-2">
+                    <div className="underline italic text-sm mb-1.5 shrink-0">Caption:</div>
+                    <textarea
+                      rows={3}
+                      value={String(
+                        (Array.isArray((formData as any).beforeAfterSlides)
+                          ? (formData as any).beforeAfterSlides?.[Math.max(0, currentSheet - 3)]?.beforeCaption
+                          : '') || '',
+                      )}
+                      onChange={(e) => {
+                        const idx = Math.max(0, currentSheet - 3);
+                        const v = e.target.value;
+                        setFormData((prev: any) => {
+                          const list = Array.isArray(prev.beforeAfterSlides) ? [...prev.beforeAfterSlides] : [];
+                          while (list.length <= idx) {
+                            list.push({ beforeImagePath: '', afterImagePath: '', beforeCaption: '', afterCaption: '' });
+                          }
+                          const row = list[idx] || {
+                            beforeImagePath: '',
+                            afterImagePath: '',
+                            beforeCaption: '',
+                            afterCaption: '',
+                          };
+                          list[idx] = { ...row, beforeCaption: v };
+                          return { ...prev, beforeAfterSlides: list };
+                        });
+                      }}
+                      placeholder="Write caption here..."
+                      className="w-full border border-fuchsia-700 rounded px-2 py-1.5 text-[11px] font-bold text-gray-900 placeholder:text-gray-400 resize-none h-[5rem] overflow-y-auto leading-relaxed"
+                      style={{ overflowWrap: 'anywhere' }}
+                    />
+                  </div>
                 </div>
                 {/* After — same pattern as Sheet 1 */}
                 <div className="flex flex-col min-h-[480px] p-2 h-full">
@@ -2103,34 +2640,70 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                       </label>
                     )}
                   </div>
+                  <div className="mt-2">
+                    <div className="underline italic text-sm mb-1.5 shrink-0">Caption:</div>
+                    <textarea
+                      rows={3}
+                      value={String(
+                        (Array.isArray((formData as any).beforeAfterSlides)
+                          ? (formData as any).beforeAfterSlides?.[Math.max(0, currentSheet - 3)]?.afterCaption
+                          : '') || '',
+                      )}
+                      onChange={(e) => {
+                        const idx = Math.max(0, currentSheet - 3);
+                        const v = e.target.value;
+                        setFormData((prev: any) => {
+                          const list = Array.isArray(prev.beforeAfterSlides) ? [...prev.beforeAfterSlides] : [];
+                          while (list.length <= idx) {
+                            list.push({ beforeImagePath: '', afterImagePath: '', beforeCaption: '', afterCaption: '' });
+                          }
+                          const row = list[idx] || {
+                            beforeImagePath: '',
+                            afterImagePath: '',
+                            beforeCaption: '',
+                            afterCaption: '',
+                          };
+                          list[idx] = { ...row, afterCaption: v };
+                          return { ...prev, beforeAfterSlides: list };
+                        });
+                      }}
+                      placeholder="Write caption here..."
+                      className="w-full border border-fuchsia-700 rounded px-2 py-1.5 text-[11px] font-bold text-gray-900 placeholder:text-gray-400 resize-none h-[5rem] overflow-y-auto leading-relaxed"
+                      style={{ overflowWrap: 'anywhere' }}
+                    />
+                  </div>
                 </div>
               </div>
 
               <div className="flex justify-end border-t border-gray-200 bg-white">
-                <div className="bg-yellow-300 text-black font-black px-3 py-1 shadow-sm">3</div>
+                <div className="bg-yellow-300 text-black font-black px-3 py-1 shadow-sm">{currentSheet}</div>
               </div>
+            </div>
             </div>
             )}
 
-            {currentSheet === 4 && (
+            {currentSheet >= firstProcessSheet && currentSheet <= lastProcessSheet && (
+            <div className="relative">
+              {renderDynamicSlideChrome({ zone: 'processVideo', deleteEnabled: true })}
             <div
               ref={templateSheetCaptureRef}
               className="kaizen-template-capture-root bg-white border-2 border-slate-600 rounded-lg shadow-sm overflow-hidden"
             >
-              <div className="bg-kauvery-purple text-white text-center font-black text-lg py-2 border-b border-gray-700">
-                Kaizen Sheet
-              </div>
-              <div className="grid grid-cols-12 border-b border-gray-500 items-stretch">
-                <div className="col-span-9 bg-kauvery-purple text-white font-black px-2 py-2 border-r border-gray-700 flex items-center min-h-[2.5rem]">
-                  Title/Theme: <span className="font-semibold break-words ml-1">{getDynamicHeaderFields().title || '-'}</span>
-                </div>
-                <div className="col-span-2 bg-kauvery-purple text-white font-black px-2 py-2 border-r border-gray-700 flex items-center min-h-[2.5rem]">
-                  Kaizen No: <span className="font-semibold ml-1">{getDynamicHeaderFields().kaizenNo || '-'}</span>
-                </div>
-                <div className="col-span-1 bg-white flex min-h-[2.5rem] items-center justify-center border-l border-gray-200 p-1">
-                  <KauveryHeaderLogo />
-                </div>
-              </div>
+              {(() => {
+                const pvIdx = currentSheet - firstProcessSheet;
+                const row = processVideoSlidesList[pvIdx] || {
+                  processBeforeVideoPath: '',
+                  processAfterVideoPath: '',
+                  processBeforeVideoCaption: '',
+                  processAfterVideoCaption: '',
+                };
+                const beforePath = String(row.processBeforeVideoPath || '').trim();
+                const afterPath = String(row.processAfterVideoPath || '').trim();
+                const beforeId = `before-video-file-${pvIdx}`;
+                const afterId = `after-video-file-${pvIdx}`;
+                return (
+                  <>
+              {renderTemplateHeader()}
 
               <div className="bg-blue-600 text-white text-sm font-semibold px-3 py-2 border-b border-blue-800 text-center">
                 Note: If any process flow or video demonstration is required, Kindly use this slide.
@@ -2145,7 +2718,7 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                 {/* BEFORE */}
                 <div className="border-r border-gray-500 bg-gray-100 p-2 flex flex-col h-full min-h-0 min-w-0">
                   <div className="relative flex-1 min-h-[380px] border border-gray-400 bg-white rounded overflow-hidden">
-                    {formData.processBeforeVideoPath ? (
+                    {beforePath ? (
                       <button
                         type="button"
                         className="absolute inset-0"
@@ -2160,7 +2733,7 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                                 Video attached
                               </div>
                               <div className="mt-2 text-[11px] text-gray-600 font-semibold break-all">
-                                {String(formData.processBeforeVideoPath)}
+                                {beforePath}
                               </div>
                             </div>
                           </div>
@@ -2168,14 +2741,14 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                           <video
                             className="h-full w-full object-contain bg-gray-100"
                             controls
-                            src={`${apiBase}/kaizen-files/${String(formData.processBeforeVideoPath)}`}
+                            src={`${apiBase}/kaizen-files/${beforePath}`}
                           />
                         )}
                       </button>
                     ) : (
                       <label
                         className="h-full w-full flex items-center justify-center cursor-pointer"
-                        htmlFor="before-video-file"
+                        htmlFor={beforeId}
                       >
                         <div className="text-center">
                           <div className="text-xs font-black text-gray-800">Upload Before Video</div>
@@ -2184,12 +2757,12 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                       </label>
                     )}
                     <input
-                      id="before-video-file"
+                      id={beforeId}
                       ref={processBeforeVideoInputRef}
                       type="file"
                       accept="video/*"
                       className="hidden"
-                      onChange={(e) => handleProcessVideoUpload('before', e.target.files)}
+                      onChange={(e) => handleProcessVideoUpload(pvIdx, 'before', e.target.files)}
                     />
                   </div>
                 </div>
@@ -2197,7 +2770,7 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                 {/* AFTER */}
                 <div className="bg-gray-100 p-2 flex flex-col h-full min-h-0 min-w-0">
                   <div className="relative flex-1 min-h-[380px] border border-gray-400 bg-white rounded overflow-hidden">
-                    {formData.processAfterVideoPath ? (
+                    {afterPath ? (
                       <button
                         type="button"
                         className="absolute inset-0"
@@ -2212,7 +2785,7 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                                 Video attached
                               </div>
                               <div className="mt-2 text-[11px] text-gray-600 font-semibold break-all">
-                                {String(formData.processAfterVideoPath)}
+                                {afterPath}
                               </div>
                             </div>
                           </div>
@@ -2220,14 +2793,14 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                           <video
                             className="h-full w-full object-contain bg-gray-100"
                             controls
-                            src={`${apiBase}/kaizen-files/${String(formData.processAfterVideoPath)}`}
+                            src={`${apiBase}/kaizen-files/${afterPath}`}
                           />
                         )}
                       </button>
                     ) : (
                       <label
                         className="h-full w-full flex items-center justify-center cursor-pointer"
-                        htmlFor="after-video-file"
+                        htmlFor={afterId}
                       >
                         <div className="text-center">
                           <div className="text-xs font-black text-gray-800">Upload After Video</div>
@@ -2236,43 +2809,35 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                       </label>
                     )}
                     <input
-                      id="after-video-file"
+                      id={afterId}
                       ref={processAfterVideoInputRef}
                       type="file"
                       accept="video/*"
                       className="hidden"
-                      onChange={(e) => handleProcessVideoUpload('after', e.target.files)}
+                      onChange={(e) => handleProcessVideoUpload(pvIdx, 'after', e.target.files)}
                     />
                   </div>
                 </div>
               </div>
 
               <div className="flex justify-end">
-                <div className="bg-yellow-300 text-black font-black px-3 py-0.5">4</div>
+                <div className="bg-yellow-300 text-black font-black px-3 py-0.5">{currentSheet}</div>
               </div>
+                  </>
+                );
+              })()}
+            </div>
             </div>
             )}
 
-            {currentSheet === 5 && (
-            <>
+            {currentSheet >= firstKpiSheet && currentSheet <= lastKpiSheet && (
+            <div className="relative">
+              {renderDynamicSlideChrome({ zone: 'results', deleteEnabled: true })}
             <div
               ref={templateSheetCaptureRef}
               className="kaizen-template-capture-root bg-white border-2 border-slate-600 rounded-lg shadow-sm overflow-hidden"
             >
-              <div className="bg-kauvery-purple text-white text-center font-black text-lg py-2 border-b border-gray-700">
-                Kaizen Sheet
-              </div>
-              <div className="grid grid-cols-12 border-b border-gray-500 items-stretch">
-                <div className="col-span-9 bg-kauvery-purple text-white font-black px-2 py-2 border-r border-gray-700 flex items-center min-h-[2.5rem]">
-                  Title/Theme: <span className="font-semibold break-words ml-1">{getDynamicHeaderFields().title || '-'}</span>
-                </div>
-                <div className="col-span-2 bg-kauvery-purple text-white font-black px-2 py-2 border-r border-gray-700 flex items-center min-h-[2.5rem]">
-                  Kaizen No: <span className="font-semibold ml-1">{getDynamicHeaderFields().kaizenNo || '-'}</span>
-                </div>
-                <div className="col-span-1 bg-white flex min-h-[2.5rem] items-center justify-center border-l border-gray-200 p-1">
-                  <KauveryHeaderLogo />
-                </div>
-              </div>
+              {renderTemplateHeader()}
 
               <div className="grid grid-cols-12 border-b border-gray-500">
                 <div className="col-span-9 bg-kauvery-purple text-white text-center font-black py-1 border-r border-gray-700 text-2xl">
@@ -2281,23 +2846,58 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                 <div className="col-span-3 bg-kauvery-purple text-white text-center font-black py-1" />
               </div>
 
-              <div className="px-3 py-2 border-b border-gray-300 bg-white text-[11px] font-bold text-gray-700">
+              <div className="relative px-3 py-2 border-b border-gray-300 bg-white text-[11px] font-bold text-gray-700">
                 Fill any 3 result KPIs (safety / cost / time / quality / etc.)
+                <div className="absolute right-2 top-1.5 flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setResultsGraphCount((c) => (c < 3 ? ((c + 1) as 1 | 2 | 3) : c))}
+                    disabled={resultsGraphCount >= 3}
+                    className="w-5 h-5 rounded border border-gray-300 bg-white text-gray-900 hover:bg-gray-50 disabled:opacity-40 flex items-center justify-center"
+                    title="Add graph"
+                    aria-label="Add graph"
+                  >
+                    <span className="material-icons-round text-[14px] leading-none">add</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setResultsGraphCount((c) => (c > 1 ? ((c - 1) as 1 | 2 | 3) : c))}
+                    disabled={resultsGraphCount <= 1}
+                    className="w-5 h-5 rounded border border-gray-300 bg-white text-red-600 hover:bg-red-50 disabled:opacity-40 flex items-center justify-center"
+                    title="Remove graph"
+                    aria-label="Remove graph"
+                  >
+                    <span className="material-icons-round text-[14px] leading-none">delete</span>
+                  </button>
+                </div>
               </div>
 
-              <div className="grid grid-cols-3 border-b border-gray-500 text-white text-center text-xs font-bold">
-                {visibleResultKpis.map((row: any, idx: number) => (
-                  <div key={`${row.id}-header`} className={`${idx < 2 ? 'border-r border-gray-500' : ''} bg-kauvery-purple py-1`}>
+              {(() => {
+                const shown = visibleResultKpis.slice(0, resultsGraphCount);
+                const colsCls =
+                  resultsGraphCount === 1
+                    ? 'grid-cols-1'
+                    : resultsGraphCount === 2
+                      ? 'grid-cols-2'
+                      : 'grid-cols-3';
+                return (
+                  <>
+              <div className={`grid ${colsCls} border-b border-gray-500 text-white text-center text-xs font-bold`}>
+                {shown.map((row: any, idx: number) => (
+                  <div
+                    key={`${row.id}-header`}
+                    className={`${idx < shown.length - 1 ? 'border-r border-gray-500' : ''} bg-kauvery-purple py-1`}
+                  >
                     {row.title || `KPI ${idx + 1}`}
                   </div>
                 ))}
               </div>
 
-              <div className="grid grid-cols-3 min-h-[500px] border-b border-gray-500 items-stretch">
-                {visibleResultKpis.map((row: any, idx: number) => (
+              <div className={`grid ${colsCls} min-h-[500px] border-b border-gray-500 items-stretch`}>
+                {shown.map((row: any, idx: number) => (
                   <div
                     key={row.id}
-                    className={`${idx < 2 ? 'border-r border-gray-500' : ''} bg-gray-100 p-2 flex flex-col min-h-0 min-w-0`}
+                    className={`${idx < shown.length - 1 ? 'border-r border-gray-500' : ''} bg-gray-100 p-2 flex flex-col min-h-0 min-w-0`}
                   >
                     <div className="mb-2 grid grid-cols-[minmax(0,1fr)_5.25rem] gap-x-2 gap-y-1 items-start">
                       <div className="min-w-0 space-y-1.5">
@@ -2338,57 +2938,23 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                               });
                             }}
                           />
-                          <label className="inline-flex items-center gap-1.5 text-[10px] font-black text-gray-700 shrink-0 sm:pt-1">
-                            <input
-                              type="checkbox"
-                              className="shrink-0"
-                              checked={!!row.higherIsBetter}
-                              onChange={(e) => {
-                                const v = e.target.checked;
-                                setFormData((prev: any) => {
-                                  const list: ResultKpi[] = Array.isArray(prev.resultKpis) ? [...prev.resultKpis] : [];
-                                  const pageSize = 3;
-                                  const start = (((row.safePage || 1) - 1) * pageSize) + idx;
-                                  if (!list[start]) return prev;
-                                  list[start] = { ...list[start], higherIsBetter: v };
-                                  return { ...prev, resultKpis: list };
-                                });
-                              }}
-                            />
-                            <span className="leading-tight">Higher is better</span>
-                          </label>
+                          <div className="shrink-0 sm:pt-1" />
                         </div>
                       </div>
                       <div className="text-center leading-none flex flex-col items-center justify-start pt-0.5 w-full">
                         {(() => {
                           const same = Number(row.beforeNum || 0) === Number(row.afterNum || 0);
-                          const isGood = row.improved && !same;
-                          const label = same ? 'No change' : isGood ? 'Good' : 'Bad';
-                          const higherBetter = !!row.higherIsBetter;
-                          const icon = same
-                            ? 'remove'
-                            : isGood
-                              ? higherBetter
-                                ? 'arrow_upward'
-                                : 'arrow_downward'
-                              : 'arrow_upward';
-                          const iconClass = same
-                            ? 'text-gray-500'
-                            : isGood
-                              ? 'text-green-600'
-                              : 'text-red-600';
-                          const textClass = same
-                            ? 'text-gray-600'
-                            : isGood
-                              ? 'text-green-700'
-                              : 'text-red-700';
+                          const wentUp = Number(row.afterNum || 0) > Number(row.beforeNum || 0);
+                          const icon = same ? 'remove' : wentUp ? 'arrow_upward' : 'arrow_downward';
+                          const iconClass = 'text-green-600';
+                          const textClass = 'text-green-700';
                           return (
                             <>
                               <span className={`material-icons-round text-3xl ${iconClass}`}>
                                 {icon}
                               </span>
                               <div className={`text-lg sm:text-[22px] font-black ${textClass} leading-tight mt-0.5`}>
-                                {label}
+                                Good
                               </div>
                             </>
                           );
@@ -2549,11 +3115,11 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                 ))}
               </div>
 
-              <div className="grid grid-cols-3 text-xs font-bold border-b border-gray-500 items-stretch">
-                {visibleResultKpis.map((row: any, idx: number) => (
+              <div className={`grid ${colsCls} text-xs font-bold border-b border-gray-500 items-stretch`}>
+                {shown.map((row: any, idx: number) => (
                   <div
                     key={`${row.id}-result`}
-                    className={`${idx < 2 ? 'border-r border-gray-500' : ''} p-2 flex flex-col min-h-0 min-w-0`}
+                    className={`${idx < shown.length - 1 ? 'border-r border-gray-500' : ''} p-2 flex flex-col min-h-0 min-w-0`}
                   >
                     <div className="underline italic text-sm mb-1.5 shrink-0">Result:</div>
                     <textarea
@@ -2575,13 +3141,18 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                   </div>
                 ))}
               </div>
+                  </>
+                );
+              })()}
 
               <div className="flex justify-end">
-                <div className="bg-yellow-300 text-black font-black px-3 py-0.5">5</div>
+                <div className="bg-yellow-300 text-black font-black px-3 py-0.5">{currentSheet}</div>
               </div>
             </div>
-            </>
+            </div>
             )}
+
+            </fieldset>
         </div>
         )}
 
@@ -2649,6 +3220,146 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
             </p>
           )}
         </div>
+        )}
+
+        {/* Add Slide modal */}
+        {isAddSlideModalOpen && !isCreateMode && (
+          <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto px-4 pt-10 pb-12">
+            <div
+              className="absolute inset-0 bg-black/40"
+              onClick={() => setIsAddSlideModalOpen(false)}
+            />
+            <div className="relative w-full max-w-lg bg-white rounded-2xl border border-gray-200 shadow-2xl overflow-hidden">
+              <div className="px-5 py-4 border-b border-gray-200 flex items-start justify-between gap-3">
+                <div>
+                  <div className="text-xs font-black text-gray-500 uppercase tracking-wide">
+                    Add slide
+                  </div>
+                  <div className="text-lg font-black text-gray-900 mt-0.5">
+                    Choose a template design
+                  </div>
+                  <div className="text-[11px] text-gray-600 font-semibold mt-1">
+                    This will insert the selected slide next in the template flow.
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsAddSlideModalOpen(false)}
+                  className="text-gray-500 hover:text-gray-900"
+                  aria-label="Close"
+                >
+                  <span className="material-icons-round">close</span>
+                </button>
+              </div>
+
+              <div className="p-5 space-y-3">
+                <button
+                  type="button"
+                  onClick={handleInsertBeforeAfterSlide}
+                  className={`w-full text-left rounded-2xl border p-4 transition ${
+                    addSlideModalKind === 'beforeAfter'
+                      ? 'border-kauvery-purple bg-purple-50/60'
+                      : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                  }`}
+                >
+                  <div className="flex items-start gap-3">
+                    <div
+                      className={`shrink-0 w-10 h-10 rounded-xl border flex items-center justify-center ${
+                        addSlideModalKind === 'beforeAfter'
+                          ? 'bg-purple-100 border-purple-300'
+                          : 'bg-purple-50 border-purple-200'
+                      }`}
+                    >
+                      <span className="material-icons-round text-purple-700">compare</span>
+                    </div>
+                    <div className="min-w-0">
+                      <div className="font-black text-gray-900 flex items-center gap-2">
+                        Before / After (images)
+                        {addSlideModalKind === 'beforeAfter' && (
+                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-kauvery-purple text-white font-black">
+                            current
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-xs text-gray-600 font-semibold mt-0.5">
+                        Duplicate the same Before/After slide template.
+                      </div>
+                    </div>
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleInsertProcessVideoSlide}
+                  className={`w-full text-left rounded-2xl border p-4 transition ${
+                    addSlideModalKind === 'processVideo'
+                      ? 'border-blue-600 bg-blue-50/60'
+                      : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                  }`}
+                >
+                  <div className="flex items-start gap-3">
+                    <div
+                      className={`shrink-0 w-10 h-10 rounded-xl border flex items-center justify-center ${
+                        addSlideModalKind === 'processVideo'
+                          ? 'bg-blue-100 border-blue-300'
+                          : 'bg-blue-50 border-blue-200'
+                      }`}
+                    >
+                      <span className="material-icons-round text-blue-700">movie</span>
+                    </div>
+                    <div className="min-w-0">
+                      <div className="font-black text-gray-900 flex items-center gap-2">
+                        Process (videos)
+                        {addSlideModalKind === 'processVideo' && (
+                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-600 text-white font-black">
+                            current
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-xs text-gray-600 font-semibold mt-0.5">
+                        Duplicate the same Process video slide template.
+                      </div>
+                    </div>
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleInsertResultsSlide}
+                  className={`w-full text-left rounded-2xl border p-4 transition ${
+                    addSlideModalKind === 'results'
+                      ? 'border-emerald-600 bg-emerald-50/60'
+                      : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                  }`}
+                >
+                  <div className="flex items-start gap-3">
+                    <div
+                      className={`shrink-0 w-10 h-10 rounded-xl border flex items-center justify-center ${
+                        addSlideModalKind === 'results'
+                          ? 'bg-emerald-100 border-emerald-300'
+                          : 'bg-emerald-50 border-emerald-200'
+                      }`}
+                    >
+                      <span className="material-icons-round text-emerald-700">analytics</span>
+                    </div>
+                    <div className="min-w-0">
+                      <div className="font-black text-gray-900 flex items-center gap-2">
+                        Results (KPIs)
+                        {addSlideModalKind === 'results' && (
+                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-600 text-white font-black">
+                            current
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-xs text-gray-600 font-semibold mt-0.5">
+                        Duplicate the same Results slide template.
+                      </div>
+                    </div>
+                  </div>
+                </button>
+              </div>
+            </div>
+          </div>
         )}
       </form>
     </div>

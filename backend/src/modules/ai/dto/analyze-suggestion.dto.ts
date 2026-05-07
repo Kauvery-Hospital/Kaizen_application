@@ -7,4 +7,3 @@ export class AnalyzeSuggestionDto {
   @IsString()
   context!: string;
 }
-

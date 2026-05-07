@@ -15,8 +15,12 @@ export class PptxExportService {
     private readonly config: ConfigService,
   ) {}
 
-  private async toDataUriFromRelativePath(relPath: string): Promise<string | null> {
-    const rel = String(relPath || '').trim().replace(/\\/g, '/');
+  private async toDataUriFromRelativePath(
+    relPath: string,
+  ): Promise<string | null> {
+    const rel = String(relPath || '')
+      .trim()
+      .replace(/\\/g, '/');
     if (!rel) return null;
     const uploadRoot = this.config.get<string>('uploadRoot');
     if (!uploadRoot) return null;
@@ -105,7 +109,9 @@ export class PptxExportService {
   private addTitleKaizenRow(
     slide: any,
     data: { title: string; kaizenNo: string },
-    opts: { variant: 'sheet1' | 'sheet2' | 'sheet3' | 'sheet4' | 'sheet5' } = { variant: 'sheet1' },
+    opts: { variant: 'sheet1' | 'sheet2' | 'sheet3' | 'sheet4' | 'sheet5' } = {
+      variant: 'sheet1',
+    },
   ) {
     const purple = '7A1F5C';
     // Common row: Title/Theme + Kaizen No + small logo cell
@@ -114,24 +120,132 @@ export class PptxExportService {
       // UI grid: 6 / 5 / 1 columns (out of 12) across 13.33" width.
       const div1 = 13.33 * (6 / 12); // ~6.665
       const div2 = 13.33 * (11 / 12); // ~12.22
-      slide.addShape((PptxGenJS as any).ShapeType.rect, { x: 0, y: 0.55, w: 13.33, h: 0.35, fill: { color: purple }, line: { color: '374151', width: 1 } });
-      slide.addShape((PptxGenJS as any).ShapeType.line, { x: div1, y: 0.55, w: 0, h: 0.35, line: { color: '374151', width: 1 } });
-      slide.addShape((PptxGenJS as any).ShapeType.line, { x: div2, y: 0.55, w: 0, h: 0.35, line: { color: '374151', width: 1 } });
-      slide.addText(`Title/Theme: ${data.title || '-'}`, { x: 0.2, y: 0.58, w: div1 - 0.3, h: 0.3, fontFace: 'Calibri', fontSize: 12, bold: true, color: 'FFFFFF' });
-      slide.addText(`Kaizen No: ${data.kaizenNo || '-'}`, { x: div1 + 0.15, y: 0.58, w: (div2 - div1) - 0.25, h: 0.3, fontFace: 'Calibri', fontSize: 12, bold: true, color: 'FFFFFF' });
-      slide.addShape((PptxGenJS as any).ShapeType.rect, { x: div2, y: 0.55, w: 13.33 - div2, h: 0.35, fill: { color: 'FFFFFF' }, line: { color: '374151', width: 1 } });
-      slide.addText('kauvery', { x: div2, y: 0.6, w: 13.33 - div2, h: 0.25, fontFace: 'Calibri', fontSize: 10, bold: true, color: purple, align: 'center' });
+      slide.addShape((PptxGenJS as any).ShapeType.rect, {
+        x: 0,
+        y: 0.55,
+        w: 13.33,
+        h: 0.35,
+        fill: { color: purple },
+        line: { color: '374151', width: 1 },
+      });
+      slide.addShape((PptxGenJS as any).ShapeType.line, {
+        x: div1,
+        y: 0.55,
+        w: 0,
+        h: 0.35,
+        line: { color: '374151', width: 1 },
+      });
+      slide.addShape((PptxGenJS as any).ShapeType.line, {
+        x: div2,
+        y: 0.55,
+        w: 0,
+        h: 0.35,
+        line: { color: '374151', width: 1 },
+      });
+      slide.addText(`Title/Theme: ${data.title || '-'}`, {
+        x: 0.2,
+        y: 0.58,
+        w: div1 - 0.3,
+        h: 0.3,
+        fontFace: 'Calibri',
+        fontSize: 12,
+        bold: true,
+        color: 'FFFFFF',
+      });
+      slide.addText(`Kaizen No: ${data.kaizenNo || '-'}`, {
+        x: div1 + 0.15,
+        y: 0.58,
+        w: div2 - div1 - 0.25,
+        h: 0.3,
+        fontFace: 'Calibri',
+        fontSize: 12,
+        bold: true,
+        color: 'FFFFFF',
+      });
+      slide.addShape((PptxGenJS as any).ShapeType.rect, {
+        x: div2,
+        y: 0.55,
+        w: 13.33 - div2,
+        h: 0.35,
+        fill: { color: 'FFFFFF' },
+        line: { color: '374151', width: 1 },
+      });
+      slide.addText('kauvery', {
+        x: div2,
+        y: 0.6,
+        w: 13.33 - div2,
+        h: 0.25,
+        fontFace: 'Calibri',
+        fontSize: 10,
+        bold: true,
+        color: purple,
+        align: 'center',
+      });
       return;
     }
 
     // Sheets 2/4/5 share 9 / 2 / 1-ish look in UI; implement a consistent row.
-    slide.addShape((PptxGenJS as any).ShapeType.rect, { x: 0, y: 0.55, w: 13.33, h: 0.35, fill: { color: purple }, line: { color: '374151', width: 1 } });
-    slide.addShape((PptxGenJS as any).ShapeType.line, { x: 10.95, y: 0.55, w: 0, h: 0.35, line: { color: '374151', width: 1 } });
-    slide.addShape((PptxGenJS as any).ShapeType.line, { x: 12.22, y: 0.55, w: 0, h: 0.35, line: { color: '374151', width: 1 } });
-    slide.addText(`Title/Theme: ${data.title || '-'}`, { x: 0.2, y: 0.58, w: 10.7, h: 0.3, fontFace: 'Calibri', fontSize: 12, bold: true, color: 'FFFFFF' });
-    slide.addText(`Kaizen No: ${data.kaizenNo || '-'}`, { x: 11.05, y: 0.58, w: 1.1, h: 0.3, fontFace: 'Calibri', fontSize: 11, bold: true, color: 'FFFFFF' });
-    slide.addShape((PptxGenJS as any).ShapeType.rect, { x: 12.22, y: 0.55, w: 1.11, h: 0.35, fill: { color: 'FFFFFF' }, line: { color: '374151', width: 1 } });
-    slide.addText('kh', { x: 12.22, y: 0.6, w: 1.11, h: 0.25, fontFace: 'Calibri', fontSize: 12, bold: true, color: purple, align: 'center' });
+    slide.addShape((PptxGenJS as any).ShapeType.rect, {
+      x: 0,
+      y: 0.55,
+      w: 13.33,
+      h: 0.35,
+      fill: { color: purple },
+      line: { color: '374151', width: 1 },
+    });
+    slide.addShape((PptxGenJS as any).ShapeType.line, {
+      x: 10.95,
+      y: 0.55,
+      w: 0,
+      h: 0.35,
+      line: { color: '374151', width: 1 },
+    });
+    slide.addShape((PptxGenJS as any).ShapeType.line, {
+      x: 12.22,
+      y: 0.55,
+      w: 0,
+      h: 0.35,
+      line: { color: '374151', width: 1 },
+    });
+    slide.addText(`Title/Theme: ${data.title || '-'}`, {
+      x: 0.2,
+      y: 0.58,
+      w: 10.7,
+      h: 0.3,
+      fontFace: 'Calibri',
+      fontSize: 12,
+      bold: true,
+      color: 'FFFFFF',
+    });
+    slide.addText(`Kaizen No: ${data.kaizenNo || '-'}`, {
+      x: 11.05,
+      y: 0.58,
+      w: 1.1,
+      h: 0.3,
+      fontFace: 'Calibri',
+      fontSize: 11,
+      bold: true,
+      color: 'FFFFFF',
+    });
+    slide.addShape((PptxGenJS as any).ShapeType.rect, {
+      x: 12.22,
+      y: 0.55,
+      w: 1.11,
+      h: 0.35,
+      fill: { color: 'FFFFFF' },
+      line: { color: '374151', width: 1 },
+    });
+    slide.addText('kh', {
+      x: 12.22,
+      y: 0.6,
+      w: 1.11,
+      h: 0.25,
+      fontFace: 'Calibri',
+      fontSize: 12,
+      bold: true,
+      color: purple,
+      align: 'center',
+    });
   }
 
   async buildSuggestionPptx(suggestionId: string): Promise<Buffer> {
@@ -141,7 +255,8 @@ export class PptxExportService {
     });
     if (!suggestion) throw new NotFoundException('Suggestion not found');
 
-    const snapshot = (suggestion.implementedKaizen?.dataSnapshot as AnyRecord | null) ?? null;
+    const snapshot =
+      (suggestion.implementedKaizen?.dataSnapshot as AnyRecord | null) ?? null;
     const draft =
       (suggestion.implementationDraft as AnyRecord | null) ??
       (snapshot?.implementationDraft as AnyRecord | null) ??
@@ -176,7 +291,7 @@ export class PptxExportService {
 
       // Member photos (up to 5) placed in a grid like UI
       const memberPhotoPaths: Record<string, string> =
-        (data.teamMemberPhotoPaths as any) ?? {};
+        data.teamMemberPhotoPaths ?? {};
       const memberIds = Object.keys(memberPhotoPaths).slice(0, 5);
       const count = memberIds.length || 1;
       const cols = count <= 1 ? 1 : count <= 2 ? 2 : 3;
@@ -262,15 +377,55 @@ export class PptxExportService {
       });
 
       // Two columns (6 / 6) with divider
-      s2.addShape((PptxGenJS as any).ShapeType.line, { x: 6.66, y: mainY, w: 0, h: mainH, line: { color: '6B7280', width: 1 } });
+      s2.addShape((PptxGenJS as any).ShapeType.line, {
+        x: 6.66,
+        y: mainY,
+        w: 0,
+        h: mainH,
+        line: { color: '6B7280', width: 1 },
+      });
 
       // Left column header
-      s2.addShape((PptxGenJS as any).ShapeType.rect, { x: 0, y: mainY, w: 6.66, h: 0.25, fill: { color: 'F3F4F6' }, line: { color: '6B7280', width: 1 } });
-      s2.addText('Problem / Present Status', { x: 0, y: mainY + 0.02, w: 6.66, h: 0.22, fontFace: 'Calibri', fontSize: 10, bold: true, color: '111827', align: 'center' });
+      s2.addShape((PptxGenJS as any).ShapeType.rect, {
+        x: 0,
+        y: mainY,
+        w: 6.66,
+        h: 0.25,
+        fill: { color: 'F3F4F6' },
+        line: { color: '6B7280', width: 1 },
+      });
+      s2.addText('Problem / Present Status', {
+        x: 0,
+        y: mainY + 0.02,
+        w: 6.66,
+        h: 0.22,
+        fontFace: 'Calibri',
+        fontSize: 10,
+        bold: true,
+        color: '111827',
+        align: 'center',
+      });
 
       // Right column header
-      s2.addShape((PptxGenJS as any).ShapeType.rect, { x: 6.66, y: mainY, w: 6.67, h: 0.25, fill: { color: 'F3F4F6' }, line: { color: '6B7280', width: 1 } });
-      s2.addText('PQCDSEM / Standardization / Results', { x: 6.66, y: mainY + 0.02, w: 6.67, h: 0.22, fontFace: 'Calibri', fontSize: 10, bold: true, color: '111827', align: 'center' });
+      s2.addShape((PptxGenJS as any).ShapeType.rect, {
+        x: 6.66,
+        y: mainY,
+        w: 6.67,
+        h: 0.25,
+        fill: { color: 'F3F4F6' },
+        line: { color: '6B7280', width: 1 },
+      });
+      s2.addText('PQCDSEM / Standardization / Results', {
+        x: 6.66,
+        y: mainY + 0.02,
+        w: 6.67,
+        h: 0.22,
+        fontFace: 'Calibri',
+        fontSize: 10,
+        bold: true,
+        color: '111827',
+        align: 'center',
+      });
 
       const safe = (v: any) => String(v ?? '').trim();
       const leftTextLines = [
@@ -284,8 +439,12 @@ export class PptxExportService {
         `Why 1: ${safe(data.analysis?.why1)}`,
         `Why 2: ${safe(data.analysis?.why2)}`,
         `Why 3: ${safe(data.analysis?.why3)}`,
-        ...(safe(data.analysis?.why4) ? [`Why 4: ${safe(data.analysis?.why4)}`] : []),
-        ...(safe(data.analysis?.why5) ? [`Why 5: ${safe(data.analysis?.why5)}`] : []),
+        ...(safe(data.analysis?.why4)
+          ? [`Why 4: ${safe(data.analysis?.why4)}`]
+          : []),
+        ...(safe(data.analysis?.why5)
+          ? [`Why 5: ${safe(data.analysis?.why5)}`]
+          : []),
         `Root Cause: ${safe(data.analysis?.rootCause)}`,
         `Idea to Eliminate: ${safe(data.ideaToEliminate)}`,
         '',
@@ -356,17 +515,27 @@ export class PptxExportService {
 
       // Footer bands like UI (simplified but keeps purple bar sections)
       const footerY = 6.25;
-      s2.addShape((PptxGenJS as any).ShapeType.rect, { x: 0, y: footerY, w: 13.33, h: 0.32, fill: { color: purple }, line: { color: '6B7280', width: 1 } });
-      s2.addText('Team Members | Prepared By | Validated By (HOD) | Validated By (Finance)', {
-        x: 0.2,
-        y: footerY + 0.05,
-        w: 12.9,
-        h: 0.25,
-        fontFace: 'Calibri',
-        fontSize: 10,
-        bold: true,
-        color: 'FFFFFF',
+      s2.addShape((PptxGenJS as any).ShapeType.rect, {
+        x: 0,
+        y: footerY,
+        w: 13.33,
+        h: 0.32,
+        fill: { color: purple },
+        line: { color: '6B7280', width: 1 },
       });
+      s2.addText(
+        'Team Members | Prepared By | Validated By (HOD) | Validated By (Finance)',
+        {
+          x: 0.2,
+          y: footerY + 0.05,
+          w: 12.9,
+          h: 0.25,
+          fontFace: 'Calibri',
+          fontSize: 10,
+          bold: true,
+          color: 'FFFFFF',
+        },
+      );
 
       this.addPageNumber(s2, 2);
     }
@@ -378,33 +547,164 @@ export class PptxExportService {
       this.addHeaderBar(s3, { showLogoBox: true });
 
       // Title/Kaizen row (2 columns)
-      s3.addShape((PptxGenJS as any).ShapeType.rect, { x: 0, y: 0.55, w: 13.33, h: 0.45, fill: { color: purple }, line: { color: '111827', width: 1 } });
-      s3.addShape((PptxGenJS as any).ShapeType.line, { x: 6.665, y: 0.55, w: 0, h: 0.45, line: { color: 'FFFFFF', width: 0.5 } });
-      s3.addText(`Title/Theme: ${title || '—'}`, { x: 0.25, y: 0.64, w: 6.2, h: 0.3, fontFace: 'Calibri', fontSize: 14, bold: true, color: 'FFFFFF' });
-      s3.addText(`Kaizen No: ${kaizenNo || '—'}`, { x: 6.9, y: 0.64, w: 6.2, h: 0.3, fontFace: 'Calibri', fontSize: 14, bold: true, color: 'FFFFFF' });
+      s3.addShape((PptxGenJS as any).ShapeType.rect, {
+        x: 0,
+        y: 0.55,
+        w: 13.33,
+        h: 0.45,
+        fill: { color: purple },
+        line: { color: '111827', width: 1 },
+      });
+      s3.addShape((PptxGenJS as any).ShapeType.line, {
+        x: 6.665,
+        y: 0.55,
+        w: 0,
+        h: 0.45,
+        line: { color: 'FFFFFF', width: 0.5 },
+      });
+      s3.addText(`Title/Theme: ${title || '—'}`, {
+        x: 0.25,
+        y: 0.64,
+        w: 6.2,
+        h: 0.3,
+        fontFace: 'Calibri',
+        fontSize: 14,
+        bold: true,
+        color: 'FFFFFF',
+      });
+      s3.addText(`Kaizen No: ${kaizenNo || '—'}`, {
+        x: 6.9,
+        y: 0.64,
+        w: 6.2,
+        h: 0.3,
+        fontFace: 'Calibri',
+        fontSize: 14,
+        bold: true,
+        color: 'FFFFFF',
+      });
 
       // Before/After header row
-      s3.addShape((PptxGenJS as any).ShapeType.rect, { x: 0, y: 1.0, w: 13.33, h: 0.42, fill: { color: purple }, line: { color: '111827', width: 1 } });
-      s3.addShape((PptxGenJS as any).ShapeType.line, { x: 6.665, y: 1.0, w: 0, h: 0.42, line: { color: 'FFFFFF', width: 0.5 } });
-      s3.addText('Before', { x: 0, y: 1.05, w: 6.665, h: 0.3, fontFace: 'Calibri', fontSize: 16, bold: true, color: 'FFFFFF', align: 'center' });
-      s3.addText('After', { x: 6.665, y: 1.05, w: 6.665, h: 0.3, fontFace: 'Calibri', fontSize: 16, bold: true, color: 'FFFFFF', align: 'center' });
+      s3.addShape((PptxGenJS as any).ShapeType.rect, {
+        x: 0,
+        y: 1.0,
+        w: 13.33,
+        h: 0.42,
+        fill: { color: purple },
+        line: { color: '111827', width: 1 },
+      });
+      s3.addShape((PptxGenJS as any).ShapeType.line, {
+        x: 6.665,
+        y: 1.0,
+        w: 0,
+        h: 0.42,
+        line: { color: 'FFFFFF', width: 0.5 },
+      });
+      s3.addText('Before', {
+        x: 0,
+        y: 1.05,
+        w: 6.665,
+        h: 0.3,
+        fontFace: 'Calibri',
+        fontSize: 16,
+        bold: true,
+        color: 'FFFFFF',
+        align: 'center',
+      });
+      s3.addText('After', {
+        x: 6.665,
+        y: 1.05,
+        w: 6.665,
+        h: 0.3,
+        fontFace: 'Calibri',
+        fontSize: 16,
+        bold: true,
+        color: 'FFFFFF',
+        align: 'center',
+      });
 
       // Image frames
       const frameY = 1.42;
       const frameH = 5.55;
-      s3.addShape((PptxGenJS as any).ShapeType.rect, { x: 0, y: frameY, w: 13.33, h: frameH, fill: { color: 'FFFFFF' }, line: { color: '111827', width: 1 } });
-      s3.addShape((PptxGenJS as any).ShapeType.line, { x: 6.665, y: frameY, w: 0, h: frameH, line: { color: '111827', width: 1 } });
-      s3.addShape((PptxGenJS as any).ShapeType.rect, { x: 0.25, y: frameY + 0.25, w: 6.165, h: frameH - 0.5, fill: { color: 'F3F4F6' }, line: { color: '9CA3AF', width: 1 } });
-      s3.addShape((PptxGenJS as any).ShapeType.rect, { x: 6.915, y: frameY + 0.25, w: 6.165, h: frameH - 0.5, fill: { color: 'F3F4F6' }, line: { color: '9CA3AF', width: 1 } });
+      s3.addShape((PptxGenJS as any).ShapeType.rect, {
+        x: 0,
+        y: frameY,
+        w: 13.33,
+        h: frameH,
+        fill: { color: 'FFFFFF' },
+        line: { color: '111827', width: 1 },
+      });
+      s3.addShape((PptxGenJS as any).ShapeType.line, {
+        x: 6.665,
+        y: frameY,
+        w: 0,
+        h: frameH,
+        line: { color: '111827', width: 1 },
+      });
+      s3.addShape((PptxGenJS as any).ShapeType.rect, {
+        x: 0.25,
+        y: frameY + 0.25,
+        w: 6.165,
+        h: frameH - 0.5,
+        fill: { color: 'F3F4F6' },
+        line: { color: '9CA3AF', width: 1 },
+      });
+      s3.addShape((PptxGenJS as any).ShapeType.rect, {
+        x: 6.915,
+        y: frameY + 0.25,
+        w: 6.165,
+        h: frameH - 0.5,
+        fill: { color: 'F3F4F6' },
+        line: { color: '9CA3AF', width: 1 },
+      });
 
       const beforePath = String((data.beforeImagePath || '').trim());
       const afterPath = String((data.afterImagePath || '').trim());
-      const beforeUri = beforePath ? await this.toDataUriFromRelativePath(beforePath) : null;
-      const afterUri = afterPath ? await this.toDataUriFromRelativePath(afterPath) : null;
-      if (beforeUri) s3.addImage({ data: beforeUri, x: 0.28, y: frameY + 0.28, w: 6.11, h: frameH - 0.56 });
-      if (afterUri) s3.addImage({ data: afterUri, x: 6.945, y: frameY + 0.28, w: 6.11, h: frameH - 0.56 });
-      if (!beforeUri) s3.addText('No before image uploaded.', { x: 0.25, y: frameY + 2.8, w: 6.165, h: 0.4, fontFace: 'Calibri', fontSize: 14, bold: true, color: '6B7280', align: 'center' });
-      if (!afterUri) s3.addText('No after image uploaded.', { x: 6.915, y: frameY + 2.8, w: 6.165, h: 0.4, fontFace: 'Calibri', fontSize: 14, bold: true, color: '6B7280', align: 'center' });
+      const beforeUri = beforePath
+        ? await this.toDataUriFromRelativePath(beforePath)
+        : null;
+      const afterUri = afterPath
+        ? await this.toDataUriFromRelativePath(afterPath)
+        : null;
+      if (beforeUri)
+        s3.addImage({
+          data: beforeUri,
+          x: 0.28,
+          y: frameY + 0.28,
+          w: 6.11,
+          h: frameH - 0.56,
+        });
+      if (afterUri)
+        s3.addImage({
+          data: afterUri,
+          x: 6.945,
+          y: frameY + 0.28,
+          w: 6.11,
+          h: frameH - 0.56,
+        });
+      if (!beforeUri)
+        s3.addText('No before image uploaded.', {
+          x: 0.25,
+          y: frameY + 2.8,
+          w: 6.165,
+          h: 0.4,
+          fontFace: 'Calibri',
+          fontSize: 14,
+          bold: true,
+          color: '6B7280',
+          align: 'center',
+        });
+      if (!afterUri)
+        s3.addText('No after image uploaded.', {
+          x: 6.915,
+          y: frameY + 2.8,
+          w: 6.165,
+          h: 0.4,
+          fontFace: 'Calibri',
+          fontSize: 14,
+          bold: true,
+          color: '6B7280',
+          align: 'center',
+        });
 
       this.addPageNumber(s3, 3);
     }
@@ -416,53 +716,128 @@ export class PptxExportService {
       this.addTitleKaizenRow(s4, { title, kaizenNo }, { variant: 'sheet4' });
 
       // Blue note bar (UI)
-      s4.addShape((PptxGenJS as any).ShapeType.rect, { x: 0, y: 0.9, w: 13.33, h: 0.45, fill: { color: '2563EB' }, line: { color: '1E40AF', width: 1 } });
-      s4.addText('Note: If any process flow or video demonstration is required, Kindly use this slide.', {
-        x: 0.25,
-        y: 0.98,
-        w: 12.83,
-        h: 0.35,
+      s4.addShape((PptxGenJS as any).ShapeType.rect, {
+        x: 0,
+        y: 0.9,
+        w: 13.33,
+        h: 0.45,
+        fill: { color: '2563EB' },
+        line: { color: '1E40AF', width: 1 },
+      });
+      s4.addText(
+        'Note: If any process flow or video demonstration is required, Kindly use this slide.',
+        {
+          x: 0.25,
+          y: 0.98,
+          w: 12.83,
+          h: 0.35,
+          fontFace: 'Calibri',
+          fontSize: 12,
+          bold: true,
+          color: 'FFFFFF',
+          align: 'center',
+        },
+      );
+
+      // Before/After header row
+      s4.addShape((PptxGenJS as any).ShapeType.rect, {
+        x: 0,
+        y: 1.35,
+        w: 13.33,
+        h: 0.32,
+        fill: { color: purple },
+        line: { color: '6B7280', width: 1 },
+      });
+      s4.addShape((PptxGenJS as any).ShapeType.line, {
+        x: 6.665,
+        y: 1.35,
+        w: 0,
+        h: 0.32,
+        line: { color: '6B7280', width: 1 },
+      });
+      s4.addText('Before', {
+        x: 0,
+        y: 1.4,
+        w: 6.665,
+        h: 0.22,
         fontFace: 'Calibri',
-        fontSize: 12,
+        fontSize: 14,
+        bold: true,
+        color: 'FFFFFF',
+        align: 'center',
+      });
+      s4.addText('After', {
+        x: 6.665,
+        y: 1.4,
+        w: 6.665,
+        h: 0.22,
+        fontFace: 'Calibri',
+        fontSize: 14,
         bold: true,
         color: 'FFFFFF',
         align: 'center',
       });
 
-      // Before/After header row
-      s4.addShape((PptxGenJS as any).ShapeType.rect, { x: 0, y: 1.35, w: 13.33, h: 0.32, fill: { color: purple }, line: { color: '6B7280', width: 1 } });
-      s4.addShape((PptxGenJS as any).ShapeType.line, { x: 6.665, y: 1.35, w: 0, h: 0.32, line: { color: '6B7280', width: 1 } });
-      s4.addText('Before', { x: 0, y: 1.4, w: 6.665, h: 0.22, fontFace: 'Calibri', fontSize: 14, bold: true, color: 'FFFFFF', align: 'center' });
-      s4.addText('After', { x: 6.665, y: 1.4, w: 6.665, h: 0.22, fontFace: 'Calibri', fontSize: 14, bold: true, color: 'FFFFFF', align: 'center' });
-
       // Two columns with grey background
       const bodyY = 1.67;
       const bodyH = 5.38;
-      s4.addShape((PptxGenJS as any).ShapeType.rect, { x: 0, y: bodyY, w: 13.33, h: bodyH, fill: { color: 'F3F4F6' }, line: { color: '6B7280', width: 1 } });
-      s4.addShape((PptxGenJS as any).ShapeType.line, { x: 6.665, y: bodyY, w: 0, h: bodyH, line: { color: '6B7280', width: 1 } });
+      s4.addShape((PptxGenJS as any).ShapeType.rect, {
+        x: 0,
+        y: bodyY,
+        w: 13.33,
+        h: bodyH,
+        fill: { color: 'F3F4F6' },
+        line: { color: '6B7280', width: 1 },
+      });
+      s4.addShape((PptxGenJS as any).ShapeType.line, {
+        x: 6.665,
+        y: bodyY,
+        w: 0,
+        h: bodyH,
+        line: { color: '6B7280', width: 1 },
+      });
 
       // Video frames (full grey band — no caption row below)
       const frameY = bodyY + 0.2;
       const frameH = Math.min(4.95, bodyY + bodyH - frameY - 0.18);
-      s4.addShape((PptxGenJS as any).ShapeType.roundRect, { x: 0.35, y: frameY, w: 6.0, h: frameH, fill: { color: 'FFFFFF' }, line: { color: '9CA3AF', width: 1 }, radius: 0.08 } as any);
-      s4.addShape((PptxGenJS as any).ShapeType.roundRect, { x: 6.98, y: frameY, w: 6.0, h: frameH, fill: { color: 'FFFFFF' }, line: { color: '9CA3AF', width: 1 }, radius: 0.08 } as any);
+      s4.addShape((PptxGenJS as any).ShapeType.roundRect, {
+        x: 0.35,
+        y: frameY,
+        w: 6.0,
+        h: frameH,
+        fill: { color: 'FFFFFF' },
+        line: { color: '9CA3AF', width: 1 },
+        radius: 0.08,
+      } as any);
+      s4.addShape((PptxGenJS as any).ShapeType.roundRect, {
+        x: 6.98,
+        y: frameY,
+        w: 6.0,
+        h: frameH,
+        fill: { color: 'FFFFFF' },
+        line: { color: '9CA3AF', width: 1 },
+        radius: 0.08,
+      } as any);
 
       const beforeVid = String((data.processBeforeVideoPath || '').trim());
       const afterVid = String((data.processAfterVideoPath || '').trim());
 
       // File references inside frames (until we embed videos)
       const vidTextY = frameY + frameH / 2 - 0.3;
-      s4.addText(beforeVid ? `Video: ${beforeVid}` : 'No before video uploaded.', {
-        x: 0.55,
-        y: vidTextY,
-        w: 5.6,
-        h: 0.6,
-        fontFace: 'Calibri',
-        fontSize: 12,
-        bold: true,
-        color: beforeVid ? '1D4ED8' : '6B7280',
-        align: 'center',
-      });
+      s4.addText(
+        beforeVid ? `Video: ${beforeVid}` : 'No before video uploaded.',
+        {
+          x: 0.55,
+          y: vidTextY,
+          w: 5.6,
+          h: 0.6,
+          fontFace: 'Calibri',
+          fontSize: 12,
+          bold: true,
+          color: beforeVid ? '1D4ED8' : '6B7280',
+          align: 'center',
+        },
+      );
       s4.addText(afterVid ? `Video: ${afterVid}` : 'No after video uploaded.', {
         x: 7.18,
         y: vidTextY,
@@ -485,79 +860,359 @@ export class PptxExportService {
       this.addTitleKaizenRow(s5, { title, kaizenNo }, { variant: 'sheet5' });
 
       // Results row (big)
-      s5.addShape((PptxGenJS as any).ShapeType.rect, { x: 0, y: 0.9, w: 13.33, h: 0.55, fill: { color: purple }, line: { color: '6B7280', width: 1 } });
-      s5.addShape((PptxGenJS as any).ShapeType.line, { x: 9.99, y: 0.9, w: 0, h: 0.55, line: { color: '6B7280', width: 1 } });
-      s5.addText('Results', { x: 0, y: 0.98, w: 9.99, h: 0.4, fontFace: 'Calibri', fontSize: 26, bold: true, color: 'FFFFFF', align: 'center' });
+      s5.addShape((PptxGenJS as any).ShapeType.rect, {
+        x: 0,
+        y: 0.9,
+        w: 13.33,
+        h: 0.55,
+        fill: { color: purple },
+        line: { color: '6B7280', width: 1 },
+      });
+      s5.addShape((PptxGenJS as any).ShapeType.line, {
+        x: 9.99,
+        y: 0.9,
+        w: 0,
+        h: 0.55,
+        line: { color: '6B7280', width: 1 },
+      });
+      s5.addText('Results', {
+        x: 0,
+        y: 0.98,
+        w: 9.99,
+        h: 0.4,
+        fontFace: 'Calibri',
+        fontSize: 26,
+        bold: true,
+        color: 'FFFFFF',
+        align: 'center',
+      });
 
       // Helper line
-      s5.addText('Fill any 3 result KPIs (safety / cost / time / quality / etc.)', {
-        x: 0.25,
-        y: 1.5,
-        w: 12.8,
-        h: 0.25,
-        fontFace: 'Calibri',
-        fontSize: 11,
-        bold: true,
-        color: '374151',
-      });
+      s5.addText(
+        'Fill any 3 result KPIs (safety / cost / time / quality / etc.)',
+        {
+          x: 0.25,
+          y: 1.5,
+          w: 12.8,
+          h: 0.25,
+          fontFace: 'Calibri',
+          fontSize: 11,
+          bold: true,
+          color: '374151',
+        },
+      );
 
       // KPI header (3 columns)
       const headerY = 1.8;
-      s5.addShape((PptxGenJS as any).ShapeType.rect, { x: 0, y: headerY, w: 13.33, h: 0.32, fill: { color: purple }, line: { color: '6B7280', width: 1 } });
-      s5.addShape((PptxGenJS as any).ShapeType.line, { x: 4.443, y: headerY, w: 0, h: 0.32, line: { color: '6B7280', width: 1 } });
-      s5.addShape((PptxGenJS as any).ShapeType.line, { x: 8.886, y: headerY, w: 0, h: 0.32, line: { color: '6B7280', width: 1 } });
+      s5.addShape((PptxGenJS as any).ShapeType.rect, {
+        x: 0,
+        y: headerY,
+        w: 13.33,
+        h: 0.32,
+        fill: { color: purple },
+        line: { color: '6B7280', width: 1 },
+      });
+      s5.addShape((PptxGenJS as any).ShapeType.line, {
+        x: 4.443,
+        y: headerY,
+        w: 0,
+        h: 0.32,
+        line: { color: '6B7280', width: 1 },
+      });
+      s5.addShape((PptxGenJS as any).ShapeType.line, {
+        x: 8.886,
+        y: headerY,
+        w: 0,
+        h: 0.32,
+        line: { color: '6B7280', width: 1 },
+      });
 
-      const kpis = Array.isArray(data.resultKpis) ? data.resultKpis.slice(0, 3) : [];
+      const kpis = Array.isArray(data.resultKpis)
+        ? data.resultKpis.slice(0, 3)
+        : [];
       for (let i = 0; i < 3; i++) {
         const k = kpis[i] || {};
         const x0 = i * 4.443;
         const w = 4.443;
         const titleText = String(k.title || `KPI ${i + 1}`);
-        s5.addText(titleText, { x: x0, y: headerY + 0.06, w, h: 0.22, fontFace: 'Calibri', fontSize: 12, bold: true, color: 'FFFFFF', align: 'center' });
+        s5.addText(titleText, {
+          x: x0,
+          y: headerY + 0.06,
+          w,
+          h: 0.22,
+          fontFace: 'Calibri',
+          fontSize: 12,
+          bold: true,
+          color: 'FFFFFF',
+          align: 'center',
+        });
 
         // Column body background like UI (gray-100)
         const colY = headerY + 0.32;
         const colH = 4.75;
-        s5.addShape((PptxGenJS as any).ShapeType.rect, { x: x0, y: colY, w, h: colH, fill: { color: 'F3F4F6' }, line: { color: '6B7280', width: 1 } });
+        s5.addShape((PptxGenJS as any).ShapeType.rect, {
+          x: x0,
+          y: colY,
+          w,
+          h: colH,
+          fill: { color: 'F3F4F6' },
+          line: { color: '6B7280', width: 1 },
+        });
 
         const beforeVal = k.before ?? '';
         const afterVal = k.after ?? '';
         const higherIsBetter = !!k.higherIsBetter;
         const bNum = Number(beforeVal);
         const aNum = Number(afterVal);
-        const same = Number.isFinite(bNum) && Number.isFinite(aNum) ? bNum === aNum : false;
-        const improved = Number.isFinite(bNum) && Number.isFinite(aNum)
-          ? (higherIsBetter ? aNum > bNum : aNum < bNum)
-          : false;
+        const same =
+          Number.isFinite(bNum) && Number.isFinite(aNum)
+            ? bNum === aNum
+            : false;
+        const improved =
+          Number.isFinite(bNum) && Number.isFinite(aNum)
+            ? higherIsBetter
+              ? aNum > bNum
+              : aNum < bNum
+            : false;
         const label = same ? 'No change' : improved ? 'Good' : 'Bad';
         const labelColor = same ? '6B7280' : improved ? '15803D' : 'B91C1C';
 
-        s5.addText(label, { x: x0 + 2.9, y: colY + 0.1, w: w - 3.1, h: 0.35, fontFace: 'Calibri', fontSize: 18, bold: true, color: labelColor, align: 'right' });
-        s5.addText(String(k.metricLabel || ''), { x: x0 + 0.2, y: colY + 0.1, w: 2.6, h: 0.3, fontFace: 'Calibri', fontSize: 10, bold: true, color: '374151' });
+        s5.addText(label, {
+          x: x0 + 2.9,
+          y: colY + 0.1,
+          w: w - 3.1,
+          h: 0.35,
+          fontFace: 'Calibri',
+          fontSize: 18,
+          bold: true,
+          color: labelColor,
+          align: 'right',
+        });
+        s5.addText(String(k.metricLabel || ''), {
+          x: x0 + 0.2,
+          y: colY + 0.1,
+          w: 2.6,
+          h: 0.3,
+          fontFace: 'Calibri',
+          fontSize: 10,
+          bold: true,
+          color: '374151',
+        });
 
         // Simple chart area (white box)
-        s5.addShape((PptxGenJS as any).ShapeType.rect, { x: x0 + 0.2, y: colY + 0.55, w: w - 0.4, h: 2.45, fill: { color: 'FFFFFF' }, line: { color: 'D1D5DB', width: 1 } });
+        s5.addShape((PptxGenJS as any).ShapeType.rect, {
+          x: x0 + 0.2,
+          y: colY + 0.55,
+          w: w - 0.4,
+          h: 2.45,
+          fill: { color: 'FFFFFF' },
+          line: { color: 'D1D5DB', width: 1 },
+        });
 
         // Bars (normalized)
-        const max = Math.max(1, ...(Number.isFinite(bNum) ? [bNum] : [0]), ...(Number.isFinite(aNum) ? [aNum] : [0]));
+        const max = Math.max(
+          1,
+          ...(Number.isFinite(bNum) ? [bNum] : [0]),
+          ...(Number.isFinite(aNum) ? [aNum] : [0]),
+        );
         const barMaxH = 1.75;
-        const beforePct = Number.isFinite(bNum) ? Math.max(0, Math.min(1, bNum / max)) : 0;
-        const afterPct = Number.isFinite(aNum) ? Math.max(0, Math.min(1, aNum / max)) : 0;
+        const beforePct = Number.isFinite(bNum)
+          ? Math.max(0, Math.min(1, bNum / max))
+          : 0;
+        const afterPct = Number.isFinite(aNum)
+          ? Math.max(0, Math.min(1, aNum / max))
+          : 0;
         const baseY = colY + 0.55 + 2.25;
-        s5.addShape((PptxGenJS as any).ShapeType.rect, { x: x0 + 1.25, y: baseY - barMaxH * beforePct, w: 0.5, h: barMaxH * beforePct, fill: { color: 'DC2626' }, line: { color: 'B91C1C', width: 1 } });
-        s5.addShape((PptxGenJS as any).ShapeType.rect, { x: x0 + 2.55, y: baseY - barMaxH * afterPct, w: 0.5, h: barMaxH * afterPct, fill: { color: '15803D' }, line: { color: '166534', width: 1 } });
-        s5.addText(String(Number.isFinite(bNum) ? bNum : 0), { x: x0 + 1.05, y: baseY - barMaxH * beforePct - 0.25, w: 0.9, h: 0.2, fontFace: 'Calibri', fontSize: 9, bold: true, color: '374151', align: 'center' });
-        s5.addText(String(Number.isFinite(aNum) ? aNum : 0), { x: x0 + 2.35, y: baseY - barMaxH * afterPct - 0.25, w: 0.9, h: 0.2, fontFace: 'Calibri', fontSize: 9, bold: true, color: '374151', align: 'center' });
-        s5.addText('Before', { x: x0 + 0.9, y: baseY + 0.05, w: 1.2, h: 0.2, fontFace: 'Calibri', fontSize: 10, bold: true, color: '374151', align: 'center' });
-        s5.addText('After', { x: x0 + 2.2, y: baseY + 0.05, w: 1.2, h: 0.2, fontFace: 'Calibri', fontSize: 10, bold: true, color: '374151', align: 'center' });
+        s5.addShape((PptxGenJS as any).ShapeType.rect, {
+          x: x0 + 1.25,
+          y: baseY - barMaxH * beforePct,
+          w: 0.5,
+          h: barMaxH * beforePct,
+          fill: { color: 'DC2626' },
+          line: { color: 'B91C1C', width: 1 },
+        });
+        s5.addShape((PptxGenJS as any).ShapeType.rect, {
+          x: x0 + 2.55,
+          y: baseY - barMaxH * afterPct,
+          w: 0.5,
+          h: barMaxH * afterPct,
+          fill: { color: '15803D' },
+          line: { color: '166534', width: 1 },
+        });
+        s5.addText(String(Number.isFinite(bNum) ? bNum : 0), {
+          x: x0 + 1.05,
+          y: baseY - barMaxH * beforePct - 0.25,
+          w: 0.9,
+          h: 0.2,
+          fontFace: 'Calibri',
+          fontSize: 9,
+          bold: true,
+          color: '374151',
+          align: 'center',
+        });
+        s5.addText(String(Number.isFinite(aNum) ? aNum : 0), {
+          x: x0 + 2.35,
+          y: baseY - barMaxH * afterPct - 0.25,
+          w: 0.9,
+          h: 0.2,
+          fontFace: 'Calibri',
+          fontSize: 9,
+          bold: true,
+          color: '374151',
+          align: 'center',
+        });
+        s5.addText('Before', {
+          x: x0 + 0.9,
+          y: baseY + 0.05,
+          w: 1.2,
+          h: 0.2,
+          fontFace: 'Calibri',
+          fontSize: 10,
+          bold: true,
+          color: '374151',
+          align: 'center',
+        });
+        s5.addText('After', {
+          x: x0 + 2.2,
+          y: baseY + 0.05,
+          w: 1.2,
+          h: 0.2,
+          fontFace: 'Calibri',
+          fontSize: 10,
+          bold: true,
+          color: '374151',
+          align: 'center',
+        });
 
         // Result note area (bottom, like UI)
-        s5.addText('Result:', { x: x0 + 0.2, y: colY + 3.1, w: w - 0.4, h: 0.25, fontFace: 'Calibri', fontSize: 14, bold: true, italic: true, underline: { style: 'sng' }, color: '111827' } as any);
-        s5.addShape((PptxGenJS as any).ShapeType.rect, { x: x0 + 0.2, y: colY + 3.35, w: w - 0.4, h: 1.05, fill: { color: 'FFFFFF' }, line: { color: 'D1D5DB', width: 1 } });
-        s5.addText(String(k.resultNote || ''), { x: x0 + 0.25, y: colY + 3.4, w: w - 0.5, h: 0.95, fontFace: 'Calibri', fontSize: 10, color: '111827', valign: 'top' } as any);
+        s5.addText('Result:', {
+          x: x0 + 0.2,
+          y: colY + 3.1,
+          w: w - 0.4,
+          h: 0.25,
+          fontFace: 'Calibri',
+          fontSize: 14,
+          bold: true,
+          italic: true,
+          underline: { style: 'sng' },
+          color: '111827',
+        } as any);
+        s5.addShape((PptxGenJS as any).ShapeType.rect, {
+          x: x0 + 0.2,
+          y: colY + 3.35,
+          w: w - 0.4,
+          h: 1.05,
+          fill: { color: 'FFFFFF' },
+          line: { color: 'D1D5DB', width: 1 },
+        });
+        s5.addText(String(k.resultNote || ''), {
+          x: x0 + 0.25,
+          y: colY + 3.4,
+          w: w - 0.5,
+          h: 0.95,
+          fontFace: 'Calibri',
+          fontSize: 10,
+          color: '111827',
+          valign: 'top',
+        } as any);
       }
 
       this.addPageNumber(s5, 5);
+    }
+
+    // --- Extra slides (implementer) ---
+    const extrasRaw = Array.isArray((data as any)?.extraSlides)
+      ? ((data as any).extraSlides as any[])
+      : [];
+    const extras = extrasRaw
+      .map((s) => (s && typeof s === 'object' ? s : null))
+      .filter(Boolean);
+
+    let pageNo = 6;
+    for (const ex of extras) {
+      if (pageNo > 99) break;
+      const kind = String(ex.kind || '')
+        .trim()
+        .toLowerCase();
+      const slideTitle = String(ex.title || '').trim();
+      const caption = String(ex.caption || '').trim();
+
+      const s = pptx.addSlide();
+      this.addHeaderBar(s, { showLogoBox: true });
+      this.addTitleKaizenRow(s, { title, kaizenNo }, { variant: 'sheet3' });
+
+      // Content container
+      s.addShape((PptxGenJS as any).ShapeType.roundRect, {
+        x: 0.55,
+        y: 1.15,
+        w: 12.23,
+        h: 5.95,
+        fill: { color: 'FFFFFF' },
+        line: { color: 'D1D5DB', width: 1 },
+      } as any);
+
+      if (slideTitle) {
+        s.addText(slideTitle, {
+          x: 0.8,
+          y: 1.25,
+          w: 11.73,
+          h: 0.4,
+          fontFace: 'Calibri',
+          fontSize: 20,
+          bold: true,
+          color: '111827',
+        });
+      }
+
+      if (kind === 'image') {
+        const rel = String(ex.imagePath || '').trim();
+        const uri = rel ? await this.toDataUriFromRelativePath(rel) : null;
+        if (uri && uri.startsWith('data:image/')) {
+          const imgX = 0.9;
+          const imgY = slideTitle ? 1.75 : 1.35;
+          const imgW = 11.53;
+          const imgH = caption ? 4.6 : 5.2;
+          s.addImage({ data: uri, x: imgX, y: imgY, w: imgW, h: imgH });
+        } else {
+          s.addText('No image uploaded for this slide.', {
+            x: 0.8,
+            y: 2.0,
+            w: 11.73,
+            h: 0.6,
+            fontFace: 'Calibri',
+            fontSize: 16,
+            bold: true,
+            color: '6B7280',
+          });
+        }
+        if (caption) {
+          s.addText(caption, {
+            x: 0.8,
+            y: 6.6,
+            w: 11.73,
+            h: 0.45,
+            fontFace: 'Calibri',
+            fontSize: 12,
+            italic: true,
+            color: '374151',
+            align: 'center',
+          } as any);
+        }
+      } else {
+        const body = String(ex.body || '').trim();
+        s.addText(body || '—', {
+          x: 0.8,
+          y: slideTitle ? 1.75 : 1.35,
+          w: 11.73,
+          h: 5.25,
+          fontFace: 'Calibri',
+          fontSize: 14,
+          color: '111827',
+          valign: 'top',
+        } as any);
+      }
+
+      this.addPageNumber(s, pageNo++);
     }
 
     // typings differ across pptxgenjs versions
@@ -638,11 +1293,14 @@ export class PptxExportService {
   ): { width: number; height: number } | null {
     const m = String(mime || '').toLowerCase();
     if (m === 'image/png') return this.tryGetPngSize(bytes);
-    if (m === 'image/jpeg' || m === 'image/jpg') return this.tryGetJpegSize(bytes);
+    if (m === 'image/jpeg' || m === 'image/jpg')
+      return this.tryGetJpegSize(bytes);
     return null;
   }
 
-  private tryGetPngSize(bytes: Uint8Array): { width: number; height: number } | null {
+  private tryGetPngSize(
+    bytes: Uint8Array,
+  ): { width: number; height: number } | null {
     // PNG signature: 89 50 4E 47 0D 0A 1A 0A
     if (!bytes || bytes.length < 24) return null;
     if (
@@ -671,7 +1329,9 @@ export class PptxExportService {
     }
   }
 
-  private tryGetJpegSize(bytes: Uint8Array): { width: number; height: number } | null {
+  private tryGetJpegSize(
+    bytes: Uint8Array,
+  ): { width: number; height: number } | null {
     // Minimal JPEG SOF parser (supports baseline/progressive SOF markers)
     if (!bytes || bytes.length < 4) return null;
     if (bytes[0] !== 0xff || bytes[1] !== 0xd8) return null; // SOI
@@ -723,8 +1383,9 @@ export class PptxExportService {
     const idx = s.indexOf(marker);
     if (idx === -1 || !s.toLowerCase().startsWith('data:')) return null;
     const header = s.slice(5, idx);
-    const mime = (header.split(';')[0] || '').trim() || 'application/octet-stream';
-    let b64 = s.slice(idx + marker.length).replace(/\s/g, '');
+    const mime =
+      (header.split(';')[0] || '').trim() || 'application/octet-stream';
+    const b64 = s.slice(idx + marker.length).replace(/\s/g, '');
     try {
       return { mime, bytes: Uint8Array.from(Buffer.from(b64, 'base64')) };
     } catch {
@@ -753,7 +1414,11 @@ export class PptxExportService {
 
     if (pdfDoc.getPageCount() === 0) {
       const page = pdfDoc.addPage([842, 595]); // A4 landscape (approx)
-      page.drawText('No rendered slides provided.', { x: 50, y: 520, size: 22 });
+      page.drawText('No rendered slides provided.', {
+        x: 50,
+        y: 520,
+        size: 22,
+      });
     }
 
     const out = await pdfDoc.save();
@@ -773,9 +1438,10 @@ export class PptxExportService {
     const uploadRoot = this.config.get<string>('uploadRoot');
     if (!uploadRoot) throw new NotFoundException('Upload root not configured');
 
-    const employeeCode = String(suggestion.assignedImplementerCode || 'UNKNOWN')
-      .trim()
-      .replace(/[^a-zA-Z0-9_-]/g, '') || 'UNKNOWN';
+    const employeeCode =
+      String(suggestion.assignedImplementerCode || 'UNKNOWN')
+        .trim()
+        .replace(/[^a-zA-Z0-9_-]/g, '') || 'UNKNOWN';
 
     const safeBase = String(fileNameBaseRaw || suggestion.code || suggestionId)
       .trim()
@@ -805,7 +1471,9 @@ export class PptxExportService {
         .map((d) => d.name)
         .filter((name) => {
           const n = name.toLowerCase();
-          return n.endsWith('.pptx') || n.endsWith('.ppt') || n.endsWith('.pdf');
+          return (
+            n.endsWith('.pptx') || n.endsWith('.ppt') || n.endsWith('.pdf')
+          );
         })
         .filter((name) => name !== pptFile && name !== pdfFile)
         .map(async (name) => {
@@ -832,7 +1500,10 @@ export class PptxExportService {
 
     // Replace previous FINAL exports in DB (avoid appending on every re-finalize).
     const keepNonFinal = existing.filter(
-      (p) => !String(p || '').replace(/\\/g, '/').startsWith(`${relDir}/`),
+      (p) =>
+        !String(p || '')
+          .replace(/\\/g, '/')
+          .startsWith(`${relDir}/`),
     );
     const next = [...keepNonFinal, pptPath, pdfPath];
     await this.prisma.suggestion.update({
@@ -843,4 +1514,3 @@ export class PptxExportService {
     return { pptPath, pdfPath };
   }
 }
-

@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { Role, Status, Suggestion } from '../types';
 import { STATUS_COLORS } from '../constants';
+import { employeeStatusStep } from '../utils/kaizenStatusHelp';
 
 interface PipelineViewProps {
   suggestions: Suggestion[];
@@ -224,10 +225,12 @@ export const PipelineView: React.FC<PipelineViewProps> = ({
       <div className="flex items-center justify-between bg-white border border-gray-200 rounded-2xl p-6 shadow-sm">
         <div>
           <h1 className="text-2xl font-extrabold text-gray-900">
-            Improvement Pipeline
+            {role === Role.EMPLOYEE ? 'My ideas' : 'Improvement Pipeline'}
           </h1>
           <p className="text-sm text-gray-600 font-semibold">
-            Track all Kaizen ideas in a unified pipeline view.
+            {role === Role.EMPLOYEE
+              ? 'Browse and open any of your Kaizen submissions to see full details and history.'
+              : 'Track all Kaizen ideas in a unified pipeline view.'}
           </p>
         </div>
         <div className="hidden md:flex items-center gap-3 text-xs text-gray-600 font-semibold">
@@ -240,7 +243,9 @@ export const PipelineView: React.FC<PipelineViewProps> = ({
 
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
         <div className="bg-white border border-gray-200 rounded-xl p-4">
-          <div className="text-xs font-extrabold uppercase text-gray-500">Total Requests</div>
+          <div className="text-xs font-extrabold uppercase text-gray-500">
+            {role === Role.EMPLOYEE ? 'Your ideas' : 'Total Requests'}
+          </div>
           <div className="text-2xl font-black text-gray-900 mt-1">{pipelineStats.total}</div>
         </div>
         <div className="bg-white border border-gray-200 rounded-xl p-4">
@@ -262,7 +267,11 @@ export const PipelineView: React.FC<PipelineViewProps> = ({
             </span>
             <input
               type="text"
-              placeholder="Search by idea, description, or originator..."
+              placeholder={
+                role === Role.EMPLOYEE
+                  ? 'Search your ideas by title or description...'
+                  : 'Search by idea, description, or originator...'
+              }
               className="w-full pl-10 pr-3 py-2.5 rounded-lg border border-gray-300 text-sm text-gray-900 font-medium bg-white focus:ring-2 focus:ring-kauvery-purple outline-none"
               value={search}
               onChange={e => setSearch(e.target.value)}
@@ -398,6 +407,11 @@ export const PipelineView: React.FC<PipelineViewProps> = ({
             <h3 className="text-sm font-extrabold text-gray-900 mb-1 line-clamp-2">
               {s.theme}
             </h3>
+            {role === Role.EMPLOYEE && (
+              <p className="text-[11px] text-gray-500 font-medium mb-2 line-clamp-2">
+                {employeeStatusStep(s.status)}
+              </p>
+            )}
             <p className="text-xs text-gray-600 mb-3 line-clamp-2 font-medium">
               {s.description}
             </p>
@@ -437,8 +451,15 @@ export const PipelineView: React.FC<PipelineViewProps> = ({
         ))}
 
         {filtered.length === 0 && (
-          <div className="col-span-full py-16 text-center text-gray-500 text-sm font-medium border border-dashed border-gray-300 rounded-2xl bg-gray-50">
-            No ideas found for the current filters.
+          <div className="col-span-full py-16 text-center border border-dashed border-gray-300 rounded-2xl bg-gray-50 px-4">
+            <p className="text-gray-900 font-extrabold text-base mb-1">
+              {role === Role.EMPLOYEE ? 'No ideas match your search' : 'No ideas found'}
+            </p>
+            <p className="text-gray-600 text-sm font-medium">
+              {role === Role.EMPLOYEE
+                ? 'Try clearing the search box or department filter, or submit a new idea from the dashboard.'
+                : 'No ideas found for the current filters.'}
+            </p>
           </div>
         )}
       </div>

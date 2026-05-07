@@ -117,6 +117,8 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
   const [implementerOptions, setImplementerOptions] = useState<
     { employeeCode: string; name: string; manager?: string | null }[]
   >([]);
+  /** Reporting line from hrms_employees.manager (not tied to committee assignment dropdown) */
+  const [hrmsReportingManager, setHrmsReportingManager] = useState<string | null>(null);
   const [implementationDeadline, setImplementationDeadline] = useState('');
   const [implementationStage, setImplementationStage] = useState<'Started' | 'In Progress' | 'Completed'>('Started');
   const [implementationProgress, setImplementationProgress] = useState<number>(0);
@@ -200,6 +202,40 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
       cancelled = true;
     };
   }, [apiBase, accessToken, assignUnit, implementerDept, isOpen, role, suggestion]);
+
+  useEffect(() => {
+    if (!isOpen || !accessToken || !suggestion) {
+      setHrmsReportingManager(null);
+      return;
+    }
+    const code = String(suggestion.assignedImplementerCode ?? '').trim();
+    if (!code) {
+      setHrmsReportingManager(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(
+          `${apiBase}/users/hrms/${encodeURIComponent(code)}`,
+          { headers: { Authorization: `Bearer ${accessToken}` } },
+        );
+        if (!res.ok) {
+          if (!cancelled) setHrmsReportingManager(null);
+          return;
+        }
+        const data = await res.json();
+        if (cancelled) return;
+        const mgr = data?.manager != null ? String(data.manager).trim() : '';
+        setHrmsReportingManager(mgr || null);
+      } catch {
+        if (!cancelled) setHrmsReportingManager(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [apiBase, accessToken, isOpen, suggestion?.id, suggestion?.assignedImplementerCode]);
 
   if (!isOpen || !suggestion) return null;
 
@@ -519,9 +555,14 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
       const nextApprovals = { ...(suggestion.approvals || {}), [r]: true };
       const req = suggestion.requiredApprovals || [];
       const allDone = req.every((x) => nextApprovals?.[x]);
+      const hasBeEvaluation = Boolean((suggestion as any)?.rewardEvaluation);
       await onUpdateStatus(
         suggestion.id,
-        allDone ? Status.BE_EVALUATION_PENDING : Status.VERIFIED_PENDING_APPROVAL,
+        allDone
+          ? hasBeEvaluation
+            ? Status.REWARD_PENDING
+            : Status.BE_EVALUATION_PENDING
+          : Status.VERIFIED_PENDING_APPROVAL,
         { approvals: nextApprovals },
       );
       showToast('success', 'Approval recorded');
@@ -541,6 +582,7 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
       // Send back to Unit Coordinator for re-routing / clarification.
       await onUpdateStatus(suggestion.id, Status.BE_REVIEW_DONE, {
         beReviewNotes: remark,
+        approvals: {},
       });
       showToast('success', 'Sent back to Unit Coordinator');
       setApprovalRemarks('');
@@ -785,9 +827,12 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
     suggestion.status === Status.ASSIGNED_FOR_IMPLEMENTATION &&
     isAssignedImplementerUser;
   const progressFloor = suggestion.implementationProgress ?? 0;
+  const reportingFromImplementerList =
+    implementerOptions.find((x) => x.employeeCode === implementerEmployeeCode)?.manager;
   const reportingTo =
-    implementerOptions.find((x) => x.employeeCode === implementerEmployeeCode)
-      ?.manager || 'Not mapped';
+    (hrmsReportingManager && hrmsReportingManager.trim()) ||
+    (reportingFromImplementerList && String(reportingFromImplementerList).trim()) ||
+    'Not mapped';
   const workflowThread = (Array.isArray((suggestion as any)?.workflowThread)
     ? ((suggestion as any).workflowThread as any[])
     : []
@@ -1222,7 +1267,7 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
                 </div>
               </div>
             )}
-            <Tabs />
+            {initialView !== 'hod-review' && <Tabs />}
           </>
         )}
 
@@ -2354,18 +2399,21 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
                         {finalPptPath ? finalPptPath.split('/').pop() : 'Not uploaded'}
                       </div>
                       <div className="mt-3 flex gap-2">
-                        <a
-                          href={finalPptPath ? `${apiBase}/kaizen-files/${finalPptPath}` : undefined}
-                          target="_blank"
-                          rel="noreferrer"
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setTemplateAssetPreview('ppt');
+                            setIsTemplatePreviewMode(true);
+                          }}
+                          disabled={!hasSubmittedTemplate}
                           className={`px-3 py-2 rounded-lg text-xs font-black border ${
-                            finalPptPath
+                            hasSubmittedTemplate
                               ? 'border-gray-300 bg-white text-gray-900 hover:bg-gray-50'
-                              : 'border-gray-200 bg-gray-100 text-gray-400 pointer-events-none'
+                              : 'border-gray-200 bg-gray-100 text-gray-400 cursor-not-allowed'
                           }`}
                         >
-                          View
-                        </a>
+                          Preview
+                        </button>
                         <a
                           href={finalPptPath ? `${apiBase}/kaizen-files/${finalPptPath}` : undefined}
                           download
@@ -2375,7 +2423,7 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
                               : 'bg-gray-200 text-gray-500 pointer-events-none'
                           }`}
                         >
-                          Download
+                          Download PPTX
                         </a>
                       </div>
                     </div>
@@ -2396,7 +2444,7 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
                               : 'border-gray-200 bg-gray-100 text-gray-400 pointer-events-none'
                           }`}
                         >
-                          View
+                          View PDF
                         </a>
                         <a
                           href={finalPdfPath ? `${apiBase}/kaizen-files/${finalPdfPath}` : undefined}
@@ -2407,7 +2455,7 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
                               : 'bg-gray-200 text-gray-500 pointer-events-none'
                           }`}
                         >
-                          Download
+                          Download PDF
                         </a>
                       </div>
                     </div>

@@ -143,6 +143,8 @@ model Suggestion {
   comments                   Json?
   /// Draft storage for implementer template (saved via "Save Draft")
   implementationDraft        Json?    @map("implementation_draft")
+  /// Implementer-provided additional slides (appended during export)
+  extraSlides                Json?    @map("extra_slides")
   /// Relative folder under upload root, e.g. kaizen/EMP001/kaizen_idea
   ideaAttachmentsFolder      String?  @map("idea_attachments_folder") @db.VarChar(500)
   /// Relative file paths from upload root for idea submission attachments

@@ -46,7 +46,9 @@ export class MobileIdeasSyncService {
   @Cron(process.env.MOBILE_IDEA_SYNC_CRON ?? '0 */5 * * * *')
   async scheduledSync(): Promise<void> {
     if (!this.isSuggestionSyncEnabled()) {
-      this.logger.log('Scheduled mobile-ideas sync skipped (SUGGESTION_SYNC=false).');
+      this.logger.log(
+        'Scheduled mobile-ideas sync skipped (SUGGESTION_SYNC=false).',
+      );
       return;
     }
     try {
@@ -86,7 +88,9 @@ export class MobileIdeasSyncService {
 
     // Mobile app writes into HRMS DB table `hrms_suggestions`.
     // We read from HRMS_DATABASE_URL and upsert into kaizen_kh.suggestions.
-    const hrmsDbUrl = String(this.config.get<string>('HRMS_DATABASE_URL') ?? '').trim();
+    const hrmsDbUrl = String(
+      this.config.get<string>('HRMS_DATABASE_URL') ?? '',
+    ).trim();
     if (!hrmsDbUrl) {
       const msg = 'HRMS_DATABASE_URL is not configured';
       await this.prisma.hrmsSyncLog.update({
@@ -261,4 +265,3 @@ export class MobileIdeasSyncService {
     };
   }
 }
-

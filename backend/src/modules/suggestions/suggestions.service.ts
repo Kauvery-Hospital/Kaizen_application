@@ -87,10 +87,15 @@ export class SuggestionsService {
       return;
     }
     if (!actorUserId) {
-      throw new ForbiddenException('Missing actor user id for scope validation');
+      throw new ForbiddenException(
+        'Missing actor user id for scope validation',
+      );
     }
 
-    const allowedUnits = await this.getAllowedUnitsForRole(actorUserId, actorRole);
+    const allowedUnits = await this.getAllowedUnitsForRole(
+      actorUserId,
+      actorRole,
+    );
     if (!allowedUnits || allowedUnits.length === 0) {
       throw new ForbiddenException(
         `No unit scopes configured for role ${actorRole}`,
@@ -130,10 +135,7 @@ export class SuggestionsService {
     return required.every((r) => Boolean(approvals?.[r]));
   }
 
-  async create(
-    dto: CreateSuggestionDto,
-    ctx: { employeeCode: string },
-  ) {
+  async create(dto: CreateSuggestionDto, ctx: { employeeCode: string }) {
     const year = new Date().getFullYear();
     const payload = dto.data ?? {};
     const actorName = dto.actorName ?? dto.employeeName ?? 'Employee';
@@ -315,7 +317,7 @@ export class SuggestionsService {
         if (!allowed.has(unitForStage.toLowerCase())) return false;
         return this.filterByRole(
           role,
-          s as any,
+          s,
           currentUserName,
           currentUserEmployeeCode,
         );
@@ -323,7 +325,12 @@ export class SuggestionsService {
     }
 
     return suggestions.filter((s) =>
-      this.filterByRole(role, s as any, currentUserName, currentUserEmployeeCode),
+      this.filterByRole(
+        role,
+        s as any,
+        currentUserName,
+        currentUserEmployeeCode,
+      ),
     );
   }
 
@@ -345,10 +352,21 @@ export class SuggestionsService {
     };
   }
 
-  private beReportPhaseWhere(phase: 'pre' | 'post'): Prisma.SuggestionWhereInput {
+  private beReportPhaseWhere(
+    phase: 'pre' | 'post',
+  ): Prisma.SuggestionWhereInput {
     return phase === 'pre'
-      ? { status: { in: SuggestionsService.BE_REPORT_PRE_STATUSES as unknown as string[] } }
-      : { status: { notIn: SuggestionsService.BE_REPORT_PRE_STATUSES as unknown as string[] } };
+      ? {
+          status: {
+            in: SuggestionsService.BE_REPORT_PRE_STATUSES as unknown as string[],
+          },
+        }
+      : {
+          status: {
+            notIn:
+              SuggestionsService.BE_REPORT_PRE_STATUSES as unknown as string[],
+          },
+        };
   }
 
   private beReportTextSearch(
@@ -387,26 +405,30 @@ export class SuggestionsService {
     const take = dto.take ?? 50;
 
     if (dto.view === 'summary') {
-      const preStatuses = SuggestionsService.BE_REPORT_PRE_STATUSES as unknown as string[];
-      const [total, pre, rewarded, unitRows, departmentRows] = await Promise.all([
-        this.prisma.suggestion.count(),
-        this.prisma.suggestion.count({ where: { status: { in: preStatuses } } }),
-        this.prisma.suggestion.count({
-          where: { status: AppStatus.REWARDED as string },
-        }),
-        this.prisma.suggestion.findMany({
-          distinct: ['unit'],
-          where: { unit: { not: '' } },
-          select: { unit: true },
-          orderBy: { unit: 'asc' },
-        }),
-        this.prisma.suggestion.findMany({
-          distinct: ['department'],
-          where: { department: { not: '' } },
-          select: { department: true },
-          orderBy: { department: 'asc' },
-        }),
-      ]);
+      const preStatuses =
+        SuggestionsService.BE_REPORT_PRE_STATUSES as unknown as string[];
+      const [total, pre, rewarded, unitRows, departmentRows] =
+        await Promise.all([
+          this.prisma.suggestion.count(),
+          this.prisma.suggestion.count({
+            where: { status: { in: preStatuses } },
+          }),
+          this.prisma.suggestion.count({
+            where: { status: AppStatus.REWARDED as string },
+          }),
+          this.prisma.suggestion.findMany({
+            distinct: ['unit'],
+            where: { unit: { not: '' } },
+            select: { unit: true },
+            orderBy: { unit: 'asc' },
+          }),
+          this.prisma.suggestion.findMany({
+            distinct: ['department'],
+            where: { department: { not: '' } },
+            select: { department: true },
+            orderBy: { department: 'asc' },
+          }),
+        ]);
       const post = Math.max(0, total - pre);
       const inProgressKaizen = Math.max(0, post - rewarded);
       return {
@@ -423,7 +445,10 @@ export class SuggestionsService {
     if (dto.view === 'pre' || dto.view === 'post') {
       const phase = dto.view;
       const where: Prisma.SuggestionWhereInput = {
-        AND: [this.beReportPhaseWhere(phase), this.beReportTextSearch(dto.q, phase)],
+        AND: [
+          this.beReportPhaseWhere(phase),
+          this.beReportTextSearch(dto.q, phase),
+        ],
       };
       const [items, total] = await Promise.all([
         this.prisma.suggestion.findMany({
@@ -470,7 +495,11 @@ export class SuggestionsService {
     }
   }
 
-  private async beReportEmployees(dto: BeReportQueryDto, skip: number, take: number) {
+  private async beReportEmployees(
+    dto: BeReportQueryDto,
+    skip: number,
+    take: number,
+  ) {
     const rows = await this.prisma.suggestion.findMany({
       select: {
         employeeName: true,
@@ -578,7 +607,8 @@ export class SuggestionsService {
 
     if (q) {
       filtered = filtered.filter((e) => {
-        const hay = `${e.name} ${e.key} ${e.department || ''} ${e.unit || ''}`.toLowerCase();
+        const hay =
+          `${e.name} ${e.key} ${e.department || ''} ${e.unit || ''}`.toLowerCase();
         return hay.includes(q);
       });
     }
@@ -588,7 +618,11 @@ export class SuggestionsService {
     return { items, total };
   }
 
-  private async beReportEmployeeIdeas(dto: BeReportQueryDto, skip: number, take: number) {
+  private async beReportEmployeeIdeas(
+    dto: BeReportQueryDto,
+    skip: number,
+    take: number,
+  ) {
     const rawKey = String(dto.employeeKey ?? '').trim();
     const mode = dto.ideaMode ?? 'submitted';
     if (!rawKey) {
@@ -603,7 +637,9 @@ export class SuggestionsService {
           : this.personNameKey(rawKey);
 
     const needle = String(dto.q ?? '').trim();
-    const p = needle ? `%${needle.replace(/%/g, '\\%').replace(/_/g, '\\_')}%` : '';
+    const p = needle
+      ? `%${needle.replace(/%/g, '\\%').replace(/_/g, '\\_')}%`
+      : '';
 
     const employeeMatch =
       mode === 'submitted'
@@ -677,22 +713,27 @@ export class SuggestionsService {
     });
   }
 
-  async updateStatus(id: string, dto: UpdateSuggestionStatusDto, actorUserId?: string) {
+  async updateStatus(
+    id: string,
+    dto: UpdateSuggestionStatusDto,
+    actorUserId?: string,
+  ) {
     const suggestion = await this.prisma.suggestion.findUnique({
       where: { id },
     });
     if (!suggestion) throw new NotFoundException('Suggestion not found');
 
     const current = suggestion as any;
-    await this.assertUnitScopeAllowed(actorUserId, dto.actor.role, current, dto.status);
+    await this.assertUnitScopeAllowed(
+      actorUserId,
+      dto.actor.role,
+      current,
+      dto.status,
+    );
     this.assertTransitionAllowed(current.status, dto.status, dto.actor.role);
 
-    const rawExtra = (dto.extraData ?? {}) as Record<string, unknown>;
-    const safeExtra = this.sanitizeExtraData(
-      dto.actor,
-      current,
-      rawExtra,
-    );
+    const rawExtra = dto.extraData ?? {};
+    const safeExtra = this.sanitizeExtraData(dto.actor, current, rawExtra);
     const eventText = this.buildWorkflowEventText(
       current,
       dto.status,
@@ -720,7 +761,9 @@ export class SuggestionsService {
       if (dto.status === AppStatus.IDEA_REJECTED) {
         const remark = String((safeExtra as any).screeningNotes ?? '').trim();
         if (!remark) {
-          throw new BadRequestException('Remarks are required when rejecting an idea.');
+          throw new BadRequestException(
+            'Remarks are required when rejecting an idea.',
+          );
         }
       }
       // 2) BE member sends back to implementer (IMPLEMENTATION_DONE -> ASSIGNED_FOR_IMPLEMENTATION)
@@ -731,7 +774,9 @@ export class SuggestionsService {
       ) {
         const remark = String((safeExtra as any).beReviewNotes ?? '').trim();
         if (!remark) {
-          throw new BadRequestException('Remarks are required when marking as not approved.');
+          throw new BadRequestException(
+            'Remarks are required when marking as not approved.',
+          );
         }
       }
       // 3) Unit Coordinator send-back after BE review (not implementer resubmitting template)
@@ -741,9 +786,13 @@ export class SuggestionsService {
         (dto.actor.role === AppRole.UNIT_COORDINATOR ||
           dto.actor.role === AppRole.ADMIN)
       ) {
-        const remark = String((safeExtra as any).coordinatorSuggestion ?? '').trim();
+        const remark = String(
+          (safeExtra as any).coordinatorSuggestion ?? '',
+        ).trim();
         if (!remark) {
-          throw new BadRequestException('Remarks are required when marking as not approved.');
+          throw new BadRequestException(
+            'Remarks are required when marking as not approved.',
+          );
         }
       }
       // 4) Functional approver sends back during approvals (VERIFIED -> BE_REVIEW_DONE)
@@ -753,7 +802,14 @@ export class SuggestionsService {
       ) {
         const remark = String((safeExtra as any).beReviewNotes ?? '').trim();
         if (!remark) {
-          throw new BadRequestException('Remarks are required when marking as not approved.');
+          throw new BadRequestException(
+            'Remarks are required when marking as not approved.',
+          );
+        }
+        // Reset approvals so Unit Coordinator can re-route cleanly.
+        if ((safeExtra as any).approvals == null) {
+          (safeExtra as any).approvals = {};
+          merged.approvals = {};
         }
       }
 
@@ -761,14 +817,17 @@ export class SuggestionsService {
       // If BE Head recommends voucher > 2000, route through Finance Head approval before HR reward processing.
       // We enforce requiredApprovals includes FINANCE_HOD when moving into VERIFIED_PENDING_APPROVAL with such voucher.
       if (dto.status === AppStatus.VERIFIED_PENDING_APPROVAL) {
-        const voucher = Number((merged as any)?.rewardEvaluation?.voucherValue ?? 0);
+        const voucher = Number(merged?.rewardEvaluation?.voucherValue ?? 0);
         if (voucher > 2000) {
-          const existingReq = Array.isArray((merged as any).requiredApprovals)
-            ? ((merged as any).requiredApprovals as string[])
+          const existingReq = Array.isArray(merged.requiredApprovals)
+            ? (merged.requiredApprovals as string[])
             : [];
           if (!existingReq.includes(AppRole.FINANCE_HOD)) {
-            (safeExtra as any).requiredApprovals = [...existingReq, AppRole.FINANCE_HOD];
-            (merged as any).requiredApprovals = (safeExtra as any).requiredApprovals;
+            (safeExtra as any).requiredApprovals = [
+              ...existingReq,
+              AppRole.FINANCE_HOD,
+            ];
+            merged.requiredApprovals = (safeExtra as any).requiredApprovals;
           }
         }
       }
@@ -778,10 +837,31 @@ export class SuggestionsService {
         current.status === AppStatus.VERIFIED_PENDING_APPROVAL &&
         dto.status === AppStatus.BE_EVALUATION_PENDING
       ) {
-        const after = { ...(current as any), ...(safeExtra as any) };
+        const after = { ...current, ...(safeExtra as any) };
         if (!this.approvalsComplete(after)) {
           throw new BadRequestException(
             'All required approvals must be completed before BE Head evaluation.',
+          );
+        }
+      }
+
+      // --- Guard: only move to HR reward processing after approvals + BE evaluation exist ---
+      // This supports the voucher>2000 route:
+      // BE Head saves evaluation -> VERIFIED_PENDING_APPROVAL (Finance approval) -> REWARD_PENDING (HR)
+      if (
+        current.status === AppStatus.VERIFIED_PENDING_APPROVAL &&
+        dto.status === AppStatus.REWARD_PENDING
+      ) {
+        const after = { ...current, ...(safeExtra as any) };
+        if (!this.approvalsComplete(after)) {
+          throw new BadRequestException(
+            'All required approvals must be completed before reward processing.',
+          );
+        }
+        const voucher = Number(after?.rewardEvaluation?.voucherValue ?? 0);
+        if (!(voucher > 0)) {
+          throw new BadRequestException(
+            'Reward evaluation must be completed before reward processing.',
           );
         }
       }
@@ -802,12 +882,18 @@ export class SuggestionsService {
         (safeExtra as any).assignedImplementerCode
       ) {
         try {
-          const employeeCode = String((safeExtra as any).assignedImplementerCode);
+          const employeeCode = String(
+            (safeExtra as any).assignedImplementerCode,
+          );
           const user = await tx.user.findUnique({ where: { employeeCode } });
           if (user) {
-            const isSuperAdmin = (await tx.userRoleMapping.count({
-              where: { userId: user.id, role: { code: RoleCode.SUPER_ADMIN } },
-            })) > 0;
+            const isSuperAdmin =
+              (await tx.userRoleMapping.count({
+                where: {
+                  userId: user.id,
+                  role: { code: RoleCode.SUPER_ADMIN },
+                },
+              })) > 0;
             if (isSuperAdmin) {
               // SUPER_ADMIN must not get additional roles.
               // Skip role auto-grant.
@@ -868,14 +954,14 @@ export class SuggestionsService {
           update: {
             ideaCode: (updated as any).code,
             implementedCode,
-            dataSnapshot: { ...(updated as any), ...(rawExtra as any) } as any,
+            dataSnapshot: { ...(updated as any), ...(rawExtra as any) },
             implementedAt: new Date(),
           },
           create: {
             suggestionId: updated.id,
             ideaCode: (updated as any).code,
             implementedCode,
-            dataSnapshot: { ...(updated as any), ...(rawExtra as any) } as any,
+            dataSnapshot: { ...(updated as any), ...(rawExtra as any) },
           },
         });
       }
@@ -964,6 +1050,7 @@ export class SuggestionsService {
       'rewardEvaluation',
       'beReviewNotes',
       'beEditedFields',
+      'extraSlides',
       'ideaAttachmentsFolder',
       'ideaAttachmentPaths',
       'templateAttachmentsFolder',
@@ -973,7 +1060,9 @@ export class SuggestionsService {
     ]);
 
     safeExtra = Object.fromEntries(
-      Object.entries(safeExtra).filter(([k]) => ALLOWED_SUGGESTION_FIELDS.has(k)),
+      Object.entries(safeExtra).filter(([k]) =>
+        ALLOWED_SUGGESTION_FIELDS.has(k),
+      ),
     );
 
     const touchesWork =
@@ -984,7 +1073,9 @@ export class SuggestionsService {
     if (touchesWork) {
       const assignee = (current.assignedImplementer || '').trim().toLowerCase();
       const actorName = (actor.name || '').trim().toLowerCase();
-      const assigneeCode = (current.assignedImplementerCode || '').trim().toLowerCase();
+      const assigneeCode = (current.assignedImplementerCode || '')
+        .trim()
+        .toLowerCase();
       const actorCode = (actor.employeeCode || '').trim().toLowerCase();
       let isAssignedImplementer = false;
       if (actor.role === AppRole.IMPLEMENTER) {
@@ -1045,8 +1136,9 @@ export class SuggestionsService {
       // Own ideas remain visible under the Employee role view.
       const isOwn =
         currentUserName &&
-        String(suggestion.employeeName || '').trim().toLowerCase() ===
-          currentUserName.trim().toLowerCase();
+        String(suggestion.employeeName || '')
+          .trim()
+          .toLowerCase() === currentUserName.trim().toLowerCase();
       if (isOwn) return false;
       // Include every in-flight status so assigned / verified / evaluation stages stay visible after screening approval.
       return [
@@ -1068,7 +1160,9 @@ export class SuggestionsService {
         .trim()
         .toLowerCase();
       const myCode = (currentUserEmployeeCode || '').trim().toLowerCase();
-      const sugName = (suggestion.assignedImplementer || '').trim().toLowerCase();
+      const sugName = (suggestion.assignedImplementer || '')
+        .trim()
+        .toLowerCase();
       const myName = (currentUserName || '').trim().toLowerCase();
       const isAssignedToMe = (() => {
         if (myCode && sugCode) return sugCode === myCode;
@@ -1080,6 +1174,7 @@ export class SuggestionsService {
         isAssignedToMe &&
         [
           AppStatus.ASSIGNED_FOR_IMPLEMENTATION,
+          AppStatus.IMPLEMENTATION_DONE,
           AppStatus.BE_REVIEW_DONE,
           AppStatus.BE_EVALUATION_PENDING,
           AppStatus.VERIFIED_PENDING_APPROVAL,
@@ -1088,8 +1183,7 @@ export class SuggestionsService {
         ].includes(suggestion.status)
       );
     }
-    if (role === AppRole.BUSINESS_EXCELLENCE)
-      return true;
+    if (role === AppRole.BUSINESS_EXCELLENCE) return true;
     if (role === AppRole.BUSINESS_EXCELLENCE_HEAD)
       return [
         AppStatus.BE_EVALUATION_PENDING,
@@ -1141,10 +1235,8 @@ export class SuggestionsService {
         AppRole.ADMIN,
       ],
       // Send-back paths ("Not approved" -> previous stage)
-      [`${AppStatus.IMPLEMENTATION_DONE}->${AppStatus.ASSIGNED_FOR_IMPLEMENTATION}`]: [
-        AppRole.BUSINESS_EXCELLENCE,
-        AppRole.ADMIN,
-      ],
+      [`${AppStatus.IMPLEMENTATION_DONE}->${AppStatus.ASSIGNED_FOR_IMPLEMENTATION}`]:
+        [AppRole.BUSINESS_EXCELLENCE, AppRole.ADMIN],
       [`${AppStatus.BE_REVIEW_DONE}->${AppStatus.IMPLEMENTATION_DONE}`]: [
         AppRole.UNIT_COORDINATOR,
         AppRole.IMPLEMENTER,
@@ -1165,11 +1257,24 @@ export class SuggestionsService {
       ],
       // After approvals are completed, move to BE Head evaluation
       [`${AppStatus.VERIFIED_PENDING_APPROVAL}->${AppStatus.BE_EVALUATION_PENDING}`]:
-        [AppRole.UNIT_COORDINATOR, AppRole.ADMIN, AppRole.FINANCE_HOD, AppRole.QUALITY_HOD, AppRole.HR_HEAD],
-      [`${AppStatus.BE_EVALUATION_PENDING}->${AppStatus.VERIFIED_PENDING_APPROVAL}`]: [
-        AppRole.BUSINESS_EXCELLENCE_HEAD,
+        [
+          AppRole.UNIT_COORDINATOR,
+          AppRole.ADMIN,
+          AppRole.FINANCE_HOD,
+          AppRole.QUALITY_HOD,
+          AppRole.HR_HEAD,
+        ],
+      // If BE evaluation already exists and additional approvals (e.g., Finance) were required,
+      // allow routing directly to HR reward processing without looping back to BE Head.
+      [`${AppStatus.VERIFIED_PENDING_APPROVAL}->${AppStatus.REWARD_PENDING}`]: [
+        AppRole.UNIT_COORDINATOR,
         AppRole.ADMIN,
+        AppRole.FINANCE_HOD,
+        AppRole.QUALITY_HOD,
+        AppRole.HR_HEAD,
       ],
+      [`${AppStatus.BE_EVALUATION_PENDING}->${AppStatus.VERIFIED_PENDING_APPROVAL}`]:
+        [AppRole.BUSINESS_EXCELLENCE_HEAD, AppRole.ADMIN],
       [`${AppStatus.BE_EVALUATION_PENDING}->${AppStatus.REWARD_PENDING}`]: [
         AppRole.BUSINESS_EXCELLENCE_HEAD,
         AppRole.ADMIN,
