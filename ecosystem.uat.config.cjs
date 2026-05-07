@@ -18,7 +18,7 @@ module.exports = {
   apps: [
     {
       name: 'kaizen-uat-backend',
-      script: 'dist/src/main.js',
+      script: 'dist/main.js',
       cwd: `${__dirname}/backend`,
       instances: 1,
       exec_mode: 'fork',
