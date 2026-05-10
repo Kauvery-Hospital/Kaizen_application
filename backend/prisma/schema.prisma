@@ -116,6 +116,8 @@ model Suggestion {
   dateSubmitted              String   @map("date_submitted") @db.VarChar(20)
   employeeName               String   @map("employee_name") @db.VarChar(120)
   description                String
+  /// Clinical/Supportive categorization for reporting (from Kaizen template / implementer submission).
+  category                   String?  @db.VarChar(20)
   status                     String   @db.VarChar(80)
   /// Primary workflow role that owns the next action (denormalized for filtering; mirrors AppRole display strings).
   currentStageRole           String   @map("current_stage_role") @db.VarChar(80)

@@ -70,9 +70,7 @@ const filterByRole = (
   }
 
   if (role === Role.BUSINESS_EXCELLENCE_HEAD) {
-    return [Status.BE_EVALUATION_PENDING, Status.REWARD_PENDING, Status.REWARDED].includes(
-      s.status
-    );
+    return true;
   }
 
   if (role === Role.HR_HEAD) {
@@ -186,7 +184,7 @@ export const PipelineView: React.FC<PipelineViewProps> = ({
           if (!search.trim()) return true;
           const q = search.toLowerCase();
           return (
-            s.theme.toLowerCase().includes(q) ||
+            (s.theme || '').toLowerCase().includes(q) ||
             s.description.toLowerCase().includes(q) ||
             s.employeeName.toLowerCase().includes(q)
           );

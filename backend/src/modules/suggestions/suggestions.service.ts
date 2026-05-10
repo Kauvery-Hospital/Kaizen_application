@@ -177,6 +177,7 @@ export class SuggestionsService {
       dateSubmitted: new Date().toISOString().split('T')[0],
       employeeName,
       description: (dto.description ?? payload.description ?? '') as string,
+      category: (payload.category ?? undefined) as string | undefined,
       status: AppStatus.IDEA_SUBMITTED,
       expectedBenefits: expectedBenefits as any,
       workflowThread: workflowThread as any,
@@ -715,6 +716,39 @@ export class SuggestionsService {
     const currentStageRole = this.deriveCurrentStageRole(dto.status, merged);
 
     return this.prisma.$transaction(async (tx) => {
+      // --- Unit Coordinator: mandatory idea heading (theme) at screening & after BE review ---
+      if (dto.actor.role === AppRole.UNIT_COORDINATOR) {
+        if (
+          current.status === AppStatus.IDEA_SUBMITTED &&
+          (dto.status === AppStatus.APPROVED_FOR_ASSIGNMENT ||
+            dto.status === AppStatus.IDEA_REJECTED)
+        ) {
+          const heading = String((safeExtra as any).theme ?? '').trim();
+          if (!heading) {
+            throw new BadRequestException('Idea heading is required for this decision.');
+          }
+          const cat = this.normalizeClinicalSupportiveCategory(
+            (safeExtra as any).category ?? current.category,
+          );
+          if (!cat) {
+            throw new BadRequestException(
+              'Clinical or Supportive category is required at Unit Coordinator screening.',
+            );
+          }
+          (safeExtra as any).category = cat;
+        }
+        if (
+          current.status === AppStatus.BE_REVIEW_DONE &&
+          (dto.status === AppStatus.VERIFIED_PENDING_APPROVAL ||
+            dto.status === AppStatus.IMPLEMENTATION_DONE)
+        ) {
+          const heading = String((safeExtra as any).theme ?? '').trim();
+          if (!heading) {
+            throw new BadRequestException('Idea heading is required for this decision.');
+          }
+        }
+      }
+
       // --- Mandatory remarks on rejection paths ---
       // 1) Unit Coordinator reject at idea screening
       if (dto.status === AppStatus.IDEA_REJECTED) {
@@ -945,6 +979,7 @@ export class SuggestionsService {
     // Only allow fields that exist on `Suggestion` (prevents Prisma validation errors
     // and avoids callers injecting immutable/system fields).
     const ALLOWED_SUGGESTION_FIELDS = new Set<string>([
+      'theme',
       'assignedImplementer',
       'assignedImplementerCode',
       'assignedUnit',
@@ -964,6 +999,7 @@ export class SuggestionsService {
       'rewardEvaluation',
       'beReviewNotes',
       'beEditedFields',
+      'category',
       'ideaAttachmentsFolder',
       'ideaAttachmentPaths',
       'templateAttachmentsFolder',
@@ -975,6 +1011,10 @@ export class SuggestionsService {
     safeExtra = Object.fromEntries(
       Object.entries(safeExtra).filter(([k]) => ALLOWED_SUGGESTION_FIELDS.has(k)),
     );
+
+    if (safeExtra.theme !== undefined) {
+      safeExtra.theme = String(safeExtra.theme).trim().slice(0, 255);
+    }
 
     const touchesWork =
       safeExtra.implementationProgress !== undefined ||
@@ -1023,7 +1063,25 @@ export class SuggestionsService {
       );
     }
 
+    if (safeExtra.category !== undefined) {
+      const n = this.normalizeClinicalSupportiveCategory(safeExtra.category);
+      if (n) safeExtra.category = n;
+      else delete safeExtra.category;
+    }
+
     return safeExtra;
+  }
+
+  /** Clinical / Supportive labels stored on `Suggestion.category` (reporting). */
+  private normalizeClinicalSupportiveCategory(
+    raw: unknown,
+  ): 'Clinical' | 'Supportive' | null {
+    const s = String(raw ?? '')
+      .trim()
+      .toLowerCase();
+    if (s === 'clinical') return 'Clinical';
+    if (s === 'supportive') return 'Supportive';
+    return null;
   }
 
   private filterByRole(
@@ -1041,13 +1099,7 @@ export class SuggestionsService {
       );
     }
     if (role === AppRole.UNIT_COORDINATOR) {
-      // Coordinator view should focus on approval/workflow actions (not the coordinator's own submissions).
-      // Own ideas remain visible under the Employee role view.
-      const isOwn =
-        currentUserName &&
-        String(suggestion.employeeName || '').trim().toLowerCase() ===
-          currentUserName.trim().toLowerCase();
-      if (isOwn) return false;
+      // Include own submissions so a UC can screen mobile-synced ideas they originated (same user may be UC + submitter).
       // Include every in-flight status so assigned / verified / evaluation stages stay visible after screening approval.
       return [
         AppStatus.IDEA_SUBMITTED,
@@ -1091,11 +1143,7 @@ export class SuggestionsService {
     if (role === AppRole.BUSINESS_EXCELLENCE)
       return true;
     if (role === AppRole.BUSINESS_EXCELLENCE_HEAD)
-      return [
-        AppStatus.BE_EVALUATION_PENDING,
-        AppStatus.REWARD_PENDING,
-        AppStatus.REWARDED,
-      ].includes(suggestion.status);
+      return true;
     if (
       [AppRole.HR_HEAD, AppRole.QUALITY_HOD, AppRole.FINANCE_HOD].includes(role)
     ) {

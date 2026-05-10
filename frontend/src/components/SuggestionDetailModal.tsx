@@ -130,12 +130,23 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
   const [selectedDeptForHod, setSelectedDeptForHod] = useState('');
   const [selectedHodUserName, setSelectedHodUserName] = useState('');
   const [coordinatorSuggestion, setCoordinatorSuggestion] = useState('');
+  /** Required UC-entered title when approving/rejecting screening or routing after BE review. */
+  const [ucApprovalHeading, setUcApprovalHeading] = useState('');
+  /** Clinical / Supportive — mandatory at UC idea screening; persisted on `suggestion.category`. */
+  const [ucScreeningCategory, setUcScreeningCategory] = useState<
+    'Clinical' | 'Supportive' | ''
+  >('');
 
   const effectiveRoles = userRoles?.length ? userRoles : [role];
 
   useEffect(() => {
     if (suggestion && isOpen) {
       setNotes(suggestion.screeningNotes || '');
+      setUcApprovalHeading(String(suggestion.theme || '').trim());
+      const c = suggestion.category;
+      setUcScreeningCategory(
+        c === 'Clinical' || c === 'Supportive' ? c : '',
+      );
       setAiAnalysis(null);
       setActiveTab(initialView === 'tracking' ? 'review' : 'overview');
       setCommentDraft('');
@@ -203,6 +214,10 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
 
   if (!isOpen || !suggestion) return null;
 
+  const displayHeading =
+    String(suggestion.theme || '').trim() ||
+    `${suggestion.code || suggestion.id}`;
+
   // implementerOptions is rendered directly in the select
 
   const handleAnalyze = async () => {
@@ -215,7 +230,7 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
       const result = await analyzeSuggestion(
         apiBase,
         () => ({ Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' }),
-        suggestion.theme,
+        displayHeading,
         context,
       );
       setAiAnalysis(result);
@@ -229,6 +244,15 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
   // 1. Coordinator: Approve Idea -> Send to Committee
   const handleIdeaApproval = async (approved: boolean) => {
     try {
+      const heading = String(ucApprovalHeading || '').trim().slice(0, 255);
+      if (!heading) {
+        showToast('error', 'Idea heading is required.');
+        return;
+      }
+      if (ucScreeningCategory !== 'Clinical' && ucScreeningCategory !== 'Supportive') {
+        showToast('error', 'Select Clinical or Supportive category.');
+        return;
+      }
       if (!approved && !String(notes || '').trim()) {
         showToast('error', 'Remarks are required to reject.');
         return;
@@ -236,7 +260,11 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
       await onUpdateStatus(
         suggestion.id,
         approved ? Status.APPROVED_FOR_ASSIGNMENT : Status.IDEA_REJECTED,
-        { screeningNotes: notes },
+        {
+          theme: heading,
+          screeningNotes: notes,
+          category: ucScreeningCategory,
+        },
       );
       showToast('success', approved ? 'Idea approved' : 'Idea rejected');
       if (!approved) onClose();
@@ -443,6 +471,11 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
 
   // 4. Coordinator: Verify and Select Approvers
   const handleVerification = () => {
+      const heading = String(ucApprovalHeading || '').trim().slice(0, 255);
+      if (!heading) {
+        showToast('error', 'Idea heading is required.');
+        return;
+      }
       if (selectedApprovers.length === 0) {
         showToast(
           'error',
@@ -451,6 +484,7 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
         return;
       }
       onUpdateStatus(suggestion.id, Status.VERIFIED_PENDING_APPROVAL, {
+        theme: heading,
         coordinatorSuggestion,
         approvals: {},
         requiredApprovals: selectedApprovers,
@@ -497,6 +531,11 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
   };
 
   const handleCoordinatorNotApproved = async () => {
+    const heading = String(ucApprovalHeading || '').trim().slice(0, 255);
+    if (!heading) {
+      showToast('error', 'Idea heading is required.');
+      return;
+    }
     const remark = String(coordinatorSuggestion || '').trim();
     if (!remark) {
       showToast('error', 'Remarks are required for Not approved.');
@@ -504,6 +543,7 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
     }
     try {
       await onUpdateStatus(suggestion.id, Status.IMPLEMENTATION_DONE, {
+        theme: heading,
         coordinatorSuggestion: remark,
       });
       showToast('success', 'Sent back to BE review');
@@ -1161,7 +1201,7 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
                     </span>
                     <span className={`text-xs px-2 py-0.5 rounded-full font-bold ${STATUS_COLORS[suggestion.status]}`}>{suggestion.status}</span>
                 </div>
-                <h2 className="text-xl font-extrabold text-gray-900 leading-tight mt-2">{suggestion.theme}</h2>
+                <h2 className="text-xl font-extrabold text-gray-900 leading-tight mt-2">{displayHeading}</h2>
                 <p className="text-sm text-gray-700 mt-1 font-medium">Submitted by <span className="font-extrabold text-gray-900">{suggestion.employeeName}</span> ({suggestion.department})</p>
             </div>
             <button onClick={onClose} className="text-gray-500 hover:text-gray-800 p-2 hover:bg-gray-100 rounded-full transition-colors border border-transparent hover:border-gray-200">
@@ -1383,7 +1423,7 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
                         <div className="text-xs uppercase tracking-wide text-gray-500 font-extrabold">
                           Idea summary
                         </div>
-                        <div className="text-lg font-black text-gray-900 mt-1">{suggestion.theme}</div>
+                        <div className="text-lg font-black text-gray-900 mt-1">{displayHeading}</div>
                         <div className="text-sm text-gray-600 font-semibold mt-1">
                           Originator: <span className="text-gray-900 font-extrabold">{suggestion.employeeName}</span>
                           {suggestion.department ? ` (${suggestion.department})` : ''}
@@ -1759,11 +1799,53 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
                   <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
                     <h4 className="text-sm font-black text-gray-900 mb-2">Idea Screening</h4>
                     <p className="text-xs text-gray-600 mb-3 font-semibold">Review the submitted idea and record your decision.</p>
+                    <label className="text-xs font-extrabold text-gray-700 block mb-1">
+                      Idea heading <span className="text-red-600 font-black">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={ucApprovalHeading}
+                      onChange={(e) => setUcApprovalHeading(e.target.value)}
+                      maxLength={255}
+                      placeholder="Short title for this idea (stored as the Kaizen heading)"
+                      className="w-full border border-gray-300 bg-white rounded-lg px-3 py-2 text-sm mb-3 focus:ring-2 focus:ring-kauvery-purple outline-none text-gray-900 font-medium"
+                    />
+                    <label className="text-xs font-extrabold text-gray-700 block mb-1">
+                      Category <span className="text-red-600 font-black">*</span>
+                    </label>
+                    <p className="text-[11px] text-gray-500 mb-2 font-semibold">
+                      Stored on the suggestion record for reporting (Clinical vs Supportive).
+                    </p>
+                    <div className="flex flex-wrap gap-4 mb-3">
+                      <label className="inline-flex items-center gap-2 text-sm font-semibold text-gray-800 cursor-pointer">
+                        <input
+                          type="radio"
+                          name="ucScreeningCategory"
+                          checked={ucScreeningCategory === 'Clinical'}
+                          onChange={() => setUcScreeningCategory('Clinical')}
+                          className="text-kauvery-purple focus:ring-kauvery-purple"
+                        />
+                        Clinical
+                      </label>
+                      <label className="inline-flex items-center gap-2 text-sm font-semibold text-gray-800 cursor-pointer">
+                        <input
+                          type="radio"
+                          name="ucScreeningCategory"
+                          checked={ucScreeningCategory === 'Supportive'}
+                          onChange={() => setUcScreeningCategory('Supportive')}
+                          className="text-kauvery-purple focus:ring-kauvery-purple"
+                        />
+                        Supportive
+                      </label>
+                    </div>
+                    <label className="text-xs font-extrabold text-gray-700 block mb-1">
+                      Validation notes <span className="text-gray-500 font-semibold">(required when rejecting)</span>
+                    </label>
                     <textarea
                       value={notes}
                       onChange={(e) => setNotes(e.target.value)}
                       className="w-full border border-gray-300 bg-white rounded-lg p-3 text-sm mb-3 focus:ring-2 focus:ring-kauvery-purple outline-none text-gray-900 font-medium"
-                      placeholder="Validation notes..."
+                      placeholder="Notes for approval; remarks required if you reject…"
                       rows={2}
                     />
                     <div className="flex gap-2">
@@ -2065,6 +2147,21 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
 
                     <div className="mb-4">
                       <label className="text-xs font-extrabold text-gray-700 block mb-1">
+                        Idea heading <span className="text-red-600 font-black">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={ucApprovalHeading}
+                        onChange={(e) => setUcApprovalHeading(e.target.value)}
+                        maxLength={255}
+                        placeholder="Confirm or edit the Kaizen heading before routing"
+                        className="w-full border border-gray-300 bg-white rounded-lg px-3 py-2 text-sm mb-1 focus:ring-2 focus:ring-kauvery-purple outline-none text-gray-900 font-medium"
+                      />
+                      <p className="text-[11px] text-gray-500 mb-3">Stored on the idea record with your decision.</p>
+                    </div>
+
+                    <div className="mb-4">
+                      <label className="text-xs font-extrabold text-gray-700 block mb-1">
                         Heads to approve <span className="text-red-600 font-black">*</span>
                       </label>
                       <p className="text-[11px] text-gray-500 mb-2">
@@ -2324,7 +2421,7 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
                         Submitted Template
                       </div>
                       <div className="text-lg font-black text-gray-900 mt-1">
-                        {suggestion.code || suggestion.id} — {suggestion.theme}
+                        {suggestion.code || suggestion.id} — {displayHeading}
                       </div>
                       <div className="text-sm text-gray-600 font-semibold mt-1">
                         {hasSubmittedTemplate ? 'Template is available.' : 'Template not submitted yet.'}

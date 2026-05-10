@@ -56,11 +56,7 @@ const filterSuggestionsForRole = (role: Role, suggestion: Suggestion, currentUse
   }
 
   if (role === Role.BUSINESS_EXCELLENCE_HEAD) {
-    return [
-      Status.BE_EVALUATION_PENDING,
-      Status.REWARD_PENDING,
-      Status.REWARDED,
-    ].includes(suggestion.status);
+    return true;
   }
 
   if (role === Role.HR_HEAD) {

@@ -41,6 +41,13 @@ export class UsersController {
     return this.usersService.getEmployeeHrms(employeeId);
   }
 
+  /** Totals for admin screens (paginated list uses separate calls). */
+  @Get('summary')
+  @RequireTokenRoles('ADMIN', 'SUPER_ADMIN')
+  usersSummary() {
+    return this.usersService.usersSummary();
+  }
+
   @Get()
   @RequireTokenRoles('ADMIN', 'SUPER_ADMIN')
   list(@Query() query: ListUsersQueryDto) {
@@ -48,11 +55,21 @@ export class UsersController {
       String(query.includeUnitScopes ?? '')
         .trim()
         .toLowerCase() === 'true';
-    return this.usersService.listEmployees(
-      query.search,
-      query.department,
+    const isActive =
+      query.isActive === 'true'
+        ? true
+        : query.isActive === 'false'
+          ? false
+          : undefined;
+    return this.usersService.listEmployees({
+      search: query.search,
+      department: query.department,
       includeUnitScopes,
-    );
+      skip: query.skip ?? 0,
+      take: query.take ?? 50,
+      roleCode: query.role?.trim() || undefined,
+      isActive,
+    });
   }
 
   @Post(':userId/roles')

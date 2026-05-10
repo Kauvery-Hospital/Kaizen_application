@@ -10,6 +10,7 @@ import { NotificationsButton } from './components/NotificationsButton';
 import { PipelineView } from './screens/PipelineView';
 import { UserManagement } from './screens/UserManagement';
 import { BeOverview } from './screens/BeOverview';
+import { Reports } from './screens/Reports';
 import { RoleListView } from './screens/RoleListView';
 import { HodApprovalDesk } from './screens/HodApprovalDesk';
 import { Role, Suggestion, Status, ViewType, User } from './types';
@@ -72,14 +73,8 @@ const getRoleScopedSuggestions = (
     });
   }
 
-  if (role === Role.BUSINESS_EXCELLENCE) {
+  if (role === Role.BUSINESS_EXCELLENCE || role === Role.BUSINESS_EXCELLENCE_HEAD) {
     return allSuggestions;
-  }
-
-  if (role === Role.BUSINESS_EXCELLENCE_HEAD) {
-    return allSuggestions.filter(s =>
-      [Status.BE_EVALUATION_PENDING, Status.REWARD_PENDING, Status.REWARDED].includes(s.status)
-    );
   }
 
   if (role === Role.HR_HEAD) {
@@ -229,30 +224,27 @@ const App: React.FC = () => {
     currentUser?.employeeCode,
   );
 
-  useEffect(() => {
+  const refreshSuggestions = useCallback(async () => {
     if (!currentUser) return;
-
     const query = new URLSearchParams({
       role: currentUser.role,
       currentUserName: currentUser.name,
     });
-
-    fetch(`${apiBase}/suggestions?${query.toString()}`, {
-      headers: authHeaders(),
-    })
-      .then(async (res) => {
-        if (!res.ok) {
-          throw new Error(await res.text());
-        }
-        return res.json();
-      })
-      .then((items: Suggestion[]) => {
-        setSuggestions(Array.isArray(items) ? items : []);
-      })
-      .catch((err) => {
-        console.error('Failed to load suggestions', err);
+    try {
+      const res = await fetch(`${apiBase}/suggestions?${query.toString()}`, {
+        headers: authHeaders(),
       });
+      if (!res.ok) throw new Error(await res.text());
+      const items = (await res.json()) as Suggestion[];
+      setSuggestions(Array.isArray(items) ? items : []);
+    } catch (err) {
+      console.error('Failed to load suggestions', err);
+    }
   }, [apiBase, authHeaders, currentUser]);
+
+  useEffect(() => {
+    void refreshSuggestions();
+  }, [refreshSuggestions]);
 
   const handleCreateSuggestion = async (
     data: Partial<Suggestion>,
@@ -355,6 +347,7 @@ const App: React.FC = () => {
               suggestions={roleScopedSuggestions}
               role={currentRole}
               userName={currentUser?.name}
+              onNavigateToReports={() => setCurrentView('reports')}
             />
           </div>
         );
@@ -397,6 +390,19 @@ const App: React.FC = () => {
               setSelectedSuggestion(s);
               setIsDetailModalOpen(true);
             }}
+          />
+        </div>
+      );
+    }
+    if (currentView === 'reports') {
+      return (
+        <div className="animate-fade-in">
+          <Reports
+            apiBase={apiBase}
+            accessToken={currentUser.accessToken}
+            role={currentRole}
+            unitOptions={unitOptions.map((u) => ({ code: u.code, name: u.name }))}
+            departmentOptions={departmentOptions.map((d) => ({ name: d.name }))}
           />
         </div>
       );
@@ -450,7 +456,11 @@ const App: React.FC = () => {
 
     if (currentView === 'users') {
       return (
-        <UserManagement apiBase={apiBase} authHeaders={authHeaders} />
+        <UserManagement
+          apiBase={apiBase}
+          authHeaders={authHeaders}
+          onAfterMobileSuggestionSync={refreshSuggestions}
+        />
       );
     }
 
@@ -539,7 +549,12 @@ const App: React.FC = () => {
     // Default Dashboard for all roles (role-scoped graphs)
     return (
       <div className="animate-fade-in">
-        <Dashboard suggestions={roleScopedSuggestions} role={currentRole} userName={currentUser?.name} />
+        <Dashboard
+          suggestions={roleScopedSuggestions}
+          role={currentRole}
+          userName={currentUser?.name}
+          onNavigateToReports={() => setCurrentView('reports')}
+        />
       </div>
     );
   };

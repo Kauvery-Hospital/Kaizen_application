@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Cron } from '@nestjs/schedule';
-import { Prisma, RoleCode, SyncStatus } from '@prisma/client';
+import { RoleCode, SyncStatus } from '@prisma/client';
 import { Pool } from 'pg';
 import { PrismaService } from '../../database/prisma.service';
 
@@ -74,6 +74,16 @@ export class HrmsSyncService {
     let updatedCount = 0;
 
     try {
+      const defaultRole = await this.prisma.role.upsert({
+        where: { code: RoleCode.EMPLOYEE },
+        update: {},
+        create: {
+          code: RoleCode.EMPLOYEE,
+          name: DEFAULT_ROLE,
+          description: 'Default role for synced employees',
+        },
+      });
+
       for (const employee of employees) {
         const fullName = `${employee.firstName} ${employee.lastName}`.trim();
         const safeEmail = await this.resolveUniqueEmail(
@@ -145,60 +155,57 @@ export class HrmsSyncService {
 
         const existingUser = await this.prisma.user.findUnique({
           where: { employeeCode: employee.employeeId },
+          select: { id: true, password: true },
+        });
+
+        const user = await this.prisma.user.upsert({
+          where: { employeeCode: employee.employeeId },
+          create: {
+            employeeCode: employee.employeeId,
+            email: safeEmail,
+            name: fullName,
+            password: employee.password ?? null,
+            department: employee.department ?? null,
+            designation: employee.jobtitle ?? null,
+            isActive: employee.isActive ?? true,
+          },
+          update: {
+            email: safeEmail,
+            name: fullName,
+            department: employee.department ?? null,
+            designation: employee.jobtitle ?? null,
+            isActive: employee.isActive ?? true,
+            ...(existingUser
+              ? {
+                  password:
+                    employee.password ?? existingUser.password ?? null,
+                }
+              : employee.password != null
+                ? { password: employee.password }
+                : {}),
+          },
         });
 
         if (existingUser) {
-          await this.prisma.user.update({
-            where: { id: existingUser.id },
-            data: {
-              email: safeEmail,
-              name: fullName,
-              password: employee.password ?? existingUser.password ?? null,
-              department: employee.department ?? null,
-              designation: employee.jobtitle ?? null,
-              isActive: employee.isActive ?? true,
-            },
-          });
           updatedCount += 1;
         } else {
-          const createdUser = await this.prisma.user.create({
-            data: {
-              employeeCode: employee.employeeId,
-              email: safeEmail,
-              name: fullName,
-              password: employee.password ?? null,
-              department: employee.department ?? null,
-              designation: employee.jobtitle ?? null,
-              isActive: employee.isActive ?? true,
-            },
-          });
           insertedCount += 1;
-
-          const defaultRole = await this.prisma.role.upsert({
-            where: { code: RoleCode.EMPLOYEE },
-            update: {},
-            create: {
-              code: RoleCode.EMPLOYEE,
-              name: DEFAULT_ROLE,
-              description: 'Default role for synced employees',
-            },
-          });
-
-          await this.prisma.userRoleMapping.upsert({
-            where: {
-              userId_roleId: {
-                userId: createdUser.id,
-                roleId: defaultRole.id,
-              },
-            },
-            update: {},
-            create: {
-              userId: createdUser.id,
-              roleId: defaultRole.id,
-              assignedBy: 'HRMS_SYNC',
-            },
-          });
         }
+
+        await this.prisma.userRoleMapping.upsert({
+          where: {
+            userId_roleId: {
+              userId: user.id,
+              roleId: defaultRole.id,
+            },
+          },
+          update: {},
+          create: {
+            userId: user.id,
+            roleId: defaultRole.id,
+            assignedBy: 'HRMS_SYNC',
+          },
+        });
       }
 
       await this.prisma.hrmsSyncLog.update({

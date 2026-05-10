@@ -102,6 +102,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
         currentRole === Role.BUSINESS_EXCELLENCE_HEAD
           ? [{ id: 'be-overview', label: 'BE reports', icon: 'assessment' }]
           : []),
+        ...(currentRole === Role.BUSINESS_EXCELLENCE ||
+        currentRole === Role.BUSINESS_EXCELLENCE_HEAD ||
+        currentRole === Role.UNIT_COORDINATOR
+          ? [{ id: 'reports', label: 'Reports', icon: 'table_view' }]
+          : []),
         { id: 'list', label: 'All Suggestions', icon: 'format_list_bulleted' },
         ...(currentRole === Role.ADMIN || currentRole === Role.SUPER_ADMIN
           ? [

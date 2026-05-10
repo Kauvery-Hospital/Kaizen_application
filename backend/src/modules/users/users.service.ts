@@ -23,6 +23,14 @@ export class UsersService {
     return count > 0;
   }
 
+  async usersSummary() {
+    const [total, active] = await Promise.all([
+      this.prisma.user.count(),
+      this.prisma.user.count({ where: { isActive: true } }),
+    ]);
+    return { totalUsers: total, activeUsers: active };
+  }
+
   async getEmployeeHrms(employeeIdRaw: string) {
     const employeeId = employeeIdRaw?.trim();
     if (!employeeId) return null;
@@ -138,38 +146,65 @@ export class UsersService {
     }));
   }
 
-  async listEmployees(
-    search?: string,
-    department?: string,
-    includeUnitScopes = false,
-  ) {
-    const q = search?.trim();
-    const dept = department?.trim();
-    const users = await this.prisma.user.findMany({
-      where: {
-        ...(dept
-          ? { department: { equals: dept, mode: 'insensitive' } }
-          : {}),
-        ...(q
-          ? {
-              OR: [
-                { employeeCode: { contains: q, mode: 'insensitive' } },
-                { name: { contains: q, mode: 'insensitive' } },
-                { email: { contains: q, mode: 'insensitive' } },
-                { department: { contains: q, mode: 'insensitive' } },
-              ],
-            }
-          : {}),
-      },
-      include: {
-        roles: {
-          include: {
-            role: true,
+  async listEmployees(args: {
+    search?: string;
+    department?: string;
+    includeUnitScopes?: boolean;
+    skip?: number;
+    take?: number;
+    roleCode?: string;
+    isActive?: boolean;
+  }) {
+    const includeUnitScopes = Boolean(args.includeUnitScopes);
+    const skip = Math.max(0, args.skip ?? 0);
+    const take = Math.min(200, Math.max(1, args.take ?? 50));
+    const q = args.search?.trim();
+    const dept = args.department?.trim();
+    const roleCodeRaw = args.roleCode?.trim();
+    let roleFilter: RoleCode | undefined;
+    if (roleCodeRaw) {
+      const rc = roleCodeRaw.toUpperCase();
+      if ((Object.values(RoleCode) as string[]).includes(rc)) {
+        roleFilter = rc as RoleCode;
+      }
+    }
+
+    const where: Prisma.UserWhereInput = {
+      ...(dept
+        ? { department: { equals: dept, mode: 'insensitive' } }
+        : {}),
+      ...(typeof args.isActive === 'boolean' ? { isActive: args.isActive } : {}),
+      ...(roleFilter
+        ? { roles: { some: { role: { code: roleFilter } } } }
+        : {}),
+      ...(q
+        ? {
+            OR: [
+              { employeeCode: { contains: q, mode: 'insensitive' } },
+              { name: { contains: q, mode: 'insensitive' } },
+              { email: { contains: q, mode: 'insensitive' } },
+              { department: { contains: q, mode: 'insensitive' } },
+            ],
+          }
+        : {}),
+    };
+
+    const [users, total] = await Promise.all([
+      this.prisma.user.findMany({
+        where,
+        skip,
+        take,
+        include: {
+          roles: {
+            include: {
+              role: true,
+            },
           },
         },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
+        orderBy: { name: 'asc' },
+      }),
+      this.prisma.user.count({ where }),
+    ]);
 
     const employeeCodes = users
       .map((u) => String(u.employeeCode || '').trim())
@@ -220,7 +255,7 @@ export class UsersService {
       });
     }
 
-    return users.map((u) => ({
+    const items = users.map((u) => ({
       id: u.id,
       employeeCode: u.employeeCode,
       name: u.name,
@@ -233,6 +268,8 @@ export class UsersService {
       lastLoginAt: u.lastLoginAt,
       roles: u.roles.map((r) => String(r.role.code)),
     }));
+
+    return { items, total, skip, take };
   }
 
   async assignRole(userId: string, dto: AssignRoleDto) {

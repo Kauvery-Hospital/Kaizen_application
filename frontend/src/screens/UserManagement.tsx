@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { USER_ROLE_FILTER_OPTIONS } from '../constants/adminUserRoles';
 
 type BackendRoleCode =
   | 'EMPLOYEE'
@@ -57,6 +58,20 @@ type UsersApiRow = {
   roles: string[];
 };
 
+type UsersListResponse = {
+  items: UsersApiRow[];
+  total: number;
+  skip: number;
+  take: number;
+};
+
+type UsersSummaryResponse = {
+  totalUsers: number;
+  activeUsers: number;
+};
+
+const PAGE_SIZES = [25, 50, 100] as const;
+
 function toneClasses(tone: 'purple' | 'slate' | 'amber' | 'emerald'): string {
   if (tone === 'purple') return 'bg-purple-50 text-purple-800 border-purple-200';
   if (tone === 'amber') return 'bg-amber-50 text-amber-800 border-amber-200';
@@ -88,12 +103,22 @@ async function messageFromFailedResponse(res: Response): Promise<string> {
 export const UserManagement: React.FC<{
   apiBase: string;
   authHeaders: () => Record<string, string>;
-}> = ({ apiBase, authHeaders }) => {
+  /** Refetch Kaizen suggestions in the shell after HRMS mobile ideas are imported */
+  onAfterMobileSuggestionSync?: () => void | Promise<void>;
+}> = ({ apiBase, authHeaders, onAfterMobileSuggestionSync }) => {
   const [query, setQuery] = useState('');
+  const [debouncedQuery, setDebouncedQuery] = useState('');
   const [department, setDepartment] = useState<string>('');
+  const [roleHasFilter, setRoleHasFilter] = useState<string>('all');
+  const [activeFilter, setActiveFilter] = useState<'all' | 'active' | 'inactive'>('all');
+  const [skip, setSkip] = useState(0);
+  const [pageSize, setPageSize] = useState<number>(50);
+
   const [departments, setDepartments] = useState<string[]>([]);
   const [units, setUnits] = useState<Array<{ code: string; name?: string }>>([]);
   const [rows, setRows] = useState<UsersApiRow[]>([]);
+  const [total, setTotal] = useState(0);
+  const [summary, setSummary] = useState<UsersSummaryResponse | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -112,25 +137,27 @@ export const UserManagement: React.FC<{
   const [isLoadingScopes, setIsLoadingScopes] = useState(false);
   const [isSavingScopes, setIsSavingScopes] = useState(false);
 
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    const dept = department.trim().toLowerCase();
-    const base = dept ? rows.filter((u) => String(u.department || '').toLowerCase() === dept) : rows;
-    if (!q) return base;
-    return base.filter((u) => {
-      const hay = [
-        u.employeeCode,
-        u.name,
-        u.email,
-        u.department || '',
-        u.designation || '',
-        (u.roles || []).join(','),
-      ]
-        .join(' ')
-        .toLowerCase();
-      return hay.includes(q);
-    });
-  }, [department, query, rows]);
+  useEffect(() => {
+    const t = window.setTimeout(() => setDebouncedQuery(query.trim()), 450);
+    return () => window.clearTimeout(t);
+  }, [query]);
+
+  useEffect(() => {
+    setSkip(0);
+  }, [debouncedQuery, department, roleHasFilter, activeFilter, pageSize]);
+
+  const loadSummary = useCallback(async () => {
+    try {
+      const res = await fetch(`${apiBase}/users/summary`, {
+        headers: authHeaders(),
+      });
+      if (!res.ok) return;
+      const data = (await res.json()) as UsersSummaryResponse;
+      setSummary(data);
+    } catch {
+      setSummary(null);
+    }
+  }, [apiBase, authHeaders]);
 
   const loadDepartments = async () => {
     try {
@@ -167,26 +194,47 @@ export const UserManagement: React.FC<{
     }
   };
 
-  const load = async () => {
+  const load = useCallback(async (): Promise<UsersApiRow[] | undefined> => {
     setIsLoading(true);
     setError(null);
     setNotice(null);
     try {
       const params = new URLSearchParams();
-      if (query.trim()) params.set('search', query.trim());
+      params.set('skip', String(skip));
+      params.set('take', String(pageSize));
+      if (debouncedQuery) params.set('search', debouncedQuery);
       if (department.trim()) params.set('department', department.trim());
+      if (roleHasFilter !== 'all') params.set('role', roleHasFilter);
+      if (activeFilter === 'active') params.set('isActive', 'true');
+      if (activeFilter === 'inactive') params.set('isActive', 'false');
+
       const res = await fetch(`${apiBase}/users?${params.toString()}`, {
         headers: authHeaders(),
       });
       if (!res.ok) throw new Error(await messageFromFailedResponse(res));
-      const data = (await res.json()) as UsersApiRow[];
-      setRows(Array.isArray(data) ? data : []);
+      const data = (await res.json()) as UsersListResponse;
+      const items = Array.isArray(data?.items) ? data.items : [];
+      setRows(items);
+      setTotal(typeof data?.total === 'number' ? data.total : items.length);
+      return items;
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load users.');
+      setRows([]);
+      setTotal(0);
+      return undefined;
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [
+    apiBase,
+    authHeaders,
+    skip,
+    pageSize,
+    debouncedQuery,
+    department,
+    roleHasFilter,
+    activeFilter,
+  ]);
 
   const runMobileIdeasSync = async () => {
     setIsSyncingMobile(true);
@@ -203,15 +251,30 @@ export const UserManagement: React.FC<{
         inserted?: number;
         updated?: number;
         skippedUnmappedEmployee?: number;
+        disabled?: boolean;
+        message?: string;
       };
       const scanned = Number(body?.scanned ?? 0);
       const inserted = Number(body?.inserted ?? 0);
       const updated = Number(body?.updated ?? 0);
       const skipped = Number(body?.skippedUnmappedEmployee ?? 0);
-      setNotice(
-        `Mobile sync done. Scanned: ${scanned}, Inserted: ${inserted}, Updated: ${updated}, Skipped (unmapped employee): ${skipped}.`,
-      );
+
+      if (body.disabled && body.message) {
+        setNotice(body.message);
+      } else {
+        let line = `Mobile sync done. Scanned: ${scanned}, Inserted: ${inserted}, Updated: ${updated}, Skipped (unmapped employee): ${skipped}.`;
+        if (scanned === 0 && inserted === 0 && updated === 0) {
+          line +=
+            ' No rows returned from hrms_suggestions (empty table, none active, or HRMS_DATABASE_URL points to an empty DB).';
+        } else {
+          line +=
+            ' Dashboard / Pipeline lists refresh automatically — switch there to see new ideas.';
+        }
+        setNotice(line);
+      }
+
       await load();
+      await onAfterMobileSuggestionSync?.();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Mobile sync failed.');
     } finally {
@@ -220,7 +283,14 @@ export const UserManagement: React.FC<{
   };
 
   useEffect(() => {
+    void loadSummary();
+  }, [loadSummary]);
+
+  useEffect(() => {
     void load();
+  }, [load]);
+
+  useEffect(() => {
     void loadDepartments();
     void loadUnits();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -324,9 +394,9 @@ export const UserManagement: React.FC<{
         },
       );
       if (!res.ok) throw new Error(await messageFromFailedResponse(res));
-      await load();
-      // Keep modal open; refresh active user snapshot from rows
-      const refreshed = rows.find((r) => r.id === activeUser.id) || null;
+      const freshRows = await load();
+      const refreshed =
+        (freshRows || []).find((r) => r.id === activeUser.id) || null;
       setActiveUser(refreshed);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to remove role.');
@@ -335,17 +405,74 @@ export const UserManagement: React.FC<{
     }
   };
 
+  const pageCount = Math.max(1, Math.ceil(total / pageSize));
+  const currentPage = Math.floor(skip / pageSize) + 1;
+  const showingFrom = total === 0 ? 0 : skip + 1;
+  const showingTo = Math.min(skip + rows.length, total);
+  const canPrev = skip > 0;
+  const canNext = skip + pageSize < total;
+
+  const summaryLine = useMemo(() => {
+    if (!summary) return null;
+    return (
+      <>
+        Directory:{' '}
+        <span className="font-black text-gray-900">{summary.activeUsers.toLocaleString()}</span>{' '}
+        active ·{' '}
+        <span className="font-black text-gray-900">{summary.totalUsers.toLocaleString()}</span> total
+      </>
+    );
+  }, [summary]);
+
   return (
     <div className="max-w-6xl mx-auto animate-fade-in">
       <div className="mb-6 flex items-start justify-between gap-4 flex-wrap">
         <div>
           <h1 className="text-2xl font-black text-gray-900">User Management</h1>
           <p className="text-xs text-gray-600 font-semibold mt-1">
-            Search employees, review role access, and assign additional roles.
+            Server-side search and paging — built for large directories (10k+ users).
           </p>
+          {summaryLine && (
+            <p className="text-[11px] text-gray-500 font-bold mt-2">{summaryLine}</p>
+          )}
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
+          <div className="relative">
+            <span className="material-icons-round absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-lg">
+              toggle_on
+            </span>
+            <select
+              value={activeFilter}
+              onChange={(e) =>
+                setActiveFilter(e.target.value as 'all' | 'active' | 'inactive')
+              }
+              className="w-full sm:w-[200px] pl-10 pr-3 py-2.5 rounded-xl border border-gray-300 bg-white text-sm font-semibold text-gray-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-purple-200 focus:border-purple-300"
+              aria-label="Active status"
+            >
+              <option value="all">All statuses</option>
+              <option value="active">Active only</option>
+              <option value="inactive">Inactive only</option>
+            </select>
+          </div>
+          <div className="relative">
+            <span className="material-icons-round absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-lg">
+              filter_alt
+            </span>
+            <select
+              value={roleHasFilter}
+              onChange={(e) => setRoleHasFilter(e.target.value)}
+              className="w-full sm:w-[260px] pl-10 pr-3 py-2.5 rounded-xl border border-gray-300 bg-white text-sm font-semibold text-gray-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-purple-200 focus:border-purple-300"
+              aria-label="Filter by assigned role"
+            >
+              <option value="all">Any role assignment</option>
+              {USER_ROLE_FILTER_OPTIONS.map((r) => (
+                <option key={r.code} value={r.code}>
+                  Has role: {r.label}
+                </option>
+              ))}
+            </select>
+          </div>
           <div className="relative">
             <span className="material-icons-round absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-lg">
               apartment
@@ -353,7 +480,7 @@ export const UserManagement: React.FC<{
             <select
               value={department}
               onChange={(e) => setDepartment(e.target.value)}
-              className="w-[260px] max-w-[70vw] pl-10 pr-3 py-2.5 rounded-xl border border-gray-300 bg-white text-sm font-semibold text-gray-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-purple-200 focus:border-purple-300"
+              className="w-full sm:w-[260px] max-w-[70vw] pl-10 pr-3 py-2.5 rounded-xl border border-gray-300 bg-white text-sm font-semibold text-gray-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-purple-200 focus:border-purple-300"
               aria-label="Filter by department"
             >
               <option value="">All departments</option>
@@ -364,18 +491,33 @@ export const UserManagement: React.FC<{
               ))}
             </select>
           </div>
-          <div className="relative">
+          <div className="relative flex-1 min-w-[200px]">
             <span className="material-icons-round absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-lg">
               search
             </span>
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search by name, employee code, email, dept…"
-              className="w-[340px] max-w-[80vw] pl-10 pr-3 py-2.5 rounded-xl border border-gray-300 bg-white text-sm font-semibold text-gray-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-purple-200 focus:border-purple-300"
+              placeholder="Search name, code, email, department…"
+              className="w-full pl-10 pr-3 py-2.5 rounded-xl border border-gray-300 bg-white text-sm font-semibold text-gray-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-purple-200 focus:border-purple-300"
             />
           </div>
+          <div className="flex items-center gap-2">
+            <label className="text-[11px] font-black text-gray-500 whitespace-nowrap">Rows</label>
+            <select
+              value={pageSize}
+              onChange={(e) => setPageSize(Number(e.target.value))}
+              className="pl-3 pr-2 py-2.5 rounded-xl border border-gray-300 bg-white text-sm font-semibold text-gray-900 shadow-sm"
+            >
+              {PAGE_SIZES.map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+            </select>
+          </div>
           <button
+            type="button"
             onClick={() => void runMobileIdeasSync()}
             className="px-4 py-2.5 rounded-xl bg-white border border-gray-300 text-gray-900 font-extrabold text-sm shadow-sm hover:bg-gray-50"
             disabled={isSyncingMobile}
@@ -385,6 +527,7 @@ export const UserManagement: React.FC<{
             {isSyncingMobile ? 'Syncing…' : 'Sync Mobile Ideas'}
           </button>
           <button
+            type="button"
             onClick={() => void load()}
             className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-kauvery-purple to-kauvery-violet text-white font-extrabold text-sm shadow-lg shadow-purple-200 hover:opacity-95"
             disabled={isLoading}
@@ -406,12 +549,15 @@ export const UserManagement: React.FC<{
       )}
 
       <div className="bg-white rounded-2xl border border-gray-200 shadow-[0_10px_30px_rgba(15,23,42,0.06)] overflow-hidden">
-        <div className="px-5 py-4 border-b border-gray-200 flex items-center justify-between">
+        <div className="px-5 py-4 border-b border-gray-200 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
           <div className="text-sm font-extrabold text-gray-900">
-            Employees <span className="text-gray-500 font-black">({filtered.length})</span>
+            Matching employees{' '}
+            <span className="text-gray-500 font-black">({total.toLocaleString()})</span>
           </div>
           <div className="text-[11px] text-gray-500 font-bold">
-            Tip: Assign multiple roles to allow “Employee + Implementer”
+            {total > 0
+              ? `Showing ${showingFrom.toLocaleString()}–${showingTo.toLocaleString()} · Page ${currentPage} / ${pageCount}`
+              : 'Use search or filters to find users'}
           </div>
         </div>
 
@@ -427,7 +573,7 @@ export const UserManagement: React.FC<{
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {filtered.map((u) => (
+              {rows.map((u) => (
                 <tr key={u.id} className="hover:bg-gray-50/60">
                   <td className="px-5 py-4">
                     <div className="font-extrabold text-gray-900">{u.name}</div>
@@ -484,15 +630,39 @@ export const UserManagement: React.FC<{
                 </tr>
               ))}
 
-              {!filtered.length && (
+              {!rows.length && (
                 <tr>
                   <td className="px-5 py-10 text-center text-gray-600 font-bold" colSpan={5}>
-                    {isLoading ? 'Loading users…' : 'No users found.'}
+                    {isLoading ? 'Loading users…' : 'No users on this page — adjust filters or search.'}
                   </td>
                 </tr>
               )}
             </tbody>
           </table>
+        </div>
+
+        <div className="px-5 py-4 border-t border-gray-200 flex flex-wrap items-center justify-between gap-3 bg-gray-50/60">
+          <div className="text-[11px] font-bold text-gray-500">
+            Tip: assign multiple roles (e.g. Employee + Implementer). Narrow with “Has role” + search.
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              disabled={!canPrev || isLoading}
+              onClick={() => setSkip((s) => Math.max(0, s - pageSize))}
+              className="px-4 py-2 rounded-xl border border-gray-300 bg-white text-sm font-black text-gray-800 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              Previous
+            </button>
+            <button
+              type="button"
+              disabled={!canNext || isLoading}
+              onClick={() => setSkip((s) => s + pageSize)}
+              className="px-4 py-2 rounded-xl border border-gray-300 bg-white text-sm font-black text-gray-800 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              Next
+            </button>
+          </div>
         </div>
       </div>
 

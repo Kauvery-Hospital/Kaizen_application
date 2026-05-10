@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { USER_ROLE_FILTER_OPTIONS } from '../constants/adminUserRoles';
 
 type UsersApiRow = {
   id: string;
@@ -16,6 +17,20 @@ type UsersApiRow = {
   lastLoginAt?: string | null;
   roles: string[];
 };
+
+type UsersListResponse = {
+  items: UsersApiRow[];
+  total: number;
+  skip: number;
+  take: number;
+};
+
+type UsersSummaryResponse = {
+  totalUsers: number;
+  activeUsers: number;
+};
+
+const PAGE_SIZES = [25, 50, 100] as const;
 
 function formatDateTime(v?: string | null): string {
   if (!v) return '—';
@@ -43,61 +58,106 @@ export const RoleListView: React.FC<{
   authHeaders: () => Record<string, string>;
 }> = ({ apiBase, authHeaders }) => {
   const [query, setQuery] = useState('');
+  const [debouncedQuery, setDebouncedQuery] = useState('');
   const [roleFilter, setRoleFilter] = useState<string>('all');
+  const [activeFilter, setActiveFilter] = useState<'all' | 'active' | 'inactive'>('active');
+  const [skip, setSkip] = useState(0);
+  const [pageSize, setPageSize] = useState<number>(50);
+
   const [rows, setRows] = useState<UsersApiRow[]>([]);
+  const [total, setTotal] = useState(0);
+  const [summary, setSummary] = useState<UsersSummaryResponse | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const load = async () => {
+  useEffect(() => {
+    const t = window.setTimeout(() => setDebouncedQuery(query.trim()), 450);
+    return () => window.clearTimeout(t);
+  }, [query]);
+
+  useEffect(() => {
+    setSkip(0);
+  }, [debouncedQuery, roleFilter, activeFilter, pageSize]);
+
+  const loadSummary = useCallback(async () => {
+    try {
+      const res = await fetch(`${apiBase}/users/summary`, {
+        headers: authHeaders(),
+      });
+      if (!res.ok) return;
+      const data = (await res.json()) as UsersSummaryResponse;
+      setSummary(data);
+    } catch {
+      setSummary(null);
+    }
+  }, [apiBase, authHeaders]);
+
+  const load = useCallback(async () => {
     setIsLoading(true);
     setError(null);
     try {
-      const res = await fetch(`${apiBase}/users?includeUnitScopes=true`, {
+      const params = new URLSearchParams();
+      params.set('includeUnitScopes', 'true');
+      params.set('skip', String(skip));
+      params.set('take', String(pageSize));
+      if (debouncedQuery) params.set('search', debouncedQuery);
+      if (roleFilter !== 'all') params.set('role', roleFilter);
+      if (activeFilter === 'active') params.set('isActive', 'true');
+      if (activeFilter === 'inactive') params.set('isActive', 'false');
+
+      const res = await fetch(`${apiBase}/users?${params.toString()}`, {
         headers: authHeaders(),
       });
       if (!res.ok) throw new Error(await messageFromFailedResponse(res));
-      const data = (await res.json()) as UsersApiRow[];
-      setRows(Array.isArray(data) ? data : []);
+      const data = (await res.json()) as UsersListResponse;
+      const items = Array.isArray(data?.items) ? data.items : [];
+      setRows(items);
+      setTotal(typeof data?.total === 'number' ? data.total : items.length);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load users.');
+      setRows([]);
+      setTotal(0);
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [
+    apiBase,
+    authHeaders,
+    skip,
+    pageSize,
+    debouncedQuery,
+    roleFilter,
+    activeFilter,
+  ]);
+
+  useEffect(() => {
+    void loadSummary();
+  }, [loadSummary]);
 
   useEffect(() => {
     void load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [load]);
 
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    const byRole =
-      roleFilter === 'all'
-        ? rows
-        : rows.filter((u) => (u.roles || []).includes(roleFilter));
-    if (!q) return byRole;
-    return byRole.filter((u) => {
-      const hay = [
-        u.employeeCode,
-        u.name,
-        u.email,
-        u.unitCode || '',
-        u.department || '',
-        u.designation || '',
-        (u.roles || []).join(','),
-      ]
-        .join(' ')
-        .toLowerCase();
-      return hay.includes(q);
-    });
-  }, [query, roleFilter, rows]);
+  const pageCount = Math.max(1, Math.ceil(total / pageSize));
+  const currentPage = Math.floor(skip / pageSize) + 1;
+  const showingFrom = total === 0 ? 0 : skip + 1;
+  const showingTo = Math.min(skip + rows.length, total);
 
-  const roleOptions = useMemo(() => {
-    const set = new Set<string>();
-    rows.forEach((u) => (u.roles || []).forEach((r) => set.add(String(r))));
-    return Array.from(set).sort((a, b) => a.localeCompare(b));
-  }, [rows]);
+  const canPrev = skip > 0;
+  const canNext = skip + pageSize < total;
+
+  const summaryLine = useMemo(() => {
+    if (!summary) return null;
+    return (
+      <>
+        Directory:{' '}
+        <span className="font-black text-gray-900">{summary.activeUsers.toLocaleString()}</span>{' '}
+        active ·{' '}
+        <span className="font-black text-gray-900">{summary.totalUsers.toLocaleString()}</span> total
+        accounts
+      </>
+    );
+  }, [summary]);
 
   return (
     <div className="max-w-7xl mx-auto animate-fade-in">
@@ -105,11 +165,31 @@ export const RoleListView: React.FC<{
         <div>
           <h1 className="text-2xl font-black text-gray-900">Role List</h1>
           <p className="text-xs text-gray-600 font-semibold mt-1">
-            Read-only view of all users and their assigned roles.
+            Directory-wide view with server-side paging — suitable for very large user bases (10k+).
           </p>
+          {summaryLine && (
+            <p className="text-[11px] text-gray-500 font-bold mt-2">{summaryLine}</p>
+          )}
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-col items-stretch sm:flex-row sm:flex-wrap gap-2">
+          <div className="relative">
+            <span className="material-icons-round absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-lg">
+              toggle_on
+            </span>
+            <select
+              value={activeFilter}
+              onChange={(e) =>
+                setActiveFilter(e.target.value as 'all' | 'active' | 'inactive')
+              }
+              className="w-[200px] max-w-[70vw] pl-10 pr-3 py-2.5 rounded-xl border border-gray-300 bg-white text-sm font-semibold text-gray-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-purple-200 focus:border-purple-300"
+              aria-label="Active status"
+            >
+              <option value="all">All statuses</option>
+              <option value="active">Active only</option>
+              <option value="inactive">Inactive only</option>
+            </select>
+          </div>
           <div className="relative">
             <span className="material-icons-round absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-lg">
               filter_alt
@@ -117,30 +197,45 @@ export const RoleListView: React.FC<{
             <select
               value={roleFilter}
               onChange={(e) => setRoleFilter(e.target.value)}
-              className="w-[220px] max-w-[70vw] pl-10 pr-3 py-2.5 rounded-xl border border-gray-300 bg-white text-sm font-semibold text-gray-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-purple-200 focus:border-purple-300"
+              className="w-[240px] max-w-[70vw] pl-10 pr-3 py-2.5 rounded-xl border border-gray-300 bg-white text-sm font-semibold text-gray-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-purple-200 focus:border-purple-300"
               aria-label="Filter by role"
               title="Filter by role"
             >
-              <option value="all">All roles</option>
-              {roleOptions.map((r) => (
-                <option key={r} value={r}>
-                  {r}
+              <option value="all">Has any role (no filter)</option>
+              {USER_ROLE_FILTER_OPTIONS.map((r) => (
+                <option key={r.code} value={r.code}>
+                  Has role: {r.label}
                 </option>
               ))}
             </select>
           </div>
-          <div className="relative">
+          <div className="relative flex-1 min-w-[200px]">
             <span className="material-icons-round absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-lg">
               search
             </span>
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search by name, code, email, role…"
-              className="w-[380px] max-w-[80vw] pl-10 pr-3 py-2.5 rounded-xl border border-gray-300 bg-white text-sm font-semibold text-gray-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-purple-200 focus:border-purple-300"
+              placeholder="Search name, employee code, email, department…"
+              className="w-full min-w-[260px] max-w-[90vw] pl-10 pr-3 py-2.5 rounded-xl border border-gray-300 bg-white text-sm font-semibold text-gray-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-purple-200 focus:border-purple-300"
             />
           </div>
+          <div className="flex items-center gap-2">
+            <label className="text-[11px] font-black text-gray-500 whitespace-nowrap">Rows</label>
+            <select
+              value={pageSize}
+              onChange={(e) => setPageSize(Number(e.target.value))}
+              className="pl-3 pr-2 py-2.5 rounded-xl border border-gray-300 bg-white text-sm font-semibold text-gray-900 shadow-sm"
+            >
+              {PAGE_SIZES.map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+            </select>
+          </div>
           <button
+            type="button"
             onClick={() => void load()}
             className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-kauvery-purple to-kauvery-violet text-white font-extrabold text-sm shadow-lg shadow-purple-200 hover:opacity-95 disabled:opacity-60"
             disabled={isLoading}
@@ -158,12 +253,15 @@ export const RoleListView: React.FC<{
       )}
 
       <div className="bg-white rounded-2xl border border-gray-200 shadow-[0_10px_30px_rgba(15,23,42,0.06)] overflow-hidden">
-        <div className="px-5 py-4 border-b border-gray-200 flex items-center justify-between">
+        <div className="px-5 py-4 border-b border-gray-200 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
           <div className="text-sm font-extrabold text-gray-900">
-            Users <span className="text-gray-500 font-black">({filtered.length})</span>
+            Matching users{' '}
+            <span className="text-gray-500 font-black">({total.toLocaleString()})</span>
           </div>
           <div className="text-[11px] text-gray-500 font-bold">
-            Tip: use “User Management” to edit roles
+            {total > 0
+              ? `Showing ${showingFrom.toLocaleString()}–${showingTo.toLocaleString()} · Page ${currentPage} / ${pageCount}`
+              : 'Adjust filters or search'}
           </div>
         </div>
 
@@ -180,7 +278,7 @@ export const RoleListView: React.FC<{
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {filtered.map((u) => (
+              {rows.map((u) => (
                 <tr key={u.id} className="hover:bg-gray-50/60">
                   <td className="px-5 py-4">
                     <div className="font-extrabold text-gray-900">{u.name}</div>
@@ -216,7 +314,10 @@ export const RoleListView: React.FC<{
                           SC:{code}
                         </span>
                       ))}
-                      {!(u.unitScopes?.UNIT_COORDINATOR?.length || u.unitScopes?.SELECTION_COMMITTEE?.length) && (
+                      {!(
+                        u.unitScopes?.UNIT_COORDINATOR?.length ||
+                        u.unitScopes?.SELECTION_COMMITTEE?.length
+                      ) && (
                         <span className="text-xs text-gray-500 font-bold">—</span>
                       )}
                     </div>
@@ -248,18 +349,41 @@ export const RoleListView: React.FC<{
                 </tr>
               ))}
 
-              {!filtered.length && (
+              {!rows.length && (
                 <tr>
                   <td className="px-5 py-10 text-center text-gray-600 font-bold" colSpan={6}>
-                    {isLoading ? 'Loading users…' : 'No users found.'}
+                    {isLoading ? 'Loading users…' : 'No users in this page — try another search or page.'}
                   </td>
                 </tr>
               )}
             </tbody>
           </table>
         </div>
+
+        <div className="px-5 py-4 border-t border-gray-200 flex flex-wrap items-center justify-between gap-3 bg-gray-50/60">
+          <div className="text-[11px] font-bold text-gray-500">
+            Tip: narrow by role or search before paging — fastest with large directories.
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              disabled={!canPrev || isLoading}
+              onClick={() => setSkip((s) => Math.max(0, s - pageSize))}
+              className="px-4 py-2 rounded-xl border border-gray-300 bg-white text-sm font-black text-gray-800 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              Previous
+            </button>
+            <button
+              type="button"
+              disabled={!canNext || isLoading}
+              onClick={() => setSkip((s) => s + pageSize)}
+              className="px-4 py-2 rounded-xl border border-gray-300 bg-white text-sm font-black text-gray-800 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              Next
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   );
 };
-

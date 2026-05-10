@@ -230,6 +230,7 @@ export type ViewType =
   | 'create'
   | 'pipeline'
   | 'be-overview'
+  | 'reports'
   | 'hod-desk'
   | 'users'
   | 'role-list'
