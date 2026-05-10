@@ -14,7 +14,11 @@ const COLUMNS = [
   { id: 'new', title: 'Ideas Submitted', statuses: [Status.IDEA_SUBMITTED] },
   { id: 'assign', title: 'To Assign', statuses: [Status.APPROVED_FOR_ASSIGNMENT] },
   { id: 'wip', title: 'Implementation', statuses: [Status.ASSIGNED_FOR_IMPLEMENTATION] },
-  { id: 'verify', title: 'Verification & Approval', statuses: [Status.IMPLEMENTATION_DONE, Status.VERIFIED_PENDING_APPROVAL] },
+  {
+    id: 'verify',
+    title: 'Verification & Approval',
+    statuses: [Status.IMPLEMENTATION_DONE, Status.BE_REVIEW_DONE, Status.VERIFIED_PENDING_APPROVAL],
+  },
   { id: 'eval', title: 'Evaluation', statuses: [Status.BE_EVALUATION_PENDING, Status.REWARD_PENDING] },
   { id: 'done', title: 'Rewarded', statuses: [Status.REWARDED] },
 ];
@@ -48,7 +52,18 @@ const filterSuggestionsForRole = (role: Role, suggestion: Suggestion, currentUse
     const isAssignedToMe = currentUserName
       ? suggestion.assignedImplementer === currentUserName
       : true;
-    return isAssignedToMe && suggestion.status === Status.ASSIGNED_FOR_IMPLEMENTATION;
+    return (
+      isAssignedToMe &&
+      [
+        Status.ASSIGNED_FOR_IMPLEMENTATION,
+        Status.IMPLEMENTATION_DONE,
+        Status.BE_REVIEW_DONE,
+        Status.VERIFIED_PENDING_APPROVAL,
+        Status.BE_EVALUATION_PENDING,
+        Status.REWARD_PENDING,
+        Status.REWARDED,
+      ].includes(suggestion.status)
+    );
   }
 
   if (role === Role.BUSINESS_EXCELLENCE) {

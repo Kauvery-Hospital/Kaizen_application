@@ -115,6 +115,12 @@ export interface Suggestion {
     processBeforeFiles?: string[];
     processAfterFiles?: string[];
   };
+
+  /** Implementer-provided additional slides (appended during export) */
+  extraSlides?: Array<
+    | { kind: 'text'; title?: string; body?: string }
+    | { kind: 'image'; title?: string; imagePath: string; caption?: string }
+  >;
   
   // -- Phase 3: Implementation (Implementer) --
   // The Full Kaizen Template

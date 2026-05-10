@@ -30,4 +30,3 @@ export class AiController {
     return this.ai.evaluateKaizen(dto.suggestionData, criteriaList);
   }
 }
-

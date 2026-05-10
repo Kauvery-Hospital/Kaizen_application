@@ -1,6 +1,12 @@
 import { ValidationPipe } from '@nestjs/common';
 import 'dotenv/config';
-import { json, urlencoded, type NextFunction, type Request, type Response } from 'express';
+import {
+  json,
+  urlencoded,
+  type NextFunction,
+  type Request,
+  type Response,
+} from 'express';
 import { NestFactory } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app.module';
@@ -28,7 +34,10 @@ async function bootstrap() {
         'Access-Control-Allow-Headers',
         'Authorization, Content-Type, Accept, X-Requested-With',
       );
-      res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, Content-Type, Content-Length');
+      res.setHeader(
+        'Access-Control-Expose-Headers',
+        'Content-Disposition, Content-Type, Content-Length',
+      );
     }
 
     if (req.method === 'OPTIONS') {

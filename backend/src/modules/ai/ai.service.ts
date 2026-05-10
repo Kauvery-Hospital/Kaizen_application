@@ -20,7 +20,9 @@ export class AiService {
   private readonly ai: GoogleGenAI | null;
 
   constructor(private readonly config: ConfigService) {
-    this.apiKey = String(this.config.get<string>('GEMINI_API_KEY') ?? '').trim();
+    this.apiKey = String(
+      this.config.get<string>('GEMINI_API_KEY') ?? '',
+    ).trim();
     this.ai = this.apiKey ? new GoogleGenAI({ apiKey: this.apiKey }) : null;
   }
 
@@ -28,7 +30,10 @@ export class AiService {
     return Boolean(this.ai);
   }
 
-  async analyzeSuggestion(title: string, context: string): Promise<AnalyzeSuggestionResult> {
+  async analyzeSuggestion(
+    title: string,
+    context: string,
+  ): Promise<AnalyzeSuggestionResult> {
     if (!this.isAvailable()) {
       return {
         impactScore: 85,
@@ -92,7 +97,9 @@ Provide a JSON response with:
 
     const theme = String(suggestionData.theme ?? '');
     const problemWhat = String((suggestionData as any)?.problem?.what ?? '');
-    const counterMeasure = String((suggestionData as any)?.counterMeasure ?? '');
+    const counterMeasure = String(
+      (suggestionData as any)?.counterMeasure ?? '',
+    );
     const benefits = JSON.stringify((suggestionData as any)?.benefits ?? null);
 
     const prompt = `
@@ -131,4 +138,3 @@ Return JSON with:
     return JSON.parse(response.text || '{}') as EvaluateKaizenResult;
   }
 }
-

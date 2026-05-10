@@ -51,6 +51,8 @@ type UsersApiRow = {
   employeeCode: string;
   name: string;
   email: string;
+  unitCode?: string | null;
+  unitScopes?: { UNIT_COORDINATOR?: string[]; SELECTION_COMMITTEE?: string[] };
   department?: string | null;
   designation?: string | null;
   isActive: boolean;
@@ -204,10 +206,14 @@ export const UserManagement: React.FC<{
       params.set('take', String(pageSize));
       if (debouncedQuery) params.set('search', debouncedQuery);
       if (department.trim()) params.set('department', department.trim());
+<<<<<<< HEAD
       if (roleHasFilter !== 'all') params.set('role', roleHasFilter);
       if (activeFilter === 'active') params.set('isActive', 'true');
       if (activeFilter === 'inactive') params.set('isActive', 'false');
 
+=======
+      params.set('includeUnitScopes', 'true');
+>>>>>>> origin/main
       const res = await fetch(`${apiBase}/users?${params.toString()}`, {
         headers: authHeaders(),
       });
@@ -566,6 +572,8 @@ export const UserManagement: React.FC<{
             <thead className="bg-gray-50 border-b border-gray-200">
               <tr className="text-left text-xs uppercase tracking-wide text-gray-600 font-black">
                 <th className="px-5 py-3">Employee</th>
+                <th className="px-5 py-3">Employee unit</th>
+                <th className="px-5 py-3">Unit scopes</th>
                 <th className="px-5 py-3">Department</th>
                 <th className="px-5 py-3">Roles</th>
                 <th className="px-5 py-3">Last login</th>
@@ -585,6 +593,47 @@ export const UserManagement: React.FC<{
                         </span>
                       )}
                     </div>
+                  </td>
+                  <td className="px-5 py-4">
+                    {(() => {
+                      const code = String(u.unitCode || '').trim();
+                      if (!code) return <span className="text-gray-500 font-bold">—</span>;
+                      const name = units.find((x) => x.code === code)?.name;
+                      return (
+                        <div className="min-w-0">
+                          <div className="font-extrabold text-gray-900">{code}</div>
+                          <div className="text-xs text-gray-600 font-semibold">{name ? name : '—'}</div>
+                        </div>
+                      );
+                    })()}
+                  </td>
+                  <td className="px-5 py-4">
+                    {(() => {
+                      const uc = (u.unitScopes?.UNIT_COORDINATOR || [])
+                        .map((x) => String(x).trim())
+                        .filter(Boolean);
+                      const sc = (u.unitScopes?.SELECTION_COMMITTEE || [])
+                        .map((x) => String(x).trim())
+                        .filter(Boolean);
+                      const chips: Array<{ k: string; label: string; tone: 'purple' | 'slate' }> = [];
+                      uc.forEach((x) => chips.push({ k: `uc-${u.id}-${x}`, label: `UC:${x}`, tone: 'purple' }));
+                      sc.forEach((x) => chips.push({ k: `sc-${u.id}-${x}`, label: `SC:${x}`, tone: 'slate' }));
+                      if (!chips.length) return <span className="text-gray-500 font-bold">—</span>;
+                      return (
+                        <div className="flex flex-wrap gap-1.5">
+                          {chips.map((c) => (
+                            <span
+                              key={c.k}
+                              className={`inline-flex items-center px-2 py-1 rounded-full border text-[11px] font-extrabold ${toneClasses(
+                                c.tone,
+                              )}`}
+                            >
+                              {c.label}
+                            </span>
+                          ))}
+                        </div>
+                      );
+                    })()}
                   </td>
                   <td className="px-5 py-4">
                     <div className="font-bold text-gray-900">{u.department || '—'}</div>
@@ -632,8 +681,13 @@ export const UserManagement: React.FC<{
 
               {!rows.length && (
                 <tr>
+<<<<<<< HEAD
                   <td className="px-5 py-10 text-center text-gray-600 font-bold" colSpan={5}>
                     {isLoading ? 'Loading users…' : 'No users on this page — adjust filters or search.'}
+=======
+                  <td className="px-5 py-10 text-center text-gray-600 font-bold" colSpan={7}>
+                    {isLoading ? 'Loading users…' : 'No users found.'}
+>>>>>>> origin/main
                   </td>
                 </tr>
               )}
@@ -770,7 +824,9 @@ export const UserManagement: React.FC<{
                                     const set = new Set(prev);
                                     if (on) set.add(u.code);
                                     else set.delete(u.code);
-                                    return Array.from(set).sort((a, b) => a.localeCompare(b));
+                                    return (Array.from(set) as string[]).sort((a, b) =>
+                                      String(a).localeCompare(String(b)),
+                                    );
                                   });
                                 }}
                                 className="accent-kauvery-purple"

@@ -4,4 +4,3 @@ export class EvaluateKaizenDto {
   @IsObject()
   suggestionData!: Record<string, unknown>;
 }
-

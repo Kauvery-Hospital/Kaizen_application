@@ -78,6 +78,7 @@ export const STATUS_COLORS: Record<Status, string> = {
   [Status.APPROVED_FOR_ASSIGNMENT]: 'bg-blue-50 text-blue-900 border border-blue-200 font-bold',
   [Status.ASSIGNED_FOR_IMPLEMENTATION]: 'bg-indigo-50 text-indigo-900 border border-indigo-200 font-bold',
   [Status.IMPLEMENTATION_DONE]: 'bg-purple-50 text-purple-900 border border-purple-200 font-bold',
+  [Status.BE_REVIEW_DONE]: 'bg-amber-50 text-amber-900 border border-amber-200 font-bold',
   [Status.VERIFIED_PENDING_APPROVAL]: 'bg-orange-50 text-orange-900 border border-orange-200 font-bold',
   [Status.BE_EVALUATION_PENDING]: 'bg-teal-50 text-teal-900 border border-teal-200 font-bold',
   [Status.REWARD_PENDING]: 'bg-emerald-50 text-emerald-900 border border-emerald-200 font-bold',

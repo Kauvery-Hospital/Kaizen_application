@@ -1,13 +1,19 @@
 import React, { useMemo, useState } from 'react';
 import { Suggestion, Status, Role } from '../types';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell, AreaChart, Area } from 'recharts';
+import { employeeStatusStep } from '../utils/kaizenStatusHelp';
 
 interface DashboardProps {
   suggestions: Suggestion[];
   role: Role;
   userName?: string;
+<<<<<<< HEAD
   /** Opens the Kaizen Reports screen (sidebar-aligned workflow). */
   onNavigateToReports?: () => void;
+=======
+  /** Employee dashboard: primary CTA to open submit flow */
+  onNewIdea?: () => void;
+>>>>>>> origin/main
 }
 
 function normalizeText(v?: string | null): string {
@@ -27,12 +33,16 @@ function statusPillClass(status: Status): string {
   return 'bg-gray-50 text-gray-800 border-gray-200';
 }
 
+<<<<<<< HEAD
 export const Dashboard: React.FC<DashboardProps> = ({
   suggestions: allSuggestions,
   role,
   userName,
   onNavigateToReports,
 }) => {
+=======
+export const Dashboard: React.FC<DashboardProps> = ({ suggestions: allSuggestions, role, userName, onNewIdea }) => {
+>>>>>>> origin/main
   const [showAllParticipants, setShowAllParticipants] = useState(false);
   const [showFilterMenu, setShowFilterMenu] = useState(false);
   const [filterMode, setFilterMode] = useState<'all' | 'date' | 'unit' | 'department'>('all');
@@ -436,6 +446,40 @@ export const Dashboard: React.FC<DashboardProps> = ({
     [suggestions]
   );
 
+  const statusBreakdownVisible = useMemo(
+    () =>
+      role === Role.EMPLOYEE
+        ? statusBreakdown.filter((row) => row.count > 0)
+        : statusBreakdown,
+    [statusBreakdown, role],
+  );
+
+  const employeeAttentionNotes = useMemo(() => {
+    if (role !== Role.EMPLOYEE) return [];
+    const notes: { tone: 'amber' | 'rose' | 'slate'; text: string }[] = [];
+    const rejected = suggestions.filter((s) => s.status === Status.IDEA_REJECTED).length;
+    const waiting = suggestions.filter((s) => s.status === Status.IDEA_SUBMITTED).length;
+    if (rejected > 0) {
+      notes.push({
+        tone: 'rose',
+        text:
+          rejected === 1
+            ? 'One idea was not approved — open it to read the coordinator remarks.'
+            : `${rejected} ideas were not approved — open each one to read remarks.`,
+      });
+    }
+    if (waiting > 0) {
+      notes.push({
+        tone: 'amber',
+        text:
+          waiting === 1
+            ? 'One idea is waiting for unit coordinator review.'
+            : `${waiting} ideas are waiting for unit coordinator review.`,
+      });
+    }
+    return notes;
+  }, [role, suggestions]);
+
   const participantLeaderboard = useMemo(() => {
     const participantMap = suggestions.reduce((acc, curr) => {
       const name = curr.employeeName || 'Unknown';
@@ -566,6 +610,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
     return true;
   }, [role]);
 
+<<<<<<< HEAD
   const isBeTeam =
     role === Role.BUSINESS_EXCELLENCE || role === Role.BUSINESS_EXCELLENCE_HEAD;
   const isUnitCoordinator = role === Role.UNIT_COORDINATOR;
@@ -615,10 +660,43 @@ export const Dashboard: React.FC<DashboardProps> = ({
               onChange={(e) => setToDate(e.target.value)}
               className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-xs font-semibold bg-white"
             />
+=======
+  return (
+    <div className="space-y-6 animate-fade-in">
+      <div className="relative overflow-hidden rounded-3xl border border-purple-200/50 bg-gradient-to-br from-white via-purple-50/35 to-pink-50/25 p-6 sm:p-7 shadow-kauvery-soft">
+        <div className="pointer-events-none absolute -right-20 -top-20 h-56 w-56 rounded-full bg-kauvery-pink/10 blur-3xl" />
+        <div className="pointer-events-none absolute -left-16 bottom-0 h-44 w-44 rounded-full bg-kauvery-violet/10 blur-3xl" />
+        <div className="relative flex flex-col lg:flex-row lg:justify-between lg:items-end gap-4">
+          <div className="min-w-0 flex-1">
+              <h2 className="text-2xl sm:text-3xl font-black bg-gradient-to-r from-kauvery-purple via-kauvery-violet to-kauvery-pink bg-clip-text text-transparent">
+                {userName ? `Welcome, ${userName}` : roleHeader}
+              </h2>
+              {role === Role.EMPLOYEE ? (
+                <p className="text-gray-700 font-semibold mt-1.5 max-w-xl">
+                  Submit Kaizen ideas and follow them from unit review through implementation to reward.
+                </p>
+              ) : (
+                <p className="text-gray-700 font-semibold mt-1">
+                  Signed in as{' '}
+                  <span className="font-extrabold text-kauvery-purple">{role}</span>.
+                </p>
+              )}
+>>>>>>> origin/main
           </div>
+          {role === Role.EMPLOYEE && onNewIdea && (
+            <button
+              type="button"
+              onClick={onNewIdea}
+              className="shrink-0 inline-flex items-center gap-2 rounded-xl bg-kauvery-purple px-5 py-2.5 text-sm font-black text-white shadow-md shadow-purple-200 ring-1 ring-purple-900/10 transition hover:bg-kauvery-violet"
+            >
+              <span className="material-icons-round text-base">add_circle</span>
+              Submit an idea
+            </button>
+          )}
         </div>
       )}
 
+<<<<<<< HEAD
       {filterMode === 'unit' && (
         <div>
           <label className="text-[10px] font-extrabold text-gray-600 uppercase mb-1 block">Unit</label>
@@ -700,6 +778,17 @@ export const Dashboard: React.FC<DashboardProps> = ({
             </p>
           </div>
           {spotlightDashboard && onNavigateToReports && (
+=======
+        {role === Role.EMPLOYEE ? (
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-2 text-xs font-bold text-gray-600">
+          <span>
+            Showing <span className="text-gray-900">{filteredSuggestions.length}</span> of your ideas
+          </span>
+        </div>
+        ) : (
+        <div className="mt-4 flex flex-col md:flex-row md:items-end md:justify-between gap-3">
+          <div className="relative">
+>>>>>>> origin/main
             <button
               type="button"
               onClick={onNavigateToReports}
@@ -787,7 +876,27 @@ export const Dashboard: React.FC<DashboardProps> = ({
             <span className="text-gray-900">{filteredSuggestions.length}</span> ideas
           </div>
         </div>
+        )}
       </div>
+
+      {employeeAttentionNotes.length > 0 && (
+        <div className="space-y-2">
+          {employeeAttentionNotes.map((n, i) => (
+            <div
+              key={i}
+              className={`rounded-2xl border px-4 py-3 text-sm font-semibold ${
+                n.tone === 'rose'
+                  ? 'border-rose-200 bg-rose-50 text-rose-950'
+                  : n.tone === 'amber'
+                    ? 'border-amber-200 bg-amber-50 text-amber-950'
+                    : 'border-slate-200 bg-slate-50 text-slate-900'
+              }`}
+            >
+              {n.text}
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* KPI Cards */}
       <div
@@ -1275,6 +1384,11 @@ export const Dashboard: React.FC<DashboardProps> = ({
                     <span className="text-[11px] font-mono text-gray-500">{s.code || s.id}</span>
                   </div>
                   <div className="mt-1 font-extrabold text-gray-900 line-clamp-1">{s.theme}</div>
+                  {role === Role.EMPLOYEE && (
+                    <div className="mt-0.5 text-[11px] text-gray-500 font-medium line-clamp-2">
+                      {employeeStatusStep(s.status)}
+                    </div>
+                  )}
                   <div className="mt-1 text-xs text-gray-600 font-semibold line-clamp-1">
                     {normalizeText(s.department)} • {normalizeText(s.unit)} • Originator: {normalizeText(s.employeeName)}
                   </div>
@@ -1300,7 +1414,26 @@ export const Dashboard: React.FC<DashboardProps> = ({
             ))}
             {actionQueue.items.length === 0 && (
               <div className="px-6 py-14 text-center text-sm text-gray-600 font-semibold">
-                No items for this role right now.
+                {role === Role.EMPLOYEE ? (
+                  <div className="max-w-md mx-auto">
+                    <p className="text-gray-900 font-extrabold text-base mb-1">No ideas in your list yet</p>
+                    <p className="text-sm text-gray-600 font-medium mb-5">
+                      When you submit a Kaizen idea, it will show up here with status and progress.
+                    </p>
+                    {onNewIdea && (
+                      <button
+                        type="button"
+                        onClick={onNewIdea}
+                        className="inline-flex items-center gap-2 rounded-xl bg-kauvery-purple px-5 py-2.5 text-sm font-black text-white shadow-md hover:bg-kauvery-violet"
+                      >
+                        <span className="material-icons-round text-base">add</span>
+                        Submit your first idea
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                  'No items for this role right now.'
+                )}
               </div>
             )}
           </div>
@@ -1309,7 +1442,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
         {/* Quick insights (optional) */}
         <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
           <div className="p-6 border-b border-gray-200 flex items-center justify-between">
-            <h3 className="text-lg font-black text-gray-900">Quick insights</h3>
+            <h3 className="text-lg font-black text-gray-900">
+              {role === Role.EMPLOYEE ? 'Your snapshot' : 'Quick insights'}
+            </h3>
             <div className="text-[11px] text-gray-500 font-bold uppercase">{role}</div>
           </div>
           <div className="p-6 space-y-3">
@@ -1390,20 +1525,54 @@ export const Dashboard: React.FC<DashboardProps> = ({
         {/* Status Breakdown */}
         <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
             <div className="p-6 border-b border-gray-200 flex justify-between items-center">
-                <h3 className="text-lg font-bold text-gray-900">Ideas by Status</h3>
+                <h3 className="text-lg font-bold text-gray-900">
+                  {role === Role.EMPLOYEE ? 'Your ideas by status' : 'Ideas by Status'}
+                </h3>
                 <div className="text-xs text-gray-500 font-bold uppercase">{role}</div>
             </div>
             <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-3">
-                {statusBreakdown.map(row => (
+                {statusBreakdownVisible.map(row => (
                   <div key={row.status} className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 flex items-center justify-between">
                     <span className="text-xs text-gray-700 font-bold">{row.status}</span>
                     <span className="text-sm font-extrabold text-gray-900">{row.count}</span>
                   </div>
                 ))}
             </div>
+            {role === Role.EMPLOYEE && statusBreakdownVisible.length === 0 && (
+              <div className="px-6 pb-6 text-sm text-gray-500 font-medium">
+                Status counts will appear after you submit an idea.
+              </div>
+            )}
         </div>
 
-        {/* Points Card */}
+        {role === Role.EMPLOYEE ? (
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
+            <div className="p-6 border-b border-gray-200 flex justify-between items-center">
+                <h3 className="text-lg font-bold text-gray-900">Your activity</h3>
+            </div>
+            <div className="p-6 space-y-4">
+              <p className="text-sm text-gray-600 font-medium">
+                Summary of your Kaizen participation.
+              </p>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">
+                  <div className="text-[11px] font-extrabold uppercase text-gray-600">Ideas submitted</div>
+                  <div className="mt-1 text-xl font-black text-gray-900">{stats.total}</div>
+                </div>
+                <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">
+                  <div className="text-[11px] font-extrabold uppercase text-gray-600">In progress</div>
+                  <div className="mt-1 text-xl font-black text-gray-900">{stats.inProgress}</div>
+                </div>
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50/90 p-4 col-span-2">
+                  <div className="text-[11px] font-extrabold uppercase text-emerald-900">Rewarded &amp; closed</div>
+                  <div className="mt-1 text-xl font-black text-emerald-950">
+                    {suggestions.filter((s) => s.status === Status.REWARDED).length}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : (
         <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
             <div className="p-6 border-b border-gray-200 flex justify-between items-center">
                 <h3 className="text-lg font-bold text-gray-900">Top Innovators</h3>
@@ -1429,6 +1598,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
               )}
             </div>
           </div>
+        )}
       </div>
 
       {showAllParticipants && (

@@ -11,4 +11,3 @@ import { MobileIdeasSyncService } from './mobile-ideas-sync.service';
   exports: [MobileIdeasSyncService],
 })
 export class MobileIdeasSyncModule {}
-
