@@ -4,9 +4,10 @@ import { SuggestionsService } from './suggestions.service';
 import { PptxExportService } from './pptx-export.service';
 import { AuthModule } from '../auth/auth.module';
 import { PrismaModule } from '../../database/prisma.module';
+import { AttachmentsModule } from '../attachments/attachments.module';
 
 @Module({
-  imports: [PrismaModule, AuthModule],
+  imports: [PrismaModule, AuthModule, AttachmentsModule],
   controllers: [SuggestionsController],
   providers: [SuggestionsService, PptxExportService],
   exports: [SuggestionsService],

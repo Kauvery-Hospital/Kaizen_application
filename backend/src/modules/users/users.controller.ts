@@ -15,6 +15,7 @@ import { TokenRolesGuard } from '../auth/guards/token-roles.guard';
 import { UsersService } from './users.service';
 import { AssignRoleDto } from './dto/assign-role.dto';
 import { ListUsersQueryDto } from './dto/list-users-query.dto';
+import { SetDepartmentHodScopesDto } from './dto/set-department-hod-scopes.dto';
 import { SetUnitScopesDto } from './dto/set-unit-scopes.dto';
 
 @Controller('users')
@@ -34,6 +35,26 @@ export class UsersController {
     @Query('department') department: string,
   ) {
     return this.usersService.listImplementers(unitCode, department);
+  }
+
+  /** Named heads for UC routing: must match unit scopes configured in User Management. */
+  @Get('unit-scoped-hods')
+  @RequireTokenRoles('UNIT_COORDINATOR', 'ADMIN', 'SUPER_ADMIN')
+  unitScopedHods(
+    @Query('unitCode') unitCode: string,
+    @Query('roleCode') roleCode: string,
+  ) {
+    return this.usersService.listUnitScopedHods(unitCode, roleCode);
+  }
+
+  /** Unit-scoped portal users in HRMS department at unit — Level 1 departmental approver picker. */
+  @Get('unit-department-members')
+  @RequireTokenRoles('UNIT_COORDINATOR', 'ADMIN', 'SUPER_ADMIN')
+  unitDepartmentMembers(
+    @Query('unitCode') unitCode: string,
+    @Query('department') department: string,
+  ) {
+    return this.usersService.listUnitDepartmentMembers(unitCode, department);
   }
 
   @Get('hrms/:employeeId')
@@ -103,5 +124,32 @@ export class UsersController {
     @Body() dto: SetUnitScopesDto,
   ) {
     return this.usersService.setUnitScopes(userId, dto);
+  }
+
+  @Get(':userId/department-hod-scopes')
+  @RequireTokenRoles('ADMIN', 'SUPER_ADMIN')
+  departmentHodScopes(
+    @Param('userId') userId: string,
+    @Query('department') department: string,
+  ) {
+    return this.usersService.getDepartmentHodScopes(userId, department);
+  }
+
+  @Post(':userId/department-hod-scopes')
+  @RequireTokenRoles('ADMIN', 'SUPER_ADMIN')
+  setDepartmentHodScopes(
+    @Param('userId') userId: string,
+    @Body() dto: SetDepartmentHodScopesDto,
+  ) {
+    return this.usersService.setDepartmentHodScopes(userId, dto);
+  }
+
+  @Delete(':userId/department-hod-scopes')
+  @RequireTokenRoles('ADMIN', 'SUPER_ADMIN')
+  removeDepartmentHodScopes(
+    @Param('userId') userId: string,
+    @Query('department') department: string,
+  ) {
+    return this.usersService.removeDepartmentHodScopes(userId, department);
   }
 }

@@ -9,7 +9,19 @@ import {
 import type { Response } from 'express';
 import { JwtAuthGuard, type JwtAccessPayload } from '../auth/guards/jwt-auth.guard';
 import { ReportsQueryDto } from './dto/reports-query.dto';
+import { REPORT_CATALOG } from './reports.types';
 import { ReportsService } from './reports.service';
+import {
+  breakdownExportColumns,
+  isSuggestionListRow,
+  pickSuggestionTableRow,
+  scalarMetricRows,
+  SUGGESTION_TABLE_EXPORT_COLUMNS,
+} from './reports-export.helpers';
+
+function isBreakdownReport(report: string): boolean {
+  return REPORT_CATALOG.some((r) => r.id === report && r.kind === 'breakdown');
+}
 
 @Controller('reports')
 @UseGuards(JwtAuthGuard)
@@ -42,63 +54,78 @@ export class ReportsController {
       const wb = new ExcelJS.Workbook();
       const ws = wb.addWorksheet('Report');
 
-      if (Array.isArray((data as any)?.items)) {
-        const items = (data as any).items as any[];
-        if (items.length && typeof items[0] === 'object' && !('key' in items[0] && 'count' in items[0])) {
-          // Suggestion-like rows
-          ws.columns = [
-            { header: 'Code', key: 'code', width: 18 },
-            { header: 'Date Submitted', key: 'dateSubmitted', width: 14 },
-            { header: 'Unit', key: 'unit', width: 18 },
-            { header: 'Department', key: 'department', width: 18 },
-            { header: 'Category', key: 'category', width: 12 },
-            { header: 'Status', key: 'status', width: 22 },
-            { header: 'Theme', key: 'theme', width: 40 },
-            { header: 'Employee', key: 'employeeName', width: 22 },
-            { header: 'Assigned Implementer', key: 'assignedImplementer', width: 22 },
-            { header: 'Assigned Unit', key: 'assignedUnit', width: 18 },
-            { header: 'Implementation Stage', key: 'implementationStage', width: 16 },
-            { header: 'Progress', key: 'implementationProgress', width: 10 },
-          ];
+      const d = data as Record<string, unknown>;
+
+      if (Array.isArray(d?.items)) {
+        const items = d.items as unknown[];
+        const first = items[0] as Record<string, unknown> | undefined;
+        const useSuggestionColumns =
+          items.length > 0
+            ? Boolean(first && isSuggestionListRow(first))
+            : !isBreakdownReport(String(query.report));
+        if (useSuggestionColumns) {
+          // Same 7 columns as Reports.tsx suggestion table
+          ws.columns = SUGGESTION_TABLE_EXPORT_COLUMNS.map((c) => ({
+            header: c.header,
+            key: String(c.key),
+            width:
+              c.key === 'theme'
+                ? 40
+                : c.key === 'status'
+                  ? 22
+                  : c.key === 'code'
+                    ? 18
+                    : 16,
+          }));
           ws.addRows(
-            items.map((r) => ({
-              code: r.code,
-              dateSubmitted: r.dateSubmitted,
-              unit: r.unit,
-              department: r.department,
-              category: r.category,
-              status: r.status,
-              theme: r.theme,
-              employeeName: r.employeeName,
-              assignedImplementer: r.assignedImplementer,
-              assignedUnit: r.assignedUnit,
-              implementationStage: r.implementationStage,
-              implementationProgress: r.implementationProgress,
-            })),
+            items
+              .filter((r) => r && typeof r === 'object')
+              .map((r) => pickSuggestionTableRow(r as Record<string, unknown>)),
+          );
+        } else if (items.length) {
+          const cols = breakdownExportColumns(first);
+          ws.columns = cols.map((c) => ({
+            header: c.header,
+            key: c.key,
+            width: c.key === 'key' ? 30 : 12,
+          }));
+          ws.addRows(
+            items
+              .filter((r) => r && typeof r === 'object')
+              .map((r) => {
+                const row = r as Record<string, unknown>;
+                const out: Record<string, unknown> = {};
+                for (const c of cols) {
+                  out[c.key] = row[c.key] ?? '';
+                }
+                return out;
+              }),
           );
         } else {
-          // Breakdown rows (key/count) or mixed
-          ws.columns = [
-            { header: 'Key', key: 'key', width: 30 },
-            { header: 'Count', key: 'count', width: 12 },
-            { header: 'Approved', key: 'approved', width: 12 },
-            { header: 'Pending', key: 'pending', width: 12 },
-            { header: 'Total', key: 'total', width: 12 },
-          ];
-          ws.addRows(items);
+          ws.columns = breakdownExportColumns(undefined).map((c) => ({
+            header: c.header,
+            key: c.key,
+            width: 20,
+          }));
+        }
+      } else if (
+        typeof d?.overall === 'number' &&
+        Array.isArray(d?.byUnit)
+      ) {
+        // implementationStatusOverallAndUnit — match UI: total + Unit / Count table
+        ws.addRow(['Total in implementation stages', (d.overall as number).toLocaleString()]);
+        ws.addRow([]);
+        ws.addRow(['Unit', 'Count']);
+        for (const r of d.byUnit as { key?: string; count?: number }[]) {
+          ws.addRow([r?.key ?? '', r?.count ?? '']);
         }
       } else {
-        // KPI object -> key/value
+        // Scalar KPI / approval summary (no raw nested JSON)
         ws.columns = [
-          { header: 'Metric', key: 'metric', width: 30 },
-          { header: 'Value', key: 'value', width: 16 },
+          { header: 'Metric', key: 'metric', width: 36 },
+          { header: 'Value', key: 'value', width: 18 },
         ];
-        ws.addRows(
-          Object.entries(data as Record<string, unknown>).map(([k, v]) => ({
-            metric: k,
-            value: typeof v === 'object' ? JSON.stringify(v) : String(v ?? ''),
-          })),
-        );
+        ws.addRows(scalarMetricRows(d));
       }
 
       const buf = await wb.xlsx.writeBuffer();
@@ -110,8 +137,51 @@ export class ReportsController {
       res.setHeader('Content-Disposition', `attachment; filename="${base}-${stamp}.xlsx"`);
       return res.send(Buffer.from(buf));
     } catch {
-      const rows = Array.isArray((data as any)?.items) ? (data as any).items : [data];
-      const csv = toCsv(rows);
+      const d = data as Record<string, unknown>;
+      let csv: string;
+      if (Array.isArray(d?.items)) {
+        const items = d.items as unknown[];
+        const first = items[0] as Record<string, unknown> | undefined;
+        const useSuggestionColumns =
+          items.length > 0
+            ? Boolean(first && isSuggestionListRow(first))
+            : !isBreakdownReport(String(query.report));
+        if (useSuggestionColumns) {
+          csv = toCsv(
+            items
+              .filter((r) => r && typeof r === 'object')
+              .map((r) => pickSuggestionTableRow(r as Record<string, unknown>)),
+          );
+        } else if (items.length) {
+          const cols = breakdownExportColumns(first);
+          csv = toCsv(
+            items
+              .filter((r) => r && typeof r === 'object')
+              .map((r) => {
+                const row = r as Record<string, unknown>;
+                const out: Record<string, unknown> = {};
+                for (const c of cols) out[c.key] = row[c.key] ?? '';
+                return out;
+              }),
+          );
+        } else {
+          csv = breakdownExportColumns(undefined)
+            .map((c) => c.header)
+            .join(',');
+        }
+      } else if (typeof d?.overall === 'number' && Array.isArray(d?.byUnit)) {
+        const lines = [
+          `Total in implementation stages,${csvEscape(d.overall)}`,
+          '',
+          'Unit,Count',
+          ...(d.byUnit as { key?: string; count?: number }[]).map(
+            (r) => `${csvEscape(r?.key ?? '')},${csvEscape(r?.count ?? '')}`,
+          ),
+        ];
+        csv = lines.join('\n');
+      } else {
+        csv = toCsv(scalarMetricRows(d).map((r) => ({ metric: r.metric, value: r.value })));
+      }
       res.setHeader('Content-Type', 'text/csv; charset=utf-8');
       res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, Content-Type, Content-Length');
       res.setHeader('Content-Disposition', `attachment; filename="${base}-${stamp}.csv"`);

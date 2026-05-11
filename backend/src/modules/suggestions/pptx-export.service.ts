@@ -292,7 +292,7 @@ export class PptxExportService {
       // Member photos (up to 5) placed in a grid like UI
       const memberPhotoPaths: Record<string, string> =
         data.teamMemberPhotoPaths ?? {};
-      const memberIds = Object.keys(memberPhotoPaths).slice(0, 5);
+      const memberIds = Object.keys(memberPhotoPaths).slice(0, 3);
       const count = memberIds.length || 1;
       const cols = count <= 1 ? 1 : count <= 2 ? 2 : 3;
       const rows = count <= 3 ? 1 : 2;
@@ -486,6 +486,27 @@ export class PptxExportService {
         `Others: ${std.others ? `Yes (${safe(std.othersDescription)})` : 'No'}`,
       ];
 
+      const hdRows = Array.isArray((data as AnyRecord).horizontalDeploymentCostRows)
+        ? ((data as AnyRecord).horizontalDeploymentCostRows as AnyRecord[])
+        : [];
+      let hdCostSum = 0;
+      const hdCostLines: string[] = [];
+      for (const r of hdRows) {
+        const item = safe(r?.item);
+        const costRaw = String(r?.cost ?? '').replace(/,/g, '');
+        const costNum = Number(costRaw);
+        if (!Number.isNaN(costNum) && costNum >= 0) hdCostSum += costNum;
+        if (item || costRaw) {
+          hdCostLines.push(
+            `  • ${item || '—'} — ₹${Number.isNaN(costNum) ? costRaw || '—' : costNum.toLocaleString('en-IN')}`,
+          );
+        }
+      }
+      const hdCostBlock =
+        hdCostLines.length > 0
+          ? `\n\nDeployment cost (Items / ₹):\n${hdCostLines.join('\n')}\nTotal: ₹${hdCostSum.toLocaleString('en-IN')}`
+          : '';
+
       const rightTextLines = [
         `Category: ${safe(data.category)}`,
         `Unit: ${safe(data.unit)}`,
@@ -499,7 +520,7 @@ export class PptxExportService {
         '',
         `Quantitative Results:\n${safe(data.quantitativeResults) || '—'}`,
         '',
-        `Horizontal Deployment:\n${safe(data.horizontalDeployment) || '—'}`,
+        `Horizontal Deployment:\n${safe(data.horizontalDeployment) || '—'}${hdCostBlock}`,
       ];
 
       s2.addText(rightTextLines.join('\n'), {
@@ -887,23 +908,8 @@ export class PptxExportService {
         align: 'center',
       });
 
-      // Helper line
-      s5.addText(
-        'Fill any 3 result KPIs (safety / cost / time / quality / etc.)',
-        {
-          x: 0.25,
-          y: 1.5,
-          w: 12.8,
-          h: 0.25,
-          fontFace: 'Calibri',
-          fontSize: 11,
-          bold: true,
-          color: '374151',
-        },
-      );
-
       // KPI header (3 columns)
-      const headerY = 1.8;
+      const headerY = 1.52;
       s5.addShape((PptxGenJS as any).ShapeType.rect, {
         x: 0,
         y: headerY,

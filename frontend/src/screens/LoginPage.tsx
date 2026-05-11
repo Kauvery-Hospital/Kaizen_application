@@ -31,6 +31,8 @@ const BACKEND_TO_UI_ROLE: Record<string, Role> = {
   HOD_FINANCE: Role.FINANCE_HOD,
   HOD_HR: Role.HR_HEAD,
   HOD_QUALITY: Role.QUALITY_HOD,
+  HOD_OPS: Role.OPS_HEAD,
+  HOD_NURSING: Role.NURSING_HEAD,
   BE_MEMBER: Role.BUSINESS_EXCELLENCE,
   BE_HEAD: Role.BUSINESS_EXCELLENCE_HEAD,
   ADMIN: Role.ADMIN,
@@ -93,6 +95,7 @@ type LoginApiUser = {
   name: string;
   employeeCode?: string;
   roles?: BackendRole[];
+  departmentHodAssignments?: string[];
 };
 
 type LoginResponse = {
@@ -130,6 +133,9 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
       name: user.name,
       role,
       roles,
+      departmentHodAssignments: Array.isArray(user.departmentHodAssignments)
+        ? user.departmentHodAssignments.filter(Boolean)
+        : [],
       employeeCode: user.employeeCode,
       accessToken,
     });

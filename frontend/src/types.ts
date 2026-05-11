@@ -7,6 +7,8 @@ export enum Role {
   QUALITY_HOD = 'Head - Quality',
   FINANCE_HOD = 'Head - Finance',
   HR_HEAD = 'Head - HR',
+  OPS_HEAD = 'Head - Operations',
+  NURSING_HEAD = 'Head - Nursing',
   BUSINESS_EXCELLENCE = 'Business Excellence Member',
   BUSINESS_EXCELLENCE_HEAD = 'Business Excellence Head',
   ADMIN = 'Admin',
@@ -154,6 +156,8 @@ export interface Suggestion {
     othersDescription?: string;
   };
   horizontalDeployment?: string;
+  /** Slide 2 — deployment cost lines (₹); sum over ₹5L requires Finance validation signature */
+  horizontalDeploymentCostRows?: Array<{ item: string; cost: string }>;
   /** Sheet 2 — quantitative results box (before detailed result lines on later pages) */
   quantitativeResults?: string;
   teamMembers?: string;
@@ -195,6 +199,17 @@ export interface Suggestion {
   requiredApprovals?: Role[]; // Which HODs need to approve
   /** Display names chosen by Unit Coordinator when routing (per approver role) */
   hodApproverNames?: Partial<Record<Role, string>>;
+  /** Level 1 = department sign-offs; Level 2 = functional heads in `requiredApprovals`. */
+  approvalPhase?: 'L1' | 'L2' | null;
+  /** Named department approvers (Level 1); each gets `approvedAt` when signed. */
+  departmentApprovals?: {
+    id: string;
+    department: string;
+    approverName: string;
+    approverEmployeeCode?: string | null;
+    approvedAt?: string | null;
+    approvedBy?: string | null;
+  }[];
   approvals?: Record<string, boolean>; // Map of Role -> Approved
   
   // -- Metadata --
@@ -212,6 +227,8 @@ export interface Suggestion {
   // Internal Notes
   screeningNotes?: string;
   rewardEvaluation?: RewardEvaluation;
+  /** Relative path under upload root — HR reward proof photo before final closure */
+  hrRewardValidationImagePath?: string | null;
 
   /** Present when an idea is fully closed (series KH-KZ-YYYY-0001, etc.) */
   implementedKaizen?: {
@@ -248,6 +265,8 @@ export interface User {
   role: Role;
   /** All roles assigned to this user (used for role switching). */
   roles?: Role[];
+  /** Admin-assigned department HOD scopes shown in the role switcher. */
+  departmentHodAssignments?: string[];
   employeeCode?: string;
   accessToken?: string;
 }

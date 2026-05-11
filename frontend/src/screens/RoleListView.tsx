@@ -10,6 +10,11 @@ type UsersApiRow = {
   unitScopes?: {
     UNIT_COORDINATOR?: string[];
     SELECTION_COMMITTEE?: string[];
+    HOD_FINANCE?: string[];
+    HOD_QUALITY?: string[];
+    HOD_HR?: string[];
+    HOD_OPS?: string[];
+    HOD_NURSING?: string[];
   };
   department?: string | null;
   designation?: string | null;
@@ -314,9 +319,59 @@ export const RoleListView: React.FC<{
                           SC:{code}
                         </span>
                       ))}
+                      {(u.unitScopes?.HOD_FINANCE || []).map((code) => (
+                        <span
+                          key={`${u.id}-hf-${code}`}
+                          className="inline-flex items-center px-2 py-1 rounded-full border text-[11px] font-extrabold bg-amber-50 text-amber-800 border-amber-200"
+                          title="HOD_FINANCE scope"
+                        >
+                          Fin:{code}
+                        </span>
+                      ))}
+                      {(u.unitScopes?.HOD_QUALITY || []).map((code) => (
+                        <span
+                          key={`${u.id}-hq-${code}`}
+                          className="inline-flex items-center px-2 py-1 rounded-full border text-[11px] font-extrabold bg-amber-50 text-amber-800 border-amber-200"
+                          title="HOD_QUALITY scope"
+                        >
+                          Qual:{code}
+                        </span>
+                      ))}
+                      {(u.unitScopes?.HOD_HR || []).map((code) => (
+                        <span
+                          key={`${u.id}-hh-${code}`}
+                          className="inline-flex items-center px-2 py-1 rounded-full border text-[11px] font-extrabold bg-amber-50 text-amber-800 border-amber-200"
+                          title="HOD_HR scope"
+                        >
+                          HR:{code}
+                        </span>
+                      ))}
+                      {(u.unitScopes?.HOD_OPS || []).map((code) => (
+                        <span
+                          key={`${u.id}-ho-${code}`}
+                          className="inline-flex items-center px-2 py-1 rounded-full border text-[11px] font-extrabold bg-amber-50 text-amber-800 border-amber-200"
+                          title="HOD_OPS scope"
+                        >
+                          Ops:{code}
+                        </span>
+                      ))}
+                      {(u.unitScopes?.HOD_NURSING || []).map((code) => (
+                        <span
+                          key={`${u.id}-hn-${code}`}
+                          className="inline-flex items-center px-2 py-1 rounded-full border text-[11px] font-extrabold bg-amber-50 text-amber-800 border-amber-200"
+                          title="HOD_NURSING scope"
+                        >
+                          Nur:{code}
+                        </span>
+                      ))}
                       {!(
                         u.unitScopes?.UNIT_COORDINATOR?.length ||
-                        u.unitScopes?.SELECTION_COMMITTEE?.length
+                        u.unitScopes?.SELECTION_COMMITTEE?.length ||
+                        u.unitScopes?.HOD_FINANCE?.length ||
+                        u.unitScopes?.HOD_QUALITY?.length ||
+                        u.unitScopes?.HOD_HR?.length ||
+                        u.unitScopes?.HOD_OPS?.length ||
+                        u.unitScopes?.HOD_NURSING?.length
                       ) && (
                         <span className="text-xs text-gray-500 font-bold">—</span>
                       )}

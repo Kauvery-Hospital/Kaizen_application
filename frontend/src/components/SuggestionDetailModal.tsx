@@ -9,11 +9,37 @@ import {
   type User,
 } from '../types';
 import { resolveImplementationPatchActor } from '../utils/implementationPatchActor';
+import {
+  clampImplementationPercent,
+  computeImplementationProgressPercentFromDraft,
+} from '../utils/implementerTemplateProgress';
 import { STATUS_COLORS } from '../constants';
-import { HOD_DIRECTORY, HOD_DEPARTMENT_OPTIONS } from '../constants/hodDirectory';
+import {
+  appRoleToHodRoleCode,
+  firstDepartmentKeyForRole,
+  LEVEL_2_APPROVAL_ROUTES,
+} from '../constants/hodDirectory';
+import {
+  isL2ApprovalPhase,
+  pendingDepartmentL1ForUser,
+  userMatchesDepartmentSlot,
+} from '../utils/phasedApproval';
 import { analyzeSuggestion } from '../services/geminiService';
 import { RewardEvaluationForm } from './RewardEvaluationForm';
 import { SuggestionForm, type SuggestionFormHandle } from './SuggestionForm';
+
+/** Implementer deadline picker: only dates from assignment through assignment + this many calendar days. */
+const MAX_DEADLINE_EXTENSION_DAYS = 10;
+
+function addCalendarDaysToIsoDate(ymd: string, days: number): string | null {
+  const d = new Date(`${ymd}T12:00:00`);
+  if (Number.isNaN(d.getTime())) return null;
+  d.setDate(d.getDate() + days);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
 
 interface ModalProps {
   suggestion: Suggestion | null;
@@ -30,6 +56,8 @@ interface ModalProps {
     extraData?: Partial<Suggestion>,
     actorRoleOverride?: Role,
   ) => Promise<void> | void;
+  /** Called after side-effect updates that bypass PATCH status (e.g. HR reward photo upload). */
+  onSuggestionRefreshed?: (s: Suggestion) => void;
   initialView?: 'default' | 'tracking' | 'hod-review';
   apiBase: string;
   accessToken: string;
@@ -48,6 +76,7 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
   currentUserName = '',
   userRoles,
   onUpdateStatus,
+  onSuggestionRefreshed,
   initialView = 'default',
   apiBase,
   accessToken,
@@ -78,6 +107,7 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
   const [notes, setNotes] = useState('');
   const [commentDraft, setCommentDraft] = useState('');
   const [approvalRemarks, setApprovalRemarks] = useState('');
+  const [uploadingHrRewardPhoto, setUploadingHrRewardPhoto] = useState(false);
 
   const handleAddNote = async () => {
     const text = String(commentDraft || '').trim();
@@ -121,16 +151,50 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
   const [hrmsReportingManager, setHrmsReportingManager] = useState<string | null>(null);
   const [implementationDeadline, setImplementationDeadline] = useState('');
   const [implementationStage, setImplementationStage] = useState<'Started' | 'In Progress' | 'Completed'>('Started');
-  const [implementationProgress, setImplementationProgress] = useState<number>(0);
   const [implementationUpdate, setImplementationUpdate] = useState('');
   const [deadlineChangeDate, setDeadlineChangeDate] = useState('');
   const [deadlineChangeRemark, setDeadlineChangeRemark] = useState('');
 
-  // Verification State
-  const [selectedApprovers, setSelectedApprovers] = useState<Role[]>([]);
-  const [hodApproverNames, setHodApproverNames] = useState<Partial<Record<Role, string>>>({});
-  const [selectedDeptForHod, setSelectedDeptForHod] = useState('');
-  const [selectedHodUserName, setSelectedHodUserName] = useState('');
+  // Verification State (UC routing after BE review)
+  /** Level 2 — Finance Head, Ops Head, Nursing only (unit-scoped portal users per role). */
+  const [functionalApprovalSlots, setFunctionalApprovalSlots] = useState<
+    {
+      id: string;
+      department: string;
+      role: Role;
+      approverName: string;
+      approverEmployeeCode?: string | null;
+    }[]
+  >([]);
+  /** Level 1 — department / named approver slots (before functional heads). */
+  const [departmentApprovalSlots, setDepartmentApprovalSlots] = useState<
+    {
+      id: string;
+      department: string;
+      approverName: string;
+      approverEmployeeCode?: string | null;
+    }[]
+  >([]);
+  const [hodOptionsL1, setHodOptionsL1] = useState<{ employeeCode: string; name: string }[]>(
+    [],
+  );
+  const [hodOptionsL2, setHodOptionsL2] = useState<{ employeeCode: string; name: string }[]>(
+    [],
+  );
+  const [hodLoadingL1, setHodLoadingL1] = useState(false);
+  const [hodLoadingL2, setHodLoadingL2] = useState(false);
+  /** Merged master + unit-specific departments for Level 1 (preferred over prop-only list). */
+  const [l1DepartmentPickerOptions, setL1DepartmentPickerOptions] = useState<
+    { id: string; name: string }[]
+  >([]);
+  const [l1DeptCatalogLoading, setL1DeptCatalogLoading] = useState(false);
+  /** Master HRMS department name (full department list). */
+  const [selectedMasterDeptL1, setSelectedMasterDeptL1] = useState('');
+  /** Selected row value = portal user employeeCode (from unit-scoped HOD API). */
+  const [selectedHodEmpCodeL1, setSelectedHodEmpCodeL1] = useState('');
+  /** Level 2 route: Finance / Ops / Nursing only. */
+  const [selectedLevel2Role, setSelectedLevel2Role] = useState<Role | ''>('');
+  const [selectedHodEmpCodeL2, setSelectedHodEmpCodeL2] = useState('');
   const [coordinatorSuggestion, setCoordinatorSuggestion] = useState('');
   /** Required UC-entered title when approving/rejecting screening or routing after BE review. */
   const [ucApprovalHeading, setUcApprovalHeading] = useState('');
@@ -162,14 +226,36 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
       setImplementerDept(suggestion.assignedDepartment || '');
       setImplementationDeadline(suggestion.implementationDeadline || '');
       setImplementationStage((suggestion.implementationStage as any) || 'Started');
-      setImplementationProgress(suggestion.implementationProgress || 0);
       setImplementationUpdate(suggestion.implementationUpdate || '');
       setDeadlineChangeDate('');
       setDeadlineChangeRemark('');
-      setSelectedApprovers(suggestion.requiredApprovals || []);
-      setHodApproverNames(suggestion.hodApproverNames || {});
-      setSelectedDeptForHod('');
-      setSelectedHodUserName('');
+      setFunctionalApprovalSlots(
+        (suggestion.requiredApprovals || []).map((r) => ({
+          id: `persist-${suggestion.id}-${r}`,
+          department: firstDepartmentKeyForRole(r) || String(r),
+          role: r,
+          approverName: String(suggestion.hodApproverNames?.[r] ?? ''),
+        })),
+      );
+      setDepartmentApprovalSlots(
+        Array.isArray(suggestion.departmentApprovals)
+          ? suggestion.departmentApprovals.map((row: any) => ({
+              id: String(row?.id || `slot-${suggestion.id}-${row?.department}`),
+              department: String(row?.department || ''),
+              approverName: String(row?.approverName || ''),
+              approverEmployeeCode: row?.approverEmployeeCode
+                ? String(row.approverEmployeeCode)
+                : null,
+            }))
+          : [],
+      );
+      setHodOptionsL1([]);
+      setHodOptionsL2([]);
+      setL1DepartmentPickerOptions([]);
+      setSelectedMasterDeptL1('');
+      setSelectedHodEmpCodeL1('');
+      setSelectedLevel2Role('');
+      setSelectedHodEmpCodeL2('');
       setCoordinatorSuggestion(suggestion.coordinatorSuggestion || '');
       setFinalGenerated(null);
     }
@@ -248,7 +334,139 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
     };
   }, [apiBase, accessToken, isOpen, suggestion?.id, suggestion?.assignedImplementerCode]);
 
+  useEffect(() => {
+    if (!isOpen || !accessToken || !suggestion) return;
+    if (role !== Role.UNIT_COORDINATOR) return;
+    if (suggestion.status !== Status.BE_REVIEW_DONE) return;
+    const unit = String(suggestion.assignedUnit || suggestion.unit || '').trim();
+    if (!selectedMasterDeptL1 || !unit) {
+      setHodOptionsL1([]);
+      return;
+    }
+    let cancelled = false;
+    setHodLoadingL1(true);
+    (async () => {
+      try {
+        const res = await fetch(
+          `${apiBase}/users/unit-department-members?unitCode=${encodeURIComponent(unit)}&department=${encodeURIComponent(selectedMasterDeptL1)}`,
+          { headers: { Authorization: `Bearer ${accessToken}` } },
+        );
+        const data = res.ok ? await res.json() : [];
+        if (cancelled) return;
+        setHodOptionsL1(Array.isArray(data) ? data : []);
+      } catch {
+        if (!cancelled) setHodOptionsL1([]);
+      } finally {
+        if (!cancelled) setHodLoadingL1(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    apiBase,
+    accessToken,
+    isOpen,
+    role,
+    selectedMasterDeptL1,
+    suggestion?.assignedUnit,
+    suggestion?.id,
+    suggestion?.status,
+    suggestion?.unit,
+  ]);
+
+  useEffect(() => {
+    if (!isOpen || !accessToken || !suggestion) return;
+    if (role !== Role.UNIT_COORDINATOR) return;
+    if (suggestion.status !== Status.BE_REVIEW_DONE) return;
+    const unit = String(suggestion.assignedUnit || suggestion.unit || '').trim();
+    if (!selectedLevel2Role || !unit) {
+      setHodOptionsL2([]);
+      return;
+    }
+    const rc = appRoleToHodRoleCode(selectedLevel2Role as Role);
+    if (!rc) {
+      setHodOptionsL2([]);
+      return;
+    }
+    let cancelled = false;
+    setHodLoadingL2(true);
+    (async () => {
+      try {
+        const res = await fetch(
+          `${apiBase}/users/unit-scoped-hods?unitCode=${encodeURIComponent(unit)}&roleCode=${encodeURIComponent(rc)}`,
+          { headers: { Authorization: `Bearer ${accessToken}` } },
+        );
+        const data = res.ok ? await res.json() : [];
+        if (cancelled) return;
+        setHodOptionsL2(Array.isArray(data) ? data : []);
+      } catch {
+        if (!cancelled) setHodOptionsL2([]);
+      } finally {
+        if (!cancelled) setHodLoadingL2(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    apiBase,
+    accessToken,
+    isOpen,
+    role,
+    selectedLevel2Role,
+    suggestion?.assignedUnit,
+    suggestion?.id,
+    suggestion?.status,
+    suggestion?.unit,
+  ]);
+
+  useEffect(() => {
+    if (!isOpen || !accessToken || !suggestion) return;
+    if (role !== Role.UNIT_COORDINATOR) return;
+    if (suggestion.status !== Status.BE_REVIEW_DONE) return;
+    const unit = String(suggestion.assignedUnit || suggestion.unit || '').trim();
+    let cancelled = false;
+    setL1DeptCatalogLoading(true);
+    (async () => {
+      try {
+        if (!unit) {
+          if (!cancelled) setL1DepartmentPickerOptions([]);
+          return;
+        }
+        const res = await fetch(
+          `${apiBase}/hrms/departments-for-unit?unitCode=${encodeURIComponent(unit)}`,
+          { headers: { Authorization: `Bearer ${accessToken}` } },
+        );
+        const data = res.ok ? await res.json() : [];
+        if (cancelled) return;
+        setL1DepartmentPickerOptions(Array.isArray(data) ? data : []);
+      } catch {
+        if (!cancelled) setL1DepartmentPickerOptions([]);
+      } finally {
+        if (!cancelled) setL1DeptCatalogLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    apiBase,
+    accessToken,
+    isOpen,
+    role,
+    suggestion?.assignedUnit,
+    suggestion?.id,
+    suggestion?.status,
+    suggestion?.unit,
+  ]);
+
   if (!isOpen || !suggestion) return null;
+
+  const level1DepartmentChoices =
+    l1DepartmentPickerOptions.length > 0
+      ? l1DepartmentPickerOptions
+      : departmentOptions;
 
   const displayHeading =
     String(suggestion.theme || '').trim() ||
@@ -338,18 +556,17 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
     }
   };
 
-  const handleImplementerProgressUpdate = async () => {
-    const floor = suggestion.implementationProgress ?? 0;
+  /** Persists working status & notes only — % progress comes from saved template draft (automated). */
+  const handleImplementerWorkStatusSave = async () => {
     try {
       await onUpdateStatus(suggestion.id, Status.ASSIGNED_FOR_IMPLEMENTATION, {
         implementationStage,
-        implementationProgress: Math.max(floor, implementationProgress),
         implementationUpdate,
         implementationUpdateDate: new Date().toISOString().split('T')[0],
       });
-      showToast('success', 'Progress updated');
+      showToast('success', 'Status & notes saved');
     } catch {
-      showToast('error', 'Failed to update progress');
+      showToast('error', 'Failed to save');
     }
   };
 
@@ -360,16 +577,25 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
       return;
     }
     if (!deadlineChangeRemark.trim()) {
-      alert('Please add remark for deadline change.');
+      alert('Remark is required when changing the deadline.');
       return;
     }
     const assignedDate = suggestion.implementationAssignedDate || suggestion.dateSubmitted;
     const assigned = new Date(`${assignedDate}T00:00:00`);
-    const max = new Date(assigned);
-    max.setMonth(max.getMonth() + 1);
     const next = new Date(`${deadlineChangeDate}T00:00:00`);
-    if (next < assigned || next > max) {
-      alert(`Deadline must be within 1 month from assigned date (${assignedDate}).`);
+    if (Number.isNaN(assigned.getTime()) || Number.isNaN(next.getTime())) {
+      alert('Invalid date.');
+      return;
+    }
+    if (next < assigned) {
+      alert(`Deadline cannot be before assignment date (${assignedDate}).`);
+      return;
+    }
+    const maxAllowedStr = addCalendarDaysToIsoDate(assignedDate, MAX_DEADLINE_EXTENSION_DAYS);
+    if (!maxAllowedStr || deadlineChangeDate > maxAllowedStr) {
+      alert(
+        `Deadline must be within ${MAX_DEADLINE_EXTENSION_DAYS} calendar days of assignment (${assignedDate}). Latest allowed: ${maxAllowedStr ?? '—'}.`,
+      );
       return;
     }
     try {
@@ -392,6 +618,7 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
       'beforeDescription',
       'afterDescription',
       'horizontalDeployment',
+      'horizontalDeploymentCostRows',
       'quantitativeResults',
       'howMuch',
       'processBefore',
@@ -493,7 +720,12 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
             suggestion.id,
             suggestion.status as Status,
             {
-              ...data,
+              implementationDraft: data,
+              implementationProgress: clampImplementationPercent(
+                computeImplementationProgressPercentFromDraft(
+                  data as Record<string, unknown>,
+                ),
+              ),
               implementationUpdateDate: new Date().toISOString().split('T')[0],
             },
             implActor,
@@ -512,34 +744,46 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
         showToast('error', 'Idea heading is required.');
         return;
       }
-      if (selectedApprovers.length === 0) {
-        showToast(
-          'error',
-          'Select at least one head (Quality, Finance, or HR). Each will approve in their queue.',
-        );
-        return;
+      const requiredApprovals = [...new Set(functionalApprovalSlots.map((s) => s.role))];
+      const hodApproverNames: Partial<Record<Role, string>> = {};
+      for (const s of functionalApprovalSlots) {
+        hodApproverNames[s.role] = s.approverName;
       }
-      onUpdateStatus(suggestion.id, Status.VERIFIED_PENDING_APPROVAL, {
+      const departmentApprovals = departmentApprovalSlots.map((s) => ({
+        id: s.id,
+        department: s.department,
+        approverName: s.approverName,
+        approverEmployeeCode: s.approverEmployeeCode ?? null,
+        approvedAt: null as string | null,
+        approvedBy: null as string | null,
+      }));
+      const approvalPhase = departmentApprovals.length > 0 ? 'L1' : 'L2';
+      const hasLevel1 = departmentApprovals.length > 0;
+      const hasLevel2 = requiredApprovals.length > 0;
+      const nextStatus =
+        !hasLevel1 && !hasLevel2
+          ? Status.BE_EVALUATION_PENDING
+          : Status.VERIFIED_PENDING_APPROVAL;
+
+      onUpdateStatus(suggestion.id, nextStatus, {
         theme: heading,
         coordinatorSuggestion,
         approvals: {},
-        requiredApprovals: selectedApprovers,
+        requiredApprovals,
         hodApproverNames,
+        departmentApprovals,
+        approvalPhase: nextStatus === Status.VERIFIED_PENDING_APPROVAL ? approvalPhase : null,
         validatedBy: suggestion.validatedBy || currentUserName || 'Unit Coordinator',
       });
   };
-
-  const HEAD_APPROVER_CHIPS: { role: Role; short: string }[] = [
-    { role: Role.QUALITY_HOD, short: 'Quality' },
-    { role: Role.FINANCE_HOD, short: 'Finance' },
-    { role: Role.HR_HEAD, short: 'HR' },
-  ];
 
   const hodRoleLabel = (r: Role) => {
     const map: Partial<Record<Role, string>> = {
       [Role.QUALITY_HOD]: 'Head — Quality',
       [Role.FINANCE_HOD]: 'Head — Finance',
       [Role.HR_HEAD]: 'Head — HR',
+      [Role.OPS_HEAD]: 'Head — Operations',
+      [Role.NURSING_HEAD]: 'Head — Nursing',
     };
     return map[r] || String(r);
   };
@@ -590,7 +834,16 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
 
   const handleFunctionalApprove = async () => {
     const r = role;
-    if (![Role.FINANCE_HOD, Role.QUALITY_HOD, Role.HR_HEAD].includes(r)) return;
+    if (
+      ![
+        Role.FINANCE_HOD,
+        Role.QUALITY_HOD,
+        Role.HR_HEAD,
+        Role.OPS_HEAD,
+        Role.NURSING_HEAD,
+      ].includes(r)
+    )
+      return;
     try {
       const nextApprovals = { ...(suggestion.approvals || {}), [r]: true };
       const req = suggestion.requiredApprovals || [];
@@ -623,6 +876,8 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
       await onUpdateStatus(suggestion.id, Status.BE_REVIEW_DONE, {
         beReviewNotes: remark,
         approvals: {},
+        departmentApprovals: [],
+        approvalPhase: null,
       });
       showToast('success', 'Sent back to Unit Coordinator');
       setApprovalRemarks('');
@@ -631,25 +886,99 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
     }
   };
 
-  const addHodFromPicker = () => {
-    if (!selectedDeptForHod || !selectedHodUserName) {
-      alert('Select a department and an HOD user to assign.');
+  const addDepartmentSlotFromPicker = () => {
+    if (!selectedMasterDeptL1 || !selectedHodEmpCodeL1) {
+      alert('Select a department and a named approver (portal users in that department at this unit).');
       return;
     }
-    const entry = HOD_DIRECTORY[selectedDeptForHod];
-    if (!entry) return;
-    const r = entry.role;
-    setSelectedApprovers(prev => (prev.includes(r) ? prev : [...prev, r]));
-    setHodApproverNames(prev => ({ ...prev, [r]: selectedHodUserName }));
+    const pick = hodOptionsL1.find((u) => u.employeeCode === selectedHodEmpCodeL1);
+    const approverName = pick?.name ?? selectedHodEmpCodeL1;
+    const id =
+      typeof crypto !== 'undefined' && 'randomUUID' in crypto
+        ? crypto.randomUUID()
+        : `slot-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    setDepartmentApprovalSlots((prev) => [
+      ...prev,
+      {
+        id,
+        department: selectedMasterDeptL1,
+        approverName,
+        approverEmployeeCode: selectedHodEmpCodeL1,
+      },
+    ]);
+    setSelectedMasterDeptL1('');
+    setSelectedHodEmpCodeL1('');
   };
 
-  const removeApprover = (r: Role) => {
-    setSelectedApprovers(prev => prev.filter(x => x !== r));
-    setHodApproverNames(prev => {
-      const next = { ...prev };
-      delete next[r];
-      return next;
+  const addFunctionalSlotFromPicker = () => {
+    if (!selectedLevel2Role || !selectedHodEmpCodeL2) {
+      alert('Select Finance Head, Ops Head, or Nursing, then a named head.');
+      return;
+    }
+    const route = LEVEL_2_APPROVAL_ROUTES.find((x) => x.role === selectedLevel2Role);
+    if (!route) return;
+    const fnRole = route.role;
+    const pick = hodOptionsL2.find((u) => u.employeeCode === selectedHodEmpCodeL2);
+    const approverName = pick?.name ?? selectedHodEmpCodeL2;
+    const id =
+      typeof crypto !== 'undefined' && 'randomUUID' in crypto
+        ? crypto.randomUUID()
+        : `l2-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    setFunctionalApprovalSlots((prev) => {
+      const rest = prev.filter((s) => s.role !== fnRole);
+      return [
+        ...rest,
+        {
+          id,
+          department: route.label,
+          role: fnRole,
+          approverName,
+          approverEmployeeCode: selectedHodEmpCodeL2,
+        },
+      ];
     });
+    setSelectedLevel2Role('');
+    setSelectedHodEmpCodeL2('');
+  };
+
+  const removeDepartmentSlot = (id: string) => {
+    setDepartmentApprovalSlots((prev) => prev.filter((s) => s.id !== id));
+  };
+
+  const handleDepartmentL1Approve = async (slotId: string) => {
+    const slots = suggestion.departmentApprovals || [];
+    const next = slots.map((row) =>
+      row.id === slotId
+        ? {
+            ...row,
+            approvedAt: new Date().toISOString(),
+            approvedBy: currentUserName || String(role),
+          }
+        : row,
+    );
+    const l1Complete = next.every((row) => String(row?.approvedAt ?? '').trim());
+    const hasLevel2 = (suggestion.requiredApprovals || []).length > 0;
+    try {
+      await onUpdateStatus(
+        suggestion.id,
+        Status.VERIFIED_PENDING_APPROVAL,
+        {
+          departmentApprovals: next,
+        },
+      );
+      showToast(
+        'success',
+        l1Complete && !hasLevel2
+          ? 'Final Level 1 approval recorded and sent to BE Head evaluation'
+          : 'Department approval recorded',
+      );
+    } catch (e: any) {
+      showToast('error', e?.message || 'Failed to record approval');
+    }
+  };
+
+  const removeFunctionalSlot = (id: string) => {
+    setFunctionalApprovalSlots((prev) => prev.filter((s) => s.id !== id));
   };
 
   const handleTemplateAssetAction = (fileType: 'ppt' | 'pdf') => {
@@ -669,22 +998,81 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
         rewardEvaluation: evaluation,
         approvals: {},
         requiredApprovals: [Role.FINANCE_HOD],
+        approvalPhase: 'L2',
+        departmentApprovals: [],
       });
       return;
     }
     onUpdateStatus(suggestion.id, Status.REWARD_PENDING, { rewardEvaluation: evaluation });
   };
 
-  // 7. HR: Process Reward
+  // 7. HR: Process Reward (requires reward validation photo first — enforced server-side)
   const handleProcessReward = () => {
-      onUpdateStatus(suggestion.id, Status.REWARDED);
+    const proof = String(suggestion.hrRewardValidationImagePath ?? '').trim();
+    if (!proof) {
+      showToast('error', 'Upload the HR reward validation photo before closing.');
+      return;
+    }
+    void onUpdateStatus(suggestion.id, Status.REWARDED);
+  };
+
+  const handleHrRewardPhotoSelected = async (fileList: FileList | null) => {
+    const file = fileList?.[0];
+    if (!file || !suggestion) return;
+    setUploadingHrRewardPhoto(true);
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const res = await fetch(`${apiBase}/suggestions/${suggestion.id}/hr-reward-validation`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${accessToken}` },
+        body: fd,
+      });
+      if (!res.ok) {
+        const t = await res.text();
+        throw new Error(t || 'Upload failed');
+      }
+      const updated = (await res.json()) as Suggestion;
+      onSuggestionRefreshed?.(updated);
+      showToast('success', 'Reward validation photo saved.');
+    } catch (e) {
+      showToast('error', e instanceof Error ? e.message : 'Upload failed');
+    } finally {
+      setUploadingHrRewardPhoto(false);
+    }
   };
 
   const pendingApprovers =
-    suggestion.requiredApprovals?.filter(r => !suggestion.approvals?.[r]) || [];
+    isL2ApprovalPhase(suggestion) && suggestion.requiredApprovals
+      ? suggestion.requiredApprovals.filter((r) => !suggestion.approvals?.[r])
+      : [];
 
   const nextApprover =
     pendingApprovers.length > 0 ? pendingApprovers[0] : null;
+
+  const level1Approvals = Array.isArray(suggestion.departmentApprovals)
+    ? suggestion.departmentApprovals
+    : [];
+  const level1Approved = level1Approvals.filter((row) =>
+    String(row?.approvedAt ?? '').trim(),
+  );
+  const level1Pending = level1Approvals.filter(
+    (row) => !String(row?.approvedAt ?? '').trim(),
+  );
+  const level2Approvals = Array.isArray(suggestion.requiredApprovals)
+    ? suggestion.requiredApprovals
+    : [];
+  const level2Approved = level2Approvals.filter((r) => suggestion.approvals?.[r]);
+  const level2Pending = level2Approvals.filter((r) => !suggestion.approvals?.[r]);
+  const approvalsRequired =
+    level1Approvals.length > 0 || level2Approvals.length > 0;
+
+  const formatTrackingDate = (value?: string | null) => {
+    const raw = String(value || '').trim();
+    if (!raw) return '—';
+    const parsed = new Date(raw);
+    return Number.isNaN(parsed.getTime()) ? raw : parsed.toLocaleString();
+  };
 
   const getCurrentOwner = () => {
     if (suggestion.status === Status.IDEA_SUBMITTED) return Role.UNIT_COORDINATOR;
@@ -695,7 +1083,10 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
     if (suggestion.status === Status.IMPLEMENTATION_DONE) return Role.BUSINESS_EXCELLENCE;
     if (suggestion.status === Status.BE_REVIEW_DONE) return Role.UNIT_COORDINATOR;
     if (suggestion.status === Status.BE_EVALUATION_PENDING) return Role.BUSINESS_EXCELLENCE_HEAD;
-    if (suggestion.status === Status.VERIFIED_PENDING_APPROVAL) return nextApprover || Role.QUALITY_HOD;
+    if (suggestion.status === Status.VERIFIED_PENDING_APPROVAL) {
+      if (!isL2ApprovalPhase(suggestion)) return 'Department approvers (L1)';
+      return nextApprover || Role.QUALITY_HOD;
+    }
     if (suggestion.status === Status.REWARD_PENDING) return 'HR';
     if (suggestion.status === Status.REWARDED) return 'Closed';
     if (suggestion.status === Status.IDEA_REJECTED) return 'Closed';
@@ -710,6 +1101,9 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
     if (suggestion.status === Status.BE_REVIEW_DONE) return 'Unit Coordinator approval after BE review';
     if (suggestion.status === Status.BE_EVALUATION_PENDING) return 'Business Excellence Head final scoring and evaluation';
     if (suggestion.status === Status.VERIFIED_PENDING_APPROVAL) {
+      if (!isL2ApprovalPhase(suggestion)) {
+        return 'Pending Level 1 department sign-offs (then functional heads)';
+      }
       if (nextApprover) return `Pending functional approval: ${String(nextApprover)}`;
       return 'Pending functional approvals';
     }
@@ -719,125 +1113,259 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
     return 'N/A';
   };
 
+  const trackingStageTitle = (() => {
+    if (suggestion.status === Status.IDEA_SUBMITTED) return 'Awaiting coordinator screening';
+    if (suggestion.status === Status.APPROVED_FOR_ASSIGNMENT)
+      return 'Waiting for implementer assignment';
+    if (suggestion.status === Status.ASSIGNED_FOR_IMPLEMENTATION)
+      return 'Implementation in progress';
+    if (suggestion.status === Status.IMPLEMENTATION_DONE)
+      return 'Waiting for BE review';
+    if (suggestion.status === Status.BE_REVIEW_DONE)
+      return 'Waiting for coordinator routing';
+    if (suggestion.status === Status.VERIFIED_PENDING_APPROVAL) {
+      if (!isL2ApprovalPhase(suggestion)) return 'Level 1 department approvals in progress';
+      return 'Level 2 functional approvals in progress';
+    }
+    if (suggestion.status === Status.BE_EVALUATION_PENDING)
+      return 'Waiting for BE Head evaluation';
+    if (suggestion.status === Status.REWARD_PENDING)
+      return 'Waiting for HR reward closure';
+    if (suggestion.status === Status.REWARDED) return 'Closed successfully';
+    if (suggestion.status === Status.IDEA_REJECTED) return 'Closed as rejected';
+    return suggestion.status;
+  })();
+
+  const trackingStageHint = (() => {
+    if (suggestion.status === Status.VERIFIED_PENDING_APPROVAL) {
+      if (!isL2ApprovalPhase(suggestion)) {
+        if (level1Pending.length === 0) {
+          return level2Approvals.length > 0
+            ? 'All Level 1 sign-offs are complete. Level 2 approvals are next.'
+            : 'All Level 1 sign-offs are complete. The idea will move to BE Head evaluation.';
+        }
+        return `${level1Approved.length}/${level1Approvals.length} department sign-offs completed.`;
+      }
+      if (level2Approvals.length === 0) {
+        return 'No functional approvals are pending.';
+      }
+      return `${level2Approved.length}/${level2Approvals.length} functional approvals completed.`;
+    }
+    if (suggestion.status === Status.REWARDED)
+      return 'Reward processing is complete and the idea is closed.';
+    if (suggestion.status === Status.IDEA_REJECTED)
+      return 'This idea was rejected and removed from the active workflow.';
+    return getActionRequired();
+  })();
+
+  const approvalTrackerSummary = (() => {
+    if (!approvalsRequired) {
+      return 'No Level 1 or Level 2 approvals were selected for this idea.';
+    }
+    if (level1Approvals.length > 0 && level2Approvals.length > 0) {
+      return `${level1Approved.length}/${level1Approvals.length} Level 1 sign-offs and ${level2Approved.length}/${level2Approvals.length} Level 2 approvals completed.`;
+    }
+    if (level1Approvals.length > 0) {
+      return `${level1Approved.length}/${level1Approvals.length} Level 1 department sign-offs completed.`;
+    }
+    return `${level2Approved.length}/${level2Approvals.length} Level 2 functional approvals completed.`;
+  })();
+
+  const approvalsOwnerLabel = (() => {
+    if (!approvalsRequired) return 'Skipped';
+    if (!isL2ApprovalPhase(suggestion)) return 'Named department approvers';
+    return nextApprover || 'Functional heads';
+  })();
+
+  const workflowCurrentStepId = (() => {
+    if (suggestion.status === Status.IDEA_SUBMITTED) return 'screening';
+    if (suggestion.status === Status.APPROVED_FOR_ASSIGNMENT) return 'assignment';
+    if (suggestion.status === Status.ASSIGNED_FOR_IMPLEMENTATION)
+      return 'implementation';
+    if (suggestion.status === Status.IMPLEMENTATION_DONE) return 'be_review';
+    if (suggestion.status === Status.BE_REVIEW_DONE) return 'coordinator';
+    if (suggestion.status === Status.VERIFIED_PENDING_APPROVAL) return 'approvals';
+    if (suggestion.status === Status.BE_EVALUATION_PENDING) return 'be_head';
+    if (suggestion.status === Status.REWARD_PENDING) return 'reward';
+    return null;
+  })();
+
   const workflowSteps: Array<{
     id: string;
     title: string;
     owner: string;
-    statuses: Status[];
-    state: 'done' | 'current' | 'pending';
+    detail: string;
+    state: 'done' | 'current' | 'pending' | 'skipped';
   }> = [
     {
       id: 'submission',
-      title: 'Idea Submitted',
+      title: 'Idea submitted',
       owner: Role.EMPLOYEE,
-      statuses: [
-        Status.IDEA_SUBMITTED,
-        Status.APPROVED_FOR_ASSIGNMENT,
-        Status.ASSIGNED_FOR_IMPLEMENTATION,
-        Status.IMPLEMENTATION_DONE,
-        Status.BE_REVIEW_DONE,
-        Status.VERIFIED_PENDING_APPROVAL,
-        Status.BE_EVALUATION_PENDING,
-        Status.REWARD_PENDING,
-        Status.REWARDED,
-      ],
+      detail: 'Originator created and submitted the suggestion.',
       state: 'pending',
     },
     {
       id: 'screening',
-      title: 'Coordinator Screening',
+      title: 'Coordinator screening',
       owner: Role.UNIT_COORDINATOR,
-      statuses: [
-        Status.APPROVED_FOR_ASSIGNMENT,
-        Status.ASSIGNED_FOR_IMPLEMENTATION,
-        Status.IMPLEMENTATION_DONE,
-        Status.BE_REVIEW_DONE,
-        Status.VERIFIED_PENDING_APPROVAL,
-        Status.BE_EVALUATION_PENDING,
-        Status.REWARD_PENDING,
-        Status.REWARDED,
-      ],
+      detail: 'Unit Coordinator validates the idea and decides whether to proceed.',
       state: 'pending',
     },
     {
       id: 'assignment',
-      title: 'Committee Assignment',
+      title: 'Committee assignment',
       owner: Role.SELECTION_COMMITTEE,
-      statuses: [
-        Status.ASSIGNED_FOR_IMPLEMENTATION,
-        Status.IMPLEMENTATION_DONE,
-        Status.BE_REVIEW_DONE,
-        Status.VERIFIED_PENDING_APPROVAL,
-        Status.BE_EVALUATION_PENDING,
-        Status.REWARD_PENDING,
-        Status.REWARDED,
-      ],
+      detail: 'Selection Committee assigns implementer, unit, department, and deadline.',
       state: 'pending',
     },
     {
       id: 'implementation',
-      title: 'Implementer Template',
+      title: 'Implementation',
       owner: suggestion.assignedImplementer || Role.IMPLEMENTER,
-      statuses: [
-        Status.IMPLEMENTATION_DONE,
-        Status.VERIFIED_PENDING_APPROVAL,
-        Status.BE_EVALUATION_PENDING,
-        Status.REWARD_PENDING,
-        Status.REWARDED,
-      ],
+      detail: 'Assigned implementer completes the kaizen work and template.',
+      state: 'pending',
+    },
+    {
+      id: 'be_review',
+      title: 'BE review',
+      owner: Role.BUSINESS_EXCELLENCE,
+      detail: 'BE reviews the implementation and forwards it for routing.',
       state: 'pending',
     },
     {
       id: 'coordinator',
-      title: 'Unit Coordinator Approval',
+      title: 'Coordinator routing',
       owner: Role.UNIT_COORDINATOR,
-      statuses: [
-        Status.BE_EVALUATION_PENDING,
-        Status.VERIFIED_PENDING_APPROVAL,
-        Status.REWARD_PENDING,
-        Status.REWARDED,
-      ],
-      state: 'pending',
-    },
-    {
-      id: 'be_head',
-      title: 'BE Head Evaluation',
-      owner: Role.BUSINESS_EXCELLENCE_HEAD,
-      statuses: [Status.VERIFIED_PENDING_APPROVAL, Status.REWARD_PENDING, Status.REWARDED],
+      detail: 'Unit Coordinator decides whether approvals are needed before BE Head evaluation.',
       state: 'pending',
     },
     {
       id: 'approvals',
-      title: 'Functional Approvals',
-      owner: (nextApprover || Role.QUALITY_HOD) as any,
-      statuses: [Status.REWARD_PENDING, Status.REWARDED],
+      title: 'Approvals',
+      owner: approvalsOwnerLabel,
+      detail: approvalsRequired
+        ? approvalTrackerSummary
+        : 'No Level 1 or Level 2 approval step was required.',
+      state: 'pending',
+    },
+    {
+      id: 'be_head',
+      title: 'BE Head evaluation',
+      owner: Role.BUSINESS_EXCELLENCE_HEAD,
+      detail: 'BE Head performs final scoring and reward recommendation.',
       state: 'pending',
     },
     {
       id: 'reward',
-      title: 'Reward Processing & Closure',
+      title: 'Reward closure',
       owner: 'HR / Unit Coordinator',
-      statuses: [Status.REWARDED],
+      detail: 'HR validates reward processing and closes the idea.',
       state: 'pending',
     },
-  ].map(step => {
-    if (suggestion.status === Status.IDEA_REJECTED) {
-      return { ...step, state: step.id === 'submission' ? 'done' : 'pending' as const };
+  ].map((step, idx, arr) => {
+    const approvalsSkipped =
+      step.id === 'approvals' &&
+      !approvalsRequired &&
+      [
+        Status.BE_EVALUATION_PENDING,
+        Status.REWARD_PENDING,
+        Status.REWARDED,
+      ].includes(suggestion.status);
+
+    if (approvalsSkipped) {
+      return { ...step, state: 'skipped' as const };
     }
-    if (step.statuses.includes(suggestion.status)) return { ...step, state: 'done' as const };
-    if (
-      (step.id === 'screening' && suggestion.status === Status.IDEA_SUBMITTED) ||
-      (step.id === 'assignment' && suggestion.status === Status.APPROVED_FOR_ASSIGNMENT) ||
-      (step.id === 'implementation' && suggestion.status === Status.ASSIGNED_FOR_IMPLEMENTATION) ||
-      (step.id === 'coordinator' && suggestion.status === Status.BE_REVIEW_DONE) ||
-      (step.id === 'be_head' && suggestion.status === Status.BE_EVALUATION_PENDING) ||
-      (step.id === 'approvals' && suggestion.status === Status.VERIFIED_PENDING_APPROVAL) ||
-      (step.id === 'reward' && suggestion.status === Status.REWARD_PENDING)
-    ) {
+    if (suggestion.status === Status.REWARDED) {
+      return { ...step, state: 'done' as const };
+    }
+    if (suggestion.status === Status.IDEA_REJECTED) {
+      return {
+        ...step,
+        state:
+          step.id === 'submission' || step.id === 'screening'
+            ? ('done' as const)
+            : ('pending' as const),
+      };
+    }
+    if (step.id === 'submission') {
+      return { ...step, state: 'done' as const };
+    }
+    const currentIndex = workflowCurrentStepId
+      ? arr.findIndex((item) => item.id === workflowCurrentStepId)
+      : -1;
+    if (currentIndex >= 0 && idx < currentIndex) {
+      return { ...step, state: 'done' as const };
+    }
+    if (currentIndex >= 0 && idx === currentIndex) {
       return { ...step, state: 'current' as const };
     }
     return { ...step, state: 'pending' as const };
   });
+  const workflowProgressPercent = Math.round(
+    (workflowSteps.filter((step) => step.state === 'done' || step.state === 'skipped').length /
+      workflowSteps.length) *
+      100,
+  );
+  const workflowStepStateMeta: Record<
+    'done' | 'current' | 'pending' | 'skipped',
+    { label: string; badgeClass: string; icon: string }
+  > = {
+    done: {
+      label: 'Done',
+      badgeClass: 'bg-emerald-100 text-emerald-800 border-emerald-300',
+      icon: 'check_circle',
+    },
+    current: {
+      label: 'Current',
+      badgeClass: 'bg-blue-100 text-blue-800 border-blue-300',
+      icon: 'radio_button_checked',
+    },
+    pending: {
+      label: 'Pending',
+      badgeClass: 'bg-white text-gray-600 border-gray-300',
+      icon: 'schedule',
+    },
+    skipped: {
+      label: 'Skipped',
+      badgeClass: 'bg-amber-100 text-amber-900 border-amber-300',
+      icon: 'fast_forward',
+    },
+  };
+  const approvalRouteSummary = (() => {
+    if (!approvalsRequired) {
+      return 'No approval routing was selected. The idea moves directly to BE Head evaluation after coordinator routing.';
+    }
+    if (level1Approvals.length > 0 && level2Approvals.length > 0) {
+      return 'Route: Level 1 department sign-offs -> Level 2 functional head approvals -> BE Head evaluation.';
+    }
+    if (level1Approvals.length > 0) {
+      return 'Route: Level 1 department sign-offs -> BE Head evaluation.';
+    }
+    return 'Route: Level 2 functional head approvals -> BE Head evaluation.';
+  })();
+  const activeApprovalStageLabel = (() => {
+    if (!approvalsRequired) return 'No approval stage required';
+    if (suggestion.status !== Status.VERIFIED_PENDING_APPROVAL) {
+      if (
+        [
+          Status.BE_EVALUATION_PENDING,
+          Status.REWARD_PENDING,
+          Status.REWARDED,
+        ].includes(suggestion.status)
+      ) {
+        return 'Approval stage completed';
+      }
+      return 'Approval stage not started';
+    }
+    return isL2ApprovalPhase(suggestion)
+      ? 'Level 2 functional approvals in progress'
+      : 'Level 1 department sign-offs in progress';
+  })();
+  const level2ApprovalDetails = level2Approvals.map((approvalRole) => ({
+    role: approvalRole,
+    approverName: String(suggestion.hodApproverNames?.[approvalRole] ?? '').trim(),
+    approved: Boolean(suggestion.approvals?.[approvalRole]),
+  }));
   const getRoleActionState = () => {
     if (role === Role.EMPLOYEE) return { canAct: false, message: 'Employee can only view tracking status and remarks.' };
     if (role === Role.UNIT_COORDINATOR && suggestion.status === Status.IDEA_SUBMITTED) return { canAct: true, message: 'Approve or reject this submitted idea.' };
@@ -847,13 +1375,39 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
     if (role === Role.UNIT_COORDINATOR && suggestion.status === Status.BE_REVIEW_DONE) return { canAct: true, message: 'Approve after BE review and send to BE Head scoring.' };
     if (role === Role.BUSINESS_EXCELLENCE_HEAD && suggestion.status === Status.BE_EVALUATION_PENDING) return { canAct: true, message: 'Business Excellence Head evaluates score and reward.' };
     if (
-      [Role.HR_HEAD, Role.QUALITY_HOD, Role.FINANCE_HOD].includes(role) &&
+      role === Role.EMPLOYEE &&
       suggestion.status === Status.VERIFIED_PENDING_APPROVAL &&
+      pendingDepartmentL1ForUser(
+        suggestion,
+        currentUserName,
+        implementationActorUser?.employeeCode,
+      )
+    ) {
+      return {
+        canAct: true,
+        message: 'Complete your Level 1 department sign-off when you are named as approver.',
+      };
+    }
+    if (
+      [
+        Role.HR_HEAD,
+        Role.QUALITY_HOD,
+        Role.FINANCE_HOD,
+        Role.OPS_HEAD,
+        Role.NURSING_HEAD,
+      ].includes(role) &&
+      suggestion.status === Status.VERIFIED_PENDING_APPROVAL &&
+      isL2ApprovalPhase(suggestion) &&
       pendingApprovers.includes(role)
     ) {
       return { canAct: true, message: 'Approve or send back for BE re-evaluation.' };
     }
-    if (role === Role.HR_HEAD && suggestion.status === Status.REWARD_PENDING) return { canAct: true, message: 'Process payment and close the idea.' };
+    if (role === Role.HR_HEAD && suggestion.status === Status.REWARD_PENDING)
+      return {
+        canAct: true,
+        message:
+          'Upload HR reward validation photo, then process payment and close the idea.',
+      };
     return { canAct: false, message: 'No action available for this role at current status.' };
   };
 
@@ -866,7 +1420,12 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
     role === Role.IMPLEMENTER &&
     suggestion.status === Status.ASSIGNED_FOR_IMPLEMENTATION &&
     isAssignedImplementerUser;
-  const progressFloor = suggestion.implementationProgress ?? 0;
+  const progressFloor = clampImplementationPercent(suggestion.implementationProgress);
+  const draftAutoProgress = computeImplementationProgressPercentFromDraft(
+    (suggestion.implementationDraft ?? {}) as Record<string, unknown>,
+  );
+  /** Stored progress or slide-based completion from saved draft — whichever is higher (no manual %). */
+  const progressFloorEffective = Math.max(progressFloor, draftAutoProgress);
   const reportingFromImplementerList =
     implementerOptions.find((x) => x.employeeCode === implementerEmployeeCode)?.manager;
   const reportingTo =
@@ -1351,12 +1910,12 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
                     <div className="bg-white border border-gray-200 rounded-2xl p-4 shadow-sm">
                       <div className="text-[11px] font-extrabold uppercase text-gray-500">Progress</div>
                       <div className="mt-1 text-sm font-black text-gray-900">
-                        {suggestion.implementationProgress ?? 0}%
+                        {progressFloorEffective}%
                       </div>
                       <div className="mt-2 w-full h-2 bg-gray-200 rounded overflow-hidden">
                         <div
                           className="h-full bg-kauvery-purple"
-                          style={{ width: `${suggestion.implementationProgress ?? 0}%` }}
+                          style={{ width: `${progressFloorEffective}%` }}
                         />
                       </div>
                       <div className="mt-2 text-[11px] text-gray-600 font-semibold">
@@ -1624,11 +2183,38 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
                   <div className="bg-gradient-to-br from-white to-slate-50 border border-gray-200 rounded-2xl overflow-hidden shadow-sm">
                     <div className="grid grid-cols-1 lg:grid-cols-12 min-h-[500px]">
                       <div className="lg:col-span-8 p-6 border-r border-gray-200">
-                        <div className="flex items-center gap-2 mb-4">
-                          <h3 className="text-2xl font-black text-slate-900 leading-tight">Request Details</h3>
-                          <span className="text-[10px] font-mono text-kauvery-purple bg-purple-50 border border-purple-200 px-1.5 py-0.5 rounded-md font-bold">
-                            {suggestion.code || suggestion.id}
-                          </span>
+                        <div className="mb-4 space-y-3">
+                          <div className="flex items-center gap-2">
+                            <h3 className="text-2xl font-black text-slate-900 leading-tight">
+                              Workflow Tracking
+                            </h3>
+                            <span className="text-[10px] font-mono text-kauvery-purple bg-purple-50 border border-purple-200 px-1.5 py-0.5 rounded-md font-bold">
+                              {suggestion.code || suggestion.id}
+                            </span>
+                          </div>
+                          <div className="rounded-2xl border border-indigo-200 bg-gradient-to-r from-indigo-50 via-white to-purple-50 p-4 shadow-sm">
+                            <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                              <div>
+                                <div className="text-[11px] font-extrabold uppercase tracking-wide text-indigo-900/80">
+                                  Current stage
+                                </div>
+                                <div className="mt-1 text-xl font-black text-slate-900">
+                                  {trackingStageTitle}
+                                </div>
+                                <div className="mt-1 text-sm font-semibold text-slate-700">
+                                  {trackingStageHint}
+                                </div>
+                              </div>
+                              <div className="flex flex-wrap gap-2">
+                                <span className="inline-flex items-center rounded-full border border-indigo-300 bg-white px-3 py-1 text-[11px] font-black text-indigo-900">
+                                  Status: {suggestion.status}
+                                </span>
+                                <span className="inline-flex items-center rounded-full border border-purple-300 bg-white px-3 py-1 text-[11px] font-black text-kauvery-purple">
+                                  Owner: {String(getCurrentOwner() || '—')}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
                         </div>
 
                         <div className="bg-white border border-gray-200 rounded-xl p-4 mb-4 shadow-sm">
@@ -1732,106 +2318,310 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
                       </div>
 
                       <div className="lg:col-span-4 p-5 bg-slate-50/80 space-y-4 border-l border-gray-200">
-                        <div className="pb-3 border-b border-gray-200">
-                          <div className="text-[11px] text-gray-500 font-bold uppercase mb-1">Status</div>
-                          <input
-                            type="text"
-                            value={suggestion.status}
-                            readOnly
-                            className="w-full border border-gray-300 rounded-lg px-2.5 py-2 text-sm font-bold bg-gray-100 text-gray-900"
-                          />
-                        </div>
-
-                        <div className="pb-3 border-b border-gray-200">
-                          <div className="text-[11px] text-gray-500 font-bold uppercase mb-1">Next Action</div>
-                          <div className="text-sm font-semibold text-gray-800">{getActionRequired()}</div>
-                        </div>
-
-                        <div className="pb-3 border-b border-gray-200">
-                          <div className="text-[11px] text-gray-500 font-bold uppercase mb-1">Assigned To</div>
-                          <input
-                            type="text"
-                            value={suggestion.assignedImplementer || ''}
-                            readOnly
-                            className="w-full border border-gray-300 rounded-lg px-2.5 py-2 text-sm text-gray-900 font-semibold bg-gray-100"
-                            placeholder="Assignee name"
-                          />
-                        </div>
-
-                        <div className="pb-3 border-b border-gray-200">
-                          <div className="text-[11px] text-gray-500 font-bold uppercase mb-1">Reporting To</div>
-                          <input
-                            type="text"
-                            value={reportingTo}
-                            readOnly
-                            className="w-full border border-gray-300 rounded-lg px-2.5 py-2 text-sm text-gray-900 font-semibold bg-gray-100"
-                          />
-                          <div className="text-[10px] text-gray-500 mt-1">
-                            Based on implementer manager from HRMS
+                        <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <div className="text-[11px] text-gray-500 font-bold uppercase mb-1">
+                                Stage summary
+                              </div>
+                              <div className="text-lg font-black text-gray-900 leading-tight">
+                                {trackingStageTitle}
+                              </div>
+                              <div className="mt-1 text-sm font-semibold text-gray-700">
+                                {trackingStageHint}
+                              </div>
+                            </div>
+                            <span className="inline-flex items-center rounded-full border border-indigo-300 bg-indigo-50 px-2.5 py-1 text-[10px] font-black uppercase tracking-wide text-indigo-900">
+                              {suggestion.status}
+                            </span>
+                          </div>
+                          <div className="mt-4">
+                            <div className="flex items-center justify-between text-[11px] font-extrabold uppercase text-gray-500">
+                              <span>Overall workflow progress</span>
+                              <span>{workflowProgressPercent}%</span>
+                            </div>
+                            <div className="mt-2 h-2.5 w-full overflow-hidden rounded-full bg-gray-200">
+                              <div
+                                className="h-full rounded-full bg-gradient-to-r from-kauvery-purple to-kauvery-violet"
+                                style={{ width: `${workflowProgressPercent}%` }}
+                              />
+                            </div>
+                          </div>
+                          <div className="mt-4 grid grid-cols-1 gap-3">
+                            <div className="rounded-xl border border-gray-200 bg-slate-50 p-3">
+                              <div className="text-[11px] font-extrabold uppercase text-gray-500">
+                                Current owner
+                              </div>
+                              <div className="mt-1 text-sm font-black text-gray-900">
+                                {String(getCurrentOwner() || '—')}
+                              </div>
+                            </div>
+                            <div className="rounded-xl border border-gray-200 bg-slate-50 p-3">
+                              <div className="text-[11px] font-extrabold uppercase text-gray-500">
+                                Action required
+                              </div>
+                              <div className="mt-1 text-sm font-black text-gray-900 leading-snug">
+                                {getActionRequired()}
+                              </div>
+                            </div>
                           </div>
                         </div>
 
-                        <div className="pb-3 border-b border-gray-200">
-                          <div className="text-[11px] text-gray-500 font-bold uppercase mb-1">Progress</div>
-                          <input
-                            type="range"
-                            min={0}
-                            max={100}
-                            step={1}
-                            value={suggestion.implementationProgress || 0}
-                            disabled
-                            className="w-full accent-kauvery-purple disabled:opacity-60"
-                          />
-                          <div className="text-xs font-bold text-right text-gray-800">{suggestion.implementationProgress || 0}%</div>
-                          <div className="text-[10px] text-gray-500 mt-1">
-                            Information only (read-only).
+                        <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+                          <div className="text-[11px] text-gray-500 font-bold uppercase mb-2">
+                            Approval route
+                          </div>
+                          <div className="text-sm font-semibold text-gray-800">
+                            {approvalRouteSummary}
+                          </div>
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            <span className="inline-flex items-center rounded-full border border-purple-200 bg-purple-50 px-2.5 py-1 text-[11px] font-black text-kauvery-purple">
+                              {activeApprovalStageLabel}
+                            </span>
+                            {level1Approvals.length > 0 && (
+                              <span className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[11px] font-black text-amber-900">
+                                L1: {level1Approved.length}/{level1Approvals.length}
+                              </span>
+                            )}
+                            {level2Approvals.length > 0 && (
+                              <span className="inline-flex items-center rounded-full border border-cyan-200 bg-cyan-50 px-2.5 py-1 text-[11px] font-black text-cyan-900">
+                                L2: {level2Approved.length}/{level2Approvals.length}
+                              </span>
+                            )}
                           </div>
                         </div>
 
-                        <div className="pb-3 border-b border-gray-200">
-                          <div className="text-[11px] text-gray-500 font-bold uppercase mb-1">Working Status</div>
-                          <div className="text-sm font-bold text-gray-900">
-                            {suggestion.implementationStage || 'Started'}
+                        <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+                          <div className="flex items-center justify-between gap-3 mb-3">
+                            <div>
+                              <div className="text-[11px] text-gray-500 font-bold uppercase">
+                                Tracking flow
+                              </div>
+                              <div className="text-sm font-semibold text-gray-700 mt-1">
+                                Every stage, owner, and next step in one place.
+                              </div>
+                            </div>
                           </div>
-                          <div className="text-[10px] text-gray-500 mt-1">
-                            Last update: {suggestion.implementationUpdateDate || 'NA'}
+                          <div className="space-y-3 max-h-[28rem] overflow-y-auto pr-1">
+                            {workflowSteps.map((step, index) => {
+                              const stateMeta = workflowStepStateMeta[step.state];
+                              return (
+                                <div
+                                  key={step.id}
+                                  className={`rounded-2xl border p-3 ${
+                                    step.state === 'current'
+                                      ? 'border-blue-300 bg-blue-50/70'
+                                      : step.state === 'done'
+                                      ? 'border-emerald-200 bg-emerald-50/60'
+                                      : step.state === 'skipped'
+                                      ? 'border-amber-200 bg-amber-50/60'
+                                      : 'border-gray-200 bg-slate-50'
+                                  }`}
+                                >
+                                  <div className="flex items-start gap-3">
+                                    <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white border border-gray-200 text-[11px] font-black text-gray-700">
+                                      {index + 1}
+                                    </div>
+                                    <div className="min-w-0 flex-1">
+                                      <div className="flex flex-wrap items-center gap-2">
+                                        <div className="text-sm font-black text-gray-900">
+                                          {step.title}
+                                        </div>
+                                        <span
+                                          className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-black uppercase tracking-wide ${stateMeta.badgeClass}`}
+                                        >
+                                          <span className="material-icons-round text-[12px]">
+                                            {stateMeta.icon}
+                                          </span>
+                                          {stateMeta.label}
+                                        </span>
+                                      </div>
+                                      <div className="mt-1 text-[11px] font-extrabold uppercase tracking-wide text-gray-500">
+                                        Owner: {step.owner}
+                                      </div>
+                                      <div className="mt-1 text-xs font-semibold leading-relaxed text-gray-700">
+                                        {step.detail}
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+                              );
+                            })}
                           </div>
                         </div>
 
-                        <div className="pb-3 border-b border-gray-200">
-                          <div className="text-[11px] text-gray-500 font-bold uppercase mb-1">Deadline</div>
-                          <input
-                            type="date"
-                            value={suggestion.implementationDeadline || ''}
-                            readOnly
-                            className="w-full border border-gray-300 rounded-lg px-2.5 py-2 text-sm text-gray-900 font-semibold bg-gray-100"
-                          />
-                          {suggestion.deadlineChangeRemark && (
-                            <div className="text-[10px] text-gray-600 mt-1">
-                              Remark: {suggestion.deadlineChangeRemark}
+                        <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+                          <div className="text-[11px] text-gray-500 font-bold uppercase mb-2">
+                            Approval details
+                          </div>
+                          {!approvalsRequired ? (
+                            <div className="rounded-xl border border-dashed border-gray-300 bg-slate-50 p-3 text-sm font-semibold text-gray-700">
+                              No Level 1 or Level 2 approvals were configured for this idea.
+                            </div>
+                          ) : (
+                            <div className="space-y-4">
+                              {level1Approvals.length > 0 && (
+                                <div>
+                                  <div className="flex items-center justify-between gap-2 mb-2">
+                                    <div className="text-xs font-black uppercase tracking-wide text-amber-900">
+                                      Level 1 department sign-offs
+                                    </div>
+                                    <div className="text-[11px] font-black text-amber-900">
+                                      {level1Approved.length}/{level1Approvals.length} completed
+                                    </div>
+                                  </div>
+                                  <div className="space-y-2">
+                                    {level1Approvals.map((row) => {
+                                      const signed = Boolean(String(row?.approvedAt ?? '').trim());
+                                      return (
+                                        <div
+                                          key={row.id}
+                                          className={`rounded-xl border p-3 ${
+                                            signed
+                                              ? 'border-emerald-200 bg-emerald-50/70'
+                                              : 'border-amber-200 bg-amber-50/70'
+                                          }`}
+                                        >
+                                          <div className="flex items-center justify-between gap-2">
+                                            <div className="text-sm font-black text-gray-900">
+                                              {row.department || 'Department'}
+                                            </div>
+                                            <span
+                                              className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-black uppercase tracking-wide ${
+                                                signed
+                                                  ? 'border-emerald-300 bg-white text-emerald-800'
+                                                  : 'border-amber-300 bg-white text-amber-900'
+                                              }`}
+                                            >
+                                              {signed ? 'Signed off' : 'Pending'}
+                                            </span>
+                                          </div>
+                                          <div className="mt-1 text-xs font-semibold text-gray-700">
+                                            Approver: {row.approverName || 'Not assigned'}
+                                            {row.approverEmployeeCode
+                                              ? ` (${row.approverEmployeeCode})`
+                                              : ''}
+                                          </div>
+                                          {signed && (
+                                            <div className="mt-1 text-[11px] font-semibold text-gray-600">
+                                              Signed by {row.approvedBy || row.approverName || '—'} on{' '}
+                                              {formatTrackingDate(row.approvedAt)}
+                                            </div>
+                                          )}
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              )}
+
+                              {level2Approvals.length > 0 && (
+                                <div>
+                                  <div className="flex items-center justify-between gap-2 mb-2">
+                                    <div className="text-xs font-black uppercase tracking-wide text-cyan-900">
+                                      Level 2 functional approvals
+                                    </div>
+                                    <div className="text-[11px] font-black text-cyan-900">
+                                      {level2Approved.length}/{level2Approvals.length} completed
+                                    </div>
+                                  </div>
+                                  <div className="space-y-2">
+                                    {level2ApprovalDetails.map((item) => (
+                                      <div
+                                        key={item.role}
+                                        className={`rounded-xl border p-3 ${
+                                          item.approved
+                                            ? 'border-emerald-200 bg-emerald-50/70'
+                                            : 'border-cyan-200 bg-cyan-50/70'
+                                        }`}
+                                      >
+                                        <div className="flex items-center justify-between gap-2">
+                                          <div className="text-sm font-black text-gray-900">
+                                            {item.role}
+                                          </div>
+                                          <span
+                                            className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-black uppercase tracking-wide ${
+                                              item.approved
+                                                ? 'border-emerald-300 bg-white text-emerald-800'
+                                                : 'border-cyan-300 bg-white text-cyan-900'
+                                            }`}
+                                          >
+                                            {item.approved ? 'Approved' : 'Pending'}
+                                          </span>
+                                        </div>
+                                        <div className="mt-1 text-xs font-semibold text-gray-700">
+                                          Selected approver: {item.approverName || 'Not specified'}
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
                             </div>
                           )}
                         </div>
 
-                        <div>
-                          <div className="text-[11px] text-gray-500 font-bold uppercase mb-2">Tracking Flow</div>
-                          <div className="space-y-2 max-h-44 overflow-y-auto pr-1">
-                            {workflowSteps.map(step => (
-                              <div key={step.id} className="flex items-center justify-between text-xs">
-                                <span className="font-semibold text-gray-800">{step.title}</span>
-                                <span
-                                  className={`px-2 py-0.5 rounded border font-bold ${
-                                    step.state === 'done'
-                                      ? 'bg-green-100 text-green-800 border-green-300'
-                                      : step.state === 'current'
-                                      ? 'bg-blue-100 text-blue-800 border-blue-300'
-                                      : 'bg-white text-gray-500 border-gray-300'
-                                  }`}
-                                >
-                                  {step.state === 'done' ? 'Done' : step.state === 'current' ? 'Review' : 'Pending'}
-                                </span>
+                        <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+                          <div className="text-[11px] text-gray-500 font-bold uppercase mb-2">
+                            Implementation context
+                          </div>
+                          <div className="grid grid-cols-1 gap-3">
+                            <div className="rounded-xl border border-gray-200 bg-slate-50 p-3">
+                              <div className="text-[11px] font-extrabold uppercase text-gray-500">
+                                Assigned to
                               </div>
-                            ))}
+                              <div className="mt-1 text-sm font-black text-gray-900">
+                                {suggestion.assignedImplementer || 'Not assigned'}
+                              </div>
+                            </div>
+                            <div className="rounded-xl border border-gray-200 bg-slate-50 p-3">
+                              <div className="text-[11px] font-extrabold uppercase text-gray-500">
+                                Reporting to
+                              </div>
+                              <div className="mt-1 text-sm font-black text-gray-900">
+                                {reportingTo || '—'}
+                              </div>
+                              <div className="mt-1 text-[10px] font-semibold text-gray-500">
+                                Based on implementer manager from HRMS.
+                              </div>
+                            </div>
+                            <div className="rounded-xl border border-gray-200 bg-slate-50 p-3">
+                              <div className="flex items-center justify-between gap-3">
+                                <div>
+                                  <div className="text-[11px] font-extrabold uppercase text-gray-500">
+                                    Progress
+                                  </div>
+                                  <div className="mt-1 text-sm font-black text-gray-900">
+                                    {progressFloorEffective}%
+                                  </div>
+                                </div>
+                                <div className="text-[11px] font-semibold text-gray-600">
+                                  {suggestion.implementationStage || 'Started'}
+                                </div>
+                              </div>
+                              <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-gray-200">
+                                <div
+                                  className="h-full rounded-full bg-kauvery-purple"
+                                  style={{ width: `${progressFloorEffective}%` }}
+                                />
+                              </div>
+                              <div className="mt-2 text-[11px] font-semibold text-gray-600">
+                                Last update: {suggestion.implementationUpdateDate || 'NA'}
+                              </div>
+                            </div>
+                            <div className="rounded-xl border border-gray-200 bg-slate-50 p-3">
+                              <div className="text-[11px] font-extrabold uppercase text-gray-500">
+                                Deadline
+                              </div>
+                              <div className="mt-1 text-sm font-black text-gray-900">
+                                {suggestion.implementationDeadline || '—'}
+                              </div>
+                              {suggestion.deadlineChangeRemark && (
+                                <div className="mt-1 text-[11px] font-semibold text-gray-600">
+                                  Remark: {suggestion.deadlineChangeRemark}
+                                </div>
+                              )}
+                            </div>
                           </div>
                         </div>
                       </div>
@@ -1991,8 +2781,11 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
                 {/* 3. IMPLEMENTER: Submit Report */}
                 {role === Role.IMPLEMENTER && suggestion.status === Status.ASSIGNED_FOR_IMPLEMENTATION && (
                   <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
-                    <h4 className="text-lg font-black text-gray-900 mb-2">Implementation Progress Update</h4>
-                    <p className="text-sm text-gray-600 mb-4 font-semibold">Update current progress regularly, then submit final template once completed.</p>
+                    <h4 className="text-lg font-black text-gray-900 mb-2">Implementation Progress</h4>
+                    <p className="text-sm text-gray-600 mb-4 font-semibold">
+                      Completion % updates automatically when you save the implementation template (Save draft on the
+                      report). Optionally note status and blockers below — progress itself is not edited manually.
+                    </p>
                     {suggestion.beEditedFields && suggestion.beEditedFields.length > 0 && (
                       <div className="mb-4 text-xs bg-amber-50 border border-amber-200 rounded p-2.5 text-amber-900">
                         <span className="font-bold">BE changed fields:</span> {suggestion.beEditedFields.join(', ')}
@@ -2001,7 +2794,7 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
 
                     {!canImplementerUpdateWorkingStatus && (
                       <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-4 font-semibold">
-                        Progress and work updates are only available to the assigned implementer
+                        Status notes and deadline changes are only available to the assigned implementer
                         {suggestion.assignedImplementer ? ` (${suggestion.assignedImplementer}).` : '.'}
                       </p>
                     )}
@@ -2023,16 +2816,17 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
                         </select>
                       </div>
                       <div>
-                        <label className="text-xs font-extrabold text-gray-700 block mb-1">Progress ({Math.max(progressFloor, implementationProgress)}%)</label>
-                        <input
-                          type="range"
-                          min={0}
-                          max={100}
-                          step={1}
-                          value={Math.max(progressFloor, implementationProgress)}
-                          onChange={e => setImplementationProgress(Math.max(progressFloor, Number(e.target.value)))}
-                          className="w-full accent-kauvery-purple"
-                        />
+                        <label className="text-xs font-extrabold text-gray-700 block mb-1">Progress (automatic)</label>
+                        <div className="text-lg font-black text-kauvery-purple">{progressFloorEffective}%</div>
+                        <div className="mt-1 w-full h-2.5 bg-gray-200 rounded-full overflow-hidden">
+                          <div
+                            className="h-full bg-kauvery-purple transition-[width] duration-300"
+                            style={{ width: `${progressFloorEffective}%` }}
+                          />
+                        </div>
+                        <div className="text-[10px] text-gray-500 mt-1.5 leading-snug">
+                          From saved template content. Use Save draft in the implementation report to raise this.
+                        </div>
                       </div>
                     </div>
 
@@ -2047,37 +2841,72 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
                       <div>
                         <label className="text-xs font-extrabold text-gray-700 block mb-1">Change Deadline</label>
-                        <input
-                          type="date"
-                          value={deadlineChangeDate || suggestion.implementationDeadline || ''}
-                          min={suggestion.implementationAssignedDate || suggestion.dateSubmitted}
-                          max={(() => {
-                            const d = new Date(`${(suggestion.implementationAssignedDate || suggestion.dateSubmitted)}T00:00:00`);
-                            d.setMonth(d.getMonth() + 1);
-                            return d.toISOString().split('T')[0];
-                          })()}
-                          onChange={e => setDeadlineChangeDate(e.target.value)}
-                          className="w-full border border-gray-300 bg-white rounded-lg px-3 py-2 text-sm text-gray-900 font-medium"
-                        />
+                        {(() => {
+                          const assignBase =
+                            suggestion.implementationAssignedDate || suggestion.dateSubmitted || '';
+                          const deadlineMaxStr = assignBase
+                            ? addCalendarDaysToIsoDate(assignBase, MAX_DEADLINE_EXTENSION_DAYS)
+                            : null;
+                          const storedDl = suggestion.implementationDeadline || '';
+                          const storedPastWindow =
+                            Boolean(deadlineMaxStr && storedDl && storedDl > deadlineMaxStr);
+                          const dateInputValue =
+                            deadlineChangeDate ||
+                            (storedPastWindow ? '' : storedDl);
+                          return (
+                            <>
+                              {storedPastWindow && (
+                                <p className="text-[11px] text-amber-900 bg-amber-50 border border-amber-200 rounded px-2 py-1.5 mb-2 font-semibold">
+                                  Saved deadline {storedDl} is outside the allowed range (assignment +{' '}
+                                  {MAX_DEADLINE_EXTENSION_DAYS} days). Choose a new date below (latest{' '}
+                                  {deadlineMaxStr}).
+                                </p>
+                              )}
+                              <input
+                                type="date"
+                                value={dateInputValue}
+                                min={assignBase || undefined}
+                                max={deadlineMaxStr ?? undefined}
+                                onChange={(e) => setDeadlineChangeDate(e.target.value)}
+                                className="w-full border border-gray-300 bg-white rounded-lg px-3 py-2 text-sm text-gray-900 font-medium"
+                              />
+                            </>
+                          );
+                        })()}
                       </div>
                       <div>
-                        <label className="text-xs font-extrabold text-gray-700 block mb-1">Deadline Change Remark</label>
+                        <label className="text-xs font-extrabold text-gray-700 block mb-1">
+                          Deadline change remark <span className="text-red-600">(required)</span>
+                        </label>
                         <input
                           type="text"
+                          required
                           value={deadlineChangeRemark}
                           onChange={e => setDeadlineChangeRemark(e.target.value)}
-                          placeholder="Reason for extending/changing deadline"
+                          placeholder="Reason for extending or changing the deadline"
                           className="w-full border border-gray-300 bg-white rounded-lg px-3 py-2 text-sm text-gray-900 font-medium"
                         />
                       </div>
                     </div>
                     <div className="text-[10px] text-gray-500 mb-3">
-                      Deadline can be changed only within 1 month from assignment date ({suggestion.implementationAssignedDate || suggestion.dateSubmitted}).
+                      You can only choose a deadline from the assignment date through{' '}
+                      {MAX_DEADLINE_EXTENSION_DAYS} calendar days after assignment (
+                      {suggestion.implementationAssignedDate || suggestion.dateSubmitted || '—'}
+                      {(() => {
+                        const base = suggestion.implementationAssignedDate || suggestion.dateSubmitted;
+                        const end = base ? addCalendarDaysToIsoDate(base, MAX_DEADLINE_EXTENSION_DAYS) : null;
+                        return end ? ` → ${end}` : '';
+                      })()}
+                      ). Remark is required when saving a new deadline.
                     </div>
 
                     <div className="flex flex-wrap gap-2">
-                      <button onClick={handleImplementerProgressUpdate} className="bg-white text-gray-800 px-4 py-2 rounded-lg text-sm font-bold border border-gray-300 hover:bg-gray-100">
-                        Update Progress
+                      <button
+                        type="button"
+                        onClick={handleImplementerWorkStatusSave}
+                        className="bg-white text-gray-800 px-4 py-2 rounded-lg text-sm font-bold border border-gray-300 hover:bg-gray-100"
+                      >
+                        Save status & notes
                       </button>
                       <button onClick={handleImplementerDeadlineChange} className="bg-white text-gray-800 px-4 py-2 rounded-lg text-sm font-bold border border-gray-300 hover:bg-gray-100">
                         Update Deadline
@@ -2101,7 +2930,7 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
                       : (
                     <div className="text-sm text-gray-700 space-y-2 font-medium">
                       <div>Working status: <span className="font-bold">{suggestion.implementationStage || 'Started'}</span></div>
-                      <div>Progress: <span className="font-bold">{suggestion.implementationProgress ?? 0}%</span></div>
+                      <div>Progress: <span className="font-bold">{progressFloorEffective}%</span></div>
                       {suggestion.implementationUpdate && (
                         <div className="text-xs text-gray-600 border border-gray-200 rounded p-2 bg-gray-50">
                           <span className="font-bold">Latest update:</span> {suggestion.implementationUpdate}
@@ -2186,8 +3015,12 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
                   <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
                     <h4 className="text-sm font-black text-gray-900 mb-2">Unit Coordinator Approval</h4>
                     <p className="text-xs text-gray-600 mb-4 font-semibold">
-                      After BE review, choose which functional heads must approve. The idea appears only in those heads&apos;
-                      dashboards until each selected role has approved; then it moves to BE Head evaluation.
+                      <span className="font-black">Level 1</span> (optional): full department list for this unit plus the HRMS
+                      master catalog — pick a department, then the <span className="font-black">admin-assigned HOD</span> for
+                      that department + unit. <span className="font-black">Level 2</span> (required): only{' '}
+                      <span className="font-black">Finance Head</span>, <span className="font-black">Ops Head</span>, and{' '}
+                      <span className="font-black">Nursing</span> — each needs a unit-scoped portal user. Functional heads act
+                      only after Level 1 is complete when Level 1 is used.
                     </p>
 
                     <div className="mb-4">
@@ -2205,47 +3038,81 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
                       <p className="text-[11px] text-gray-500 mb-3">Stored on the idea record with your decision.</p>
                     </div>
 
-                    <div className="mb-4">
-                      <label className="text-xs font-extrabold text-gray-700 block mb-1">
-                        Heads to approve <span className="text-red-600 font-black">*</span>
+                    {/* Level 1 first — department → named approver */}
+                    <div className="mb-5 rounded-xl border-2 border-amber-200 bg-amber-50/40 p-4">
+                      <label className="text-xs font-extrabold text-amber-950 block mb-1">
+                        Level 1 — Department sign-offs <span className="text-gray-600 font-semibold">(optional)</span>
                       </label>
-                      <p className="text-[11px] text-gray-500 mb-2">
-                        Toggle Quality, Finance, and HR as needed. Order does not matter — all selected must approve.
+                      <p className="text-[11px] text-amber-900/90 mb-2 font-semibold">
+                        Departments include the full HRMS master list plus any extra names seen on employees at this unit.
+                        The approver list is limited to the <span className="font-black">department HOD assigned by Admin</span>{' '}
+                        for the selected department + unit. Unit:{' '}
+                        <span className="font-black">
+                          {String(suggestion.assignedUnit || suggestion.unit || '').trim() || '—'}
+                        </span>
+                        {l1DeptCatalogLoading ? ' · Loading catalog…' : ''}
                       </p>
-                      <div className="flex flex-wrap gap-2">
-                        {HEAD_APPROVER_CHIPS.map(({ role: r, short }) => {
-                          const on = selectedApprovers.includes(r);
-                          return (
-                            <button
-                              key={r}
-                              type="button"
-                              onClick={() =>
-                                setSelectedApprovers((prev) =>
-                                  prev.includes(r) ? prev.filter((x) => x !== r) : [...prev, r],
-                                )
-                              }
-                              className={`px-3 py-2 rounded-lg text-xs font-black border transition-colors ${
-                                on
-                                  ? 'bg-kauvery-purple text-white border-kauvery-purple shadow-sm'
-                                  : 'bg-white text-gray-800 border-gray-300 hover:bg-gray-50'
-                              }`}
-                            >
-                              {short}
-                            </button>
-                          );
-                        })}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-2">
+                        <select
+                          value={selectedMasterDeptL1}
+                          onChange={(e) => {
+                            setSelectedMasterDeptL1(e.target.value);
+                            setSelectedHodEmpCodeL1('');
+                          }}
+                          className="w-full border border-amber-300 rounded-lg px-2 py-2 text-xs font-medium text-gray-900 bg-white"
+                        >
+                          <option value="">Department…</option>
+                          {[...level1DepartmentChoices]
+                            .sort((a, b) => a.name.localeCompare(b.name))
+                            .map((d) => (
+                              <option key={d.id} value={d.name}>
+                                {d.name}
+                              </option>
+                            ))}
+                        </select>
+                        <select
+                          value={selectedHodEmpCodeL1}
+                          onChange={(e) => setSelectedHodEmpCodeL1(e.target.value)}
+                          disabled={!selectedMasterDeptL1 || hodLoadingL1}
+                          className="w-full border border-amber-300 rounded-lg px-2 py-2 text-xs font-medium text-gray-900 bg-white disabled:bg-amber-100/80"
+                        >
+                          <option value="">
+                            {hodLoadingL1 ? 'Loading staff in department…' : 'Named approver…'}
+                          </option>
+                          {hodOptionsL1.map((u) => (
+                            <option key={u.employeeCode} value={u.employeeCode}>
+                              {u.name} ({u.employeeCode})
+                            </option>
+                          ))}
+                        </select>
                       </div>
-                      {selectedApprovers.length > 0 && (
-                        <ul className="mt-3 space-y-1.5 text-[11px] text-gray-700 font-semibold">
-                          {selectedApprovers.map((r) => (
+                      {selectedMasterDeptL1 && !hodLoadingL1 && hodOptionsL1.length === 0 && (
+                        <p className="text-[11px] text-amber-950 mb-2 font-semibold">
+                          No department HOD is assigned for this department + unit. In User Management, assign{' '}
+                          <span className="font-black">HOD - {selectedMasterDeptL1 || 'Department'}</span> and choose the unit
+                          code for the intended approver.
+                        </p>
+                      )}
+                      <button
+                        type="button"
+                        onClick={addDepartmentSlotFromPicker}
+                        className="w-full sm:w-auto px-3 py-2 rounded-lg text-xs font-black border border-amber-600 text-amber-950 bg-white hover:bg-amber-100"
+                      >
+                        Add to Level 1 list
+                      </button>
+                      {departmentApprovalSlots.length > 0 && (
+                        <ul className="mt-3 space-y-1.5 text-[11px] text-gray-800 font-semibold">
+                          {departmentApprovalSlots.map((s) => (
                             <li
-                              key={r}
-                              className="flex items-center justify-between gap-2 rounded-md bg-slate-50 border border-slate-200 px-2 py-1.5"
+                              key={s.id}
+                              className="flex items-center justify-between gap-2 rounded-md bg-white border border-amber-200 px-2 py-1.5"
                             >
-                              <span>{hodRoleLabel(r)}</span>
+                              <span>
+                                <span className="font-black text-amber-900">L1</span> · {s.department} — {s.approverName}
+                              </span>
                               <button
                                 type="button"
-                                onClick={() => removeApprover(r)}
+                                onClick={() => removeDepartmentSlot(s.id)}
                                 className="text-red-700 hover:underline font-bold shrink-0"
                               >
                                 Remove
@@ -2254,55 +3121,93 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
                           ))}
                         </ul>
                       )}
+                    </div>
 
-                      <details className="mt-4 group">
-                        <summary className="text-xs font-extrabold text-gray-700 cursor-pointer list-none flex items-center gap-1">
-                          <span className="material-icons-round text-sm text-gray-500 group-open:rotate-90 transition-transform">
-                            chevron_right
-                          </span>
-                          Optional: add by department (Nursing, Pharmacy, etc.)
-                        </summary>
-                        <div className="mt-2 p-3 rounded-lg border border-dashed border-gray-300 bg-slate-50/80 space-y-2">
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                            <select
-                              value={selectedDeptForHod}
-                              onChange={(e) => {
-                                setSelectedDeptForHod(e.target.value);
-                                setSelectedHodUserName('');
-                              }}
-                              className="w-full border border-gray-300 rounded-lg px-2 py-2 text-xs font-medium text-gray-900 bg-white"
+                    {/* Level 2 — Finance / Ops / Nursing routes only */}
+                    <div className="mb-4 rounded-xl border-2 border-slate-200 bg-slate-50/60 p-4">
+                      <label className="text-xs font-extrabold text-gray-900 block mb-1">
+                        Level 2 — Functional heads <span className="text-gray-600 font-semibold">(optional)</span>
+                      </label>
+                      <p className="text-[11px] text-gray-600 mb-3 font-semibold">
+                        Level 2 is only <span className="font-black">Finance Head</span>,{' '}
+                        <span className="font-black">Ops Head</span>, or <span className="font-black">Nursing</span>. This
+                        section is optional. If you leave it empty, the flow goes to BE Head evaluation after Level 1
+                        finishes (or immediately if Level 1 is also empty). Pick the route, then the portal user who
+                        holds that role with a unit scope for{' '}
+                        <span className="font-black text-gray-800">
+                          {String(suggestion.assignedUnit || suggestion.unit || '').trim() || '—'}
+                        </span>
+                        .
+                      </p>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-2">
+                        <select
+                          value={selectedLevel2Role}
+                          onChange={(e) => {
+                            const v = e.target.value as Role | '';
+                            setSelectedLevel2Role(v || '');
+                            setSelectedHodEmpCodeL2('');
+                          }}
+                          className="w-full border border-gray-300 rounded-lg px-2 py-2 text-xs font-medium text-gray-900 bg-white"
+                        >
+                          <option value="">Route…</option>
+                          {LEVEL_2_APPROVAL_ROUTES.map((r) => (
+                            <option key={r.role} value={r.role}>
+                              {r.label}
+                            </option>
+                          ))}
+                        </select>
+                        <select
+                          value={selectedHodEmpCodeL2}
+                          onChange={(e) => setSelectedHodEmpCodeL2(e.target.value)}
+                          disabled={!selectedLevel2Role || hodLoadingL2}
+                          className="w-full border border-gray-300 rounded-lg px-2 py-2 text-xs font-medium text-gray-900 bg-white disabled:bg-gray-100"
+                        >
+                          <option value="">
+                            {hodLoadingL2 ? 'Loading unit-scoped heads…' : 'Named head…'}
+                          </option>
+                          {hodOptionsL2.map((u) => (
+                            <option key={u.employeeCode} value={u.employeeCode}>
+                              {u.name} ({u.employeeCode})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      {selectedLevel2Role && !hodLoadingL2 && hodOptionsL2.length === 0 && (
+                        <p className="text-[11px] text-gray-700 mb-2 font-semibold">
+                          No portal users with this head role scoped to this unit. Assign Finance / Ops / Nursing head roles and
+                          unit scopes in User Management.
+                        </p>
+                      )}
+                      <button
+                        type="button"
+                        onClick={addFunctionalSlotFromPicker}
+                        className="w-full sm:w-auto px-3 py-2 rounded-lg text-xs font-black border border-kauvery-purple text-kauvery-purple bg-white hover:bg-purple-50"
+                      >
+                        Add to Level 2 list
+                      </button>
+                      {functionalApprovalSlots.length > 0 && (
+                        <ul className="mt-3 space-y-1.5 text-[11px] text-gray-700 font-semibold">
+                          {functionalApprovalSlots.map((s) => (
+                            <li
+                              key={s.id}
+                              className="flex items-center justify-between gap-2 rounded-md bg-white border border-slate-200 px-2 py-1.5"
                             >
-                              <option value="">Department…</option>
-                              {HOD_DEPARTMENT_OPTIONS.map((d) => (
-                                <option key={d} value={d}>
-                                  {d}
-                                </option>
-                              ))}
-                            </select>
-                            <select
-                              value={selectedHodUserName}
-                              onChange={(e) => setSelectedHodUserName(e.target.value)}
-                              disabled={!selectedDeptForHod}
-                              className="w-full border border-gray-300 rounded-lg px-2 py-2 text-xs font-medium text-gray-900 bg-white disabled:bg-gray-100"
-                            >
-                              <option value="">Named approver…</option>
-                              {selectedDeptForHod &&
-                                (HOD_DIRECTORY[selectedDeptForHod]?.users || []).map((u) => (
-                                  <option key={u} value={u}>
-                                    {u}
-                                  </option>
-                                ))}
-                            </select>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={addHodFromPicker}
-                            className="w-full sm:w-auto px-3 py-2 rounded-lg text-xs font-black border border-kauvery-purple text-kauvery-purple bg-white hover:bg-purple-50"
-                          >
-                            Add approver from department
-                          </button>
-                        </div>
-                      </details>
+                              <span>
+                                <span className="font-black text-kauvery-purple">L2</span> · {s.department} —{' '}
+                                {s.approverName}{' '}
+                                <span className="text-gray-500 font-medium">({hodRoleLabel(s.role)})</span>
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => removeFunctionalSlot(s.id)}
+                                className="text-red-700 hover:underline font-bold shrink-0"
+                              >
+                                Remove
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
                     </div>
 
                     <div className="mb-4">
@@ -2358,7 +3263,7 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
                     </div>
                     <div className="flex flex-wrap gap-2">
                       <button onClick={handleVerification} className="bg-kauvery-purple text-white px-6 py-2 rounded-lg text-sm font-bold hover:bg-kauvery-violet shadow-sm">
-                        Send to selected heads for approval
+                        Send forward (Level 1 if listed → optional Level 2 → BE Head)
                       </button>
                       <button
                         onClick={handleCoordinatorNotApproved}
@@ -2370,9 +3275,61 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
                   </div>
                 )}
 
-                {/* Functional approvals (Finance/Quality/HR) */}
-                {[Role.FINANCE_HOD, Role.QUALITY_HOD, Role.HR_HEAD].includes(role) &&
+                {/* Level 1 — named department approvers (same status PATCH) */}
+                {suggestion.status === Status.VERIFIED_PENDING_APPROVAL &&
+                  pendingDepartmentL1ForUser(
+                    suggestion,
+                    currentUserName,
+                    implementationActorUser?.employeeCode,
+                  ) && (
+                    <div className="bg-amber-50 p-5 rounded-xl border border-amber-200 shadow-sm">
+                      <h4 className="text-sm font-black text-amber-950 mb-2">Level 1 — Your department sign-off</h4>
+                      <p className="text-xs text-amber-900/90 mb-3 font-semibold">
+                        You are named as an approver for this idea. Approve when satisfied; functional heads act only after
+                        all Level 1 sign-offs complete.
+                      </p>
+                      <ul className="space-y-2 mb-3">
+                        {(suggestion.departmentApprovals || [])
+                          .filter(
+                            (row) =>
+                              !String(row?.approvedAt ?? '').trim() &&
+                              userMatchesDepartmentSlot(
+                                row,
+                                currentUserName,
+                                implementationActorUser?.employeeCode,
+                              ),
+                          )
+                          .map((row) => (
+                            <li
+                              key={row.id}
+                              className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-300 bg-white px-3 py-2 text-xs font-semibold text-gray-900"
+                            >
+                              <span>
+                                {row.department} — <span className="font-black">{row.approverName}</span>
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => void handleDepartmentL1Approve(row.id)}
+                                className="bg-kauvery-purple text-white px-4 py-1.5 rounded-lg text-xs font-bold hover:bg-kauvery-violet"
+                              >
+                                Sign off
+                              </button>
+                            </li>
+                          ))}
+                      </ul>
+                    </div>
+                  )}
+
+                {/* Functional approvals — Level 2 (Finance / Ops / Nursing; legacy Quality/HR if still on the idea) */}
+                {[
+                  Role.FINANCE_HOD,
+                  Role.QUALITY_HOD,
+                  Role.HR_HEAD,
+                  Role.OPS_HEAD,
+                  Role.NURSING_HEAD,
+                ].includes(role) &&
                   suggestion.status === Status.VERIFIED_PENDING_APPROVAL &&
+                  isL2ApprovalPhase(suggestion) &&
                   (suggestion.requiredApprovals || []).includes(role) &&
                   !suggestion.approvals?.[role] && (
                     <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
@@ -2422,7 +3379,7 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
                 {/* 7. FINAL: Payment */}
                 {suggestion.rewardEvaluation && (
                   <div className="bg-green-50 border border-green-300 rounded-xl p-6 text-center shadow-sm">
-                    <div className="text-sm text-green-900 font-black uppercase mb-2">Reward Granted</div>
+                    <div className="text-sm text-green-900 font-black uppercase mb-2">BE reward recommendation</div>
                     <div className="text-4xl font-extrabold text-green-800 mb-1">₹{suggestion.rewardEvaluation.voucherValue}</div>
                     <div className="text-green-900 text-sm font-bold">{suggestion.rewardEvaluation.grade}</div>
                     {suggestion.rewardEvaluation.split && (
@@ -2446,10 +3403,80 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
                         </div>
                       </div>
                     )}
+
+                    {suggestion.hrRewardValidationImagePath &&
+                      suggestion.status === Status.REWARDED && (
+                        <div className="mt-4 pt-4 border-t border-green-200 text-left">
+                          <div className="text-[11px] font-black uppercase text-green-900 mb-2 text-center">
+                            HR reward validation photo
+                          </div>
+                          <a
+                            href={`${apiBase}/kaizen-files/${String(suggestion.hrRewardValidationImagePath).replace(/^\/+/, '')}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="block rounded-lg overflow-hidden border border-green-200 bg-white"
+                          >
+                            <img
+                              src={`${apiBase}/kaizen-files/${String(suggestion.hrRewardValidationImagePath).replace(/^\/+/, '')}`}
+                              alt="HR reward validation"
+                              className="w-full max-h-64 object-contain mx-auto"
+                            />
+                          </a>
+                        </div>
+                      )}
+
                     {(role === Role.HR_HEAD || role === Role.UNIT_COORDINATOR) && suggestion.status === Status.REWARD_PENDING && (
-                      <button onClick={handleProcessReward} className="mt-4 bg-kauvery-pink text-white px-6 py-2 rounded-full font-bold shadow-lg hover:bg-red-600 transition-colors border border-red-700">
-                        Process Payment & Intimate Employee
-                      </button>
+                      <div className="mt-4 pt-4 border-t border-green-200 text-left space-y-3">
+                        <div>
+                          <div className="text-xs font-black text-amber-900 uppercase tracking-wide text-center">
+                            HR validation — reward photo required
+                          </div>
+                          <p className="text-[11px] text-amber-800/90 font-semibold text-center mt-1">
+                            Upload a picture of the reward (e.g. voucher / presentation) before closing this idea.
+                          </p>
+                        </div>
+                        {String(suggestion.hrRewardValidationImagePath ?? '').trim() ? (
+                          <div className="rounded-lg overflow-hidden border border-amber-200 bg-white">
+                            <img
+                              src={`${apiBase}/kaizen-files/${String(suggestion.hrRewardValidationImagePath).replace(/^\/+/, '')}`}
+                              alt="Reward validation preview"
+                              className="w-full max-h-56 object-contain mx-auto"
+                            />
+                            <p className="text-[10px] text-center text-gray-600 font-semibold py-2">
+                              Photo on file — choose another image to replace it.
+                            </p>
+                          </div>
+                        ) : (
+                          <p className="text-xs font-bold text-red-700 text-center">No validation photo yet.</p>
+                        )}
+                        <label className="flex flex-col items-center gap-2 cursor-pointer">
+                          <span className="inline-flex items-center justify-center px-4 py-2 rounded-xl border border-amber-400 bg-white text-amber-950 text-xs font-black hover:bg-amber-50 disabled:opacity-50">
+                            {uploadingHrRewardPhoto ? 'Uploading…' : 'Choose reward photo'}
+                          </span>
+                          <input
+                            type="file"
+                            accept="image/jpeg,image/png,image/webp,image/gif"
+                            disabled={uploadingHrRewardPhoto}
+                            className="sr-only"
+                            onChange={(e) => void handleHrRewardPhotoSelected(e.target.files)}
+                          />
+                        </label>
+                        <button
+                          type="button"
+                          onClick={handleProcessReward}
+                          disabled={
+                            uploadingHrRewardPhoto ||
+                            !String(suggestion.hrRewardValidationImagePath ?? '').trim()
+                          }
+                          className={`w-full mt-2 px-6 py-2.5 rounded-full font-bold shadow-lg border transition-colors ${
+                            String(suggestion.hrRewardValidationImagePath ?? '').trim()
+                              ? 'bg-kauvery-pink text-white hover:bg-red-600 border-red-700'
+                              : 'bg-gray-200 text-gray-500 border-gray-300 cursor-not-allowed'
+                          }`}
+                        >
+                          Process Payment & Intimate Employee
+                        </button>
+                      </div>
                     )}
                   </div>
                 )}

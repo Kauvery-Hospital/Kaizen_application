@@ -2,18 +2,16 @@ import React, { useMemo, useState } from 'react';
 import { Suggestion, Status, Role } from '../types';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell, AreaChart, Area } from 'recharts';
 import { employeeStatusStep } from '../utils/kaizenStatusHelp';
+import { effectiveImplementationProgressDisplay } from '../utils/implementerTemplateProgress';
 
 interface DashboardProps {
   suggestions: Suggestion[];
   role: Role;
   userName?: string;
-<<<<<<< HEAD
   /** Opens the Kaizen Reports screen (sidebar-aligned workflow). */
   onNavigateToReports?: () => void;
-=======
   /** Employee dashboard: primary CTA to open submit flow */
   onNewIdea?: () => void;
->>>>>>> origin/main
 }
 
 function normalizeText(v?: string | null): string {
@@ -33,16 +31,13 @@ function statusPillClass(status: Status): string {
   return 'bg-gray-50 text-gray-800 border-gray-200';
 }
 
-<<<<<<< HEAD
 export const Dashboard: React.FC<DashboardProps> = ({
   suggestions: allSuggestions,
   role,
   userName,
   onNavigateToReports,
+  onNewIdea,
 }) => {
-=======
-export const Dashboard: React.FC<DashboardProps> = ({ suggestions: allSuggestions, role, userName, onNewIdea }) => {
->>>>>>> origin/main
   const [showAllParticipants, setShowAllParticipants] = useState(false);
   const [showFilterMenu, setShowFilterMenu] = useState(false);
   const [filterMode, setFilterMode] = useState<'all' | 'date' | 'unit' | 'department'>('all');
@@ -320,7 +315,14 @@ export const Dashboard: React.FC<DashboardProps> = ({ suggestions: allSuggestion
     if (role === Role.IMPLEMENTER) return 'Implementer Dashboard';
     if (role === Role.BUSINESS_EXCELLENCE) return 'Business Excellence Member Dashboard';
     if (role === Role.BUSINESS_EXCELLENCE_HEAD) return 'Business Excellence Head Dashboard';
-    if (role === Role.HR_HEAD || role === Role.QUALITY_HOD || role === Role.FINANCE_HOD) return 'Functional Head Dashboard';
+    if (
+      role === Role.HR_HEAD ||
+      role === Role.QUALITY_HOD ||
+      role === Role.FINANCE_HOD ||
+      role === Role.OPS_HEAD ||
+      role === Role.NURSING_HEAD
+    )
+      return 'Functional Head Dashboard';
     if (role === Role.ADMIN) return 'Admin Dashboard';
     return 'Role Dashboard';
   }, [role]);
@@ -420,7 +422,13 @@ export const Dashboard: React.FC<DashboardProps> = ({ suggestions: allSuggestion
       ];
     }
 
-    if (role === Role.HR_HEAD || role === Role.QUALITY_HOD || role === Role.FINANCE_HOD) {
+    if (
+      role === Role.HR_HEAD ||
+      role === Role.QUALITY_HOD ||
+      role === Role.FINANCE_HOD ||
+      role === Role.OPS_HEAD ||
+      role === Role.NURSING_HEAD
+    ) {
       return [
         { label: 'Pending Functional Review', value: inReview, color: 'text-orange-700' },
         { label: 'Approved Flow', value: approved, color: 'text-blue-800' },
@@ -588,7 +596,13 @@ export const Dashboard: React.FC<DashboardProps> = ({ suggestions: allSuggestion
       };
     }
 
-    if (role === Role.HR_HEAD || role === Role.QUALITY_HOD || role === Role.FINANCE_HOD) {
+    if (
+      role === Role.HR_HEAD ||
+      role === Role.QUALITY_HOD ||
+      role === Role.FINANCE_HOD ||
+      role === Role.OPS_HEAD ||
+      role === Role.NURSING_HEAD
+    ) {
       return {
         title: 'Pending approvals',
         hint: 'Approve verified ideas assigned to your function.',
@@ -610,7 +624,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ suggestions: allSuggestion
     return true;
   }, [role]);
 
-<<<<<<< HEAD
   const isBeTeam =
     role === Role.BUSINESS_EXCELLENCE || role === Role.BUSINESS_EXCELLENCE_HEAD;
   const isUnitCoordinator = role === Role.UNIT_COORDINATOR;
@@ -660,43 +673,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ suggestions: allSuggestion
               onChange={(e) => setToDate(e.target.value)}
               className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-xs font-semibold bg-white"
             />
-=======
-  return (
-    <div className="space-y-6 animate-fade-in">
-      <div className="relative overflow-hidden rounded-3xl border border-purple-200/50 bg-gradient-to-br from-white via-purple-50/35 to-pink-50/25 p-6 sm:p-7 shadow-kauvery-soft">
-        <div className="pointer-events-none absolute -right-20 -top-20 h-56 w-56 rounded-full bg-kauvery-pink/10 blur-3xl" />
-        <div className="pointer-events-none absolute -left-16 bottom-0 h-44 w-44 rounded-full bg-kauvery-violet/10 blur-3xl" />
-        <div className="relative flex flex-col lg:flex-row lg:justify-between lg:items-end gap-4">
-          <div className="min-w-0 flex-1">
-              <h2 className="text-2xl sm:text-3xl font-black bg-gradient-to-r from-kauvery-purple via-kauvery-violet to-kauvery-pink bg-clip-text text-transparent">
-                {userName ? `Welcome, ${userName}` : roleHeader}
-              </h2>
-              {role === Role.EMPLOYEE ? (
-                <p className="text-gray-700 font-semibold mt-1.5 max-w-xl">
-                  Submit Kaizen ideas and follow them from unit review through implementation to reward.
-                </p>
-              ) : (
-                <p className="text-gray-700 font-semibold mt-1">
-                  Signed in as{' '}
-                  <span className="font-extrabold text-kauvery-purple">{role}</span>.
-                </p>
-              )}
->>>>>>> origin/main
           </div>
-          {role === Role.EMPLOYEE && onNewIdea && (
-            <button
-              type="button"
-              onClick={onNewIdea}
-              className="shrink-0 inline-flex items-center gap-2 rounded-xl bg-kauvery-purple px-5 py-2.5 text-sm font-black text-white shadow-md shadow-purple-200 ring-1 ring-purple-900/10 transition hover:bg-kauvery-violet"
-            >
-              <span className="material-icons-round text-base">add_circle</span>
-              Submit an idea
-            </button>
-          )}
         </div>
       )}
 
-<<<<<<< HEAD
       {filterMode === 'unit' && (
         <div>
           <label className="text-[10px] font-extrabold text-gray-600 uppercase mb-1 block">Unit</label>
@@ -777,18 +757,18 @@ export const Dashboard: React.FC<DashboardProps> = ({ suggestions: allSuggestion
               Signed in as <span className="font-extrabold text-kauvery-purple">{role}</span>.
             </p>
           </div>
-          {spotlightDashboard && onNavigateToReports && (
-=======
-        {role === Role.EMPLOYEE ? (
-        <div className="mt-4 flex flex-wrap items-center justify-between gap-2 text-xs font-bold text-gray-600">
-          <span>
-            Showing <span className="text-gray-900">{filteredSuggestions.length}</span> of your ideas
-          </span>
-        </div>
-        ) : (
-        <div className="mt-4 flex flex-col md:flex-row md:items-end md:justify-between gap-3">
-          <div className="relative">
->>>>>>> origin/main
+          <div className="flex shrink-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
+            {role === Role.EMPLOYEE && onNewIdea && (
+              <button
+                type="button"
+                onClick={onNewIdea}
+                className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-kauvery-purple px-5 py-2.5 text-sm font-black text-white shadow-md shadow-purple-200 ring-1 ring-purple-900/10 transition hover:bg-kauvery-violet"
+              >
+                <span className="material-icons-round text-base">add_circle</span>
+                Submit an idea
+              </button>
+            )}
+            {spotlightDashboard && onNavigateToReports && (
             <button
               type="button"
               onClick={onNavigateToReports}
@@ -797,7 +777,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ suggestions: allSuggestion
               <span className="material-icons-round text-[20px]">insert_chart_outlined</span>
               Kaizen reports
             </button>
-          )}
+            )}
+          </div>
         </div>
 
         <div className="mt-4 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
@@ -876,7 +857,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ suggestions: allSuggestion
             <span className="text-gray-900">{filteredSuggestions.length}</span> ideas
           </div>
         </div>
-        )}
       </div>
 
       {employeeAttentionNotes.length > 0 && (
@@ -1207,7 +1187,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ suggestions: allSuggestion
                         : beWorkbenchTab === 'rewardProcessing'
                           ? beWorkbench.queues.rewardProcessing
                           : beWorkbench.queues.rewarded;
-                return items.slice(0, 6).map((s) => (
+                return items.slice(0, 6).map((s) => {
+                  const prog = effectiveImplementationProgressDisplay(s);
+                  return (
                   <div key={s.id} className="px-6 py-4 flex items-start justify-between gap-4 hover:bg-gray-50/60">
                     <div className="min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
@@ -1235,15 +1217,16 @@ export const Dashboard: React.FC<DashboardProps> = ({ suggestions: allSuggestion
                       <div className="mt-2 w-28">
                         <div className="flex items-center justify-between text-[10px] text-gray-500 font-bold uppercase mb-1">
                           <span>Progress</span>
-                          <span>{s.implementationProgress || 0}%</span>
+                          <span>{prog}%</span>
                         </div>
                         <div className="w-full h-1.5 bg-gray-200 rounded overflow-hidden">
-                          <div className="h-full bg-kauvery-purple" style={{ width: `${s.implementationProgress || 0}%` }} />
+                          <div className="h-full bg-kauvery-purple" style={{ width: `${prog}%` }} />
                         </div>
                       </div>
                     </div>
                   </div>
-                ));
+                  );
+                });
               })()}
 
               {(() => {
@@ -1374,7 +1357,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ suggestions: allSuggestion
             </div>
           </div>
           <div className="divide-y divide-gray-100">
-            {actionQueue.items.slice(0, 6).map((s) => (
+            {actionQueue.items.slice(0, 6).map((s) => {
+              const prog = effectiveImplementationProgressDisplay(s);
+              return (
               <div key={s.id} className="px-6 py-4 flex items-start justify-between gap-4 hover:bg-gray-50/60">
                 <div className="min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
@@ -1403,15 +1388,16 @@ export const Dashboard: React.FC<DashboardProps> = ({ suggestions: allSuggestion
                   <div className="mt-2 w-28">
                     <div className="flex items-center justify-between text-[10px] text-gray-500 font-bold uppercase mb-1">
                       <span>Progress</span>
-                      <span>{s.implementationProgress || 0}%</span>
+                      <span>{prog}%</span>
                     </div>
                     <div className="w-full h-1.5 bg-gray-200 rounded overflow-hidden">
-                      <div className="h-full bg-kauvery-purple" style={{ width: `${s.implementationProgress || 0}%` }} />
+                      <div className="h-full bg-kauvery-purple" style={{ width: `${prog}%` }} />
                     </div>
                   </div>
                 </div>
               </div>
-            ))}
+              );
+            })}
             {actionQueue.items.length === 0 && (
               <div className="px-6 py-14 text-center text-sm text-gray-600 font-semibold">
                 {role === Role.EMPLOYEE ? (

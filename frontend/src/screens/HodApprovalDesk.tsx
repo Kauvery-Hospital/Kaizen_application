@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { Role, Suggestion, Status } from '../types';
 import { STATUS_COLORS } from '../constants';
+import { isL2ApprovalPhase } from '../utils/phasedApproval';
 
 export interface HodApprovalDeskProps {
   suggestions: Suggestion[];
@@ -10,6 +11,7 @@ export interface HodApprovalDeskProps {
 
 const needsHeadApproval = (s: Suggestion, r: Role) =>
   s.status === Status.VERIFIED_PENDING_APPROVAL &&
+  isL2ApprovalPhase(s) &&
   Boolean(s.requiredApprovals?.includes(r)) &&
   !s.approvals?.[r];
 
@@ -188,7 +190,11 @@ export const HodApprovalDesk: React.FC<HodApprovalDeskProps> = ({
         ? 'Quality head'
         : role === Role.FINANCE_HOD
           ? 'Finance head'
-          : 'Head';
+          : role === Role.OPS_HEAD
+            ? 'Operations head'
+            : role === Role.NURSING_HEAD
+              ? 'Nursing head'
+              : 'Head';
 
   return (
     <div className="max-w-5xl mx-auto animate-fade-in space-y-8">

@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { USER_ROLE_FILTER_OPTIONS } from '../constants/adminUserRoles';
 
 type BackendRoleCode =
@@ -11,6 +12,8 @@ type BackendRoleCode =
   | 'HOD_FINANCE'
   | 'HOD_HR'
   | 'HOD_QUALITY'
+  | 'HOD_OPS'
+  | 'HOD_NURSING'
   | 'ADMIN'
   | 'SUPER_ADMIN'
   | 'BE_MEMBER'
@@ -26,6 +29,8 @@ const ROLE_LABEL: Record<BackendRoleCode, string> = {
   HOD_FINANCE: 'Head - Finance',
   HOD_HR: 'Head - HR',
   HOD_QUALITY: 'Head - Quality',
+  HOD_OPS: 'Head - Operations',
+  HOD_NURSING: 'Head - Nursing',
   ADMIN: 'Admin',
   SUPER_ADMIN: 'Super Admin',
   BE_MEMBER: 'Business Excellence Member (legacy)',
@@ -42,6 +47,8 @@ const ROLE_OPTIONS: { code: BackendRoleCode; label: string; tone: 'purple' | 'sl
   { code: 'HOD_QUALITY', label: ROLE_LABEL.HOD_QUALITY, tone: 'slate' },
   { code: 'HOD_FINANCE', label: ROLE_LABEL.HOD_FINANCE, tone: 'slate' },
   { code: 'HOD_HR', label: ROLE_LABEL.HOD_HR, tone: 'slate' },
+  { code: 'HOD_OPS', label: ROLE_LABEL.HOD_OPS, tone: 'slate' },
+  { code: 'HOD_NURSING', label: ROLE_LABEL.HOD_NURSING, tone: 'slate' },
   { code: 'ADMIN', label: ROLE_LABEL.ADMIN, tone: 'purple' },
   { code: 'SUPER_ADMIN', label: ROLE_LABEL.SUPER_ADMIN, tone: 'purple' },
 ];
@@ -52,7 +59,19 @@ type UsersApiRow = {
   name: string;
   email: string;
   unitCode?: string | null;
-  unitScopes?: { UNIT_COORDINATOR?: string[]; SELECTION_COMMITTEE?: string[] };
+  unitScopes?: {
+    UNIT_COORDINATOR?: string[];
+    SELECTION_COMMITTEE?: string[];
+    HOD_FINANCE?: string[];
+    HOD_QUALITY?: string[];
+    HOD_HR?: string[];
+    HOD_OPS?: string[];
+    HOD_NURSING?: string[];
+  };
+  departmentHodAssignments?: Array<{
+    departmentName: string;
+    unitCode: string;
+  }>;
   department?: string | null;
   designation?: string | null;
   isActive: boolean;
@@ -73,6 +92,22 @@ type UsersSummaryResponse = {
 };
 
 const PAGE_SIZES = [25, 50, 100] as const;
+
+const DEPARTMENT_HOD_PREFIX = 'DEPARTMENT_HOD::';
+
+function makeDepartmentHodRoleCode(departmentName: string): string {
+  return `${DEPARTMENT_HOD_PREFIX}${departmentName}`;
+}
+
+function isDepartmentHodRoleCode(value: string): boolean {
+  return value.startsWith(DEPARTMENT_HOD_PREFIX);
+}
+
+function getDepartmentNameFromDepartmentHodRoleCode(value: string): string {
+  return isDepartmentHodRoleCode(value)
+    ? value.slice(DEPARTMENT_HOD_PREFIX.length).trim()
+    : '';
+}
 
 function toneClasses(tone: 'purple' | 'slate' | 'amber' | 'emerald'): string {
   if (tone === 'purple') return 'bg-purple-50 text-purple-800 border-purple-200';
@@ -127,13 +162,22 @@ export const UserManagement: React.FC<{
   const [isSyncingMobile, setIsSyncingMobile] = useState(false);
 
   const [activeUser, setActiveUser] = useState<UsersApiRow | null>(null);
-  const [selectedRoleCode, setSelectedRoleCode] = useState<BackendRoleCode>('EMPLOYEE');
+  const [selectedRoleCode, setSelectedRoleCode] = useState<string>('EMPLOYEE');
   const [isSaving, setIsSaving] = useState(false);
   const [isRemoving, setIsRemoving] = useState(false);
 
   // Unit-scoped role configuration
+  const selectedDepartmentHodName =
+    getDepartmentNameFromDepartmentHodRoleCode(selectedRoleCode);
   const isUnitScopedRole =
-    selectedRoleCode === 'UNIT_COORDINATOR' || selectedRoleCode === 'SELECTION_COMMITTEE';
+    selectedRoleCode === 'UNIT_COORDINATOR' ||
+    selectedRoleCode === 'SELECTION_COMMITTEE' ||
+    selectedRoleCode === 'HOD_FINANCE' ||
+    selectedRoleCode === 'HOD_QUALITY' ||
+    selectedRoleCode === 'HOD_HR' ||
+    selectedRoleCode === 'HOD_OPS' ||
+    selectedRoleCode === 'HOD_NURSING' ||
+    isDepartmentHodRoleCode(selectedRoleCode);
   const [unitScopeQuery, setUnitScopeQuery] = useState('');
   const [selectedUnitCodes, setSelectedUnitCodes] = useState<string[]>([]);
   const [isLoadingScopes, setIsLoadingScopes] = useState(false);
@@ -206,14 +250,10 @@ export const UserManagement: React.FC<{
       params.set('take', String(pageSize));
       if (debouncedQuery) params.set('search', debouncedQuery);
       if (department.trim()) params.set('department', department.trim());
-<<<<<<< HEAD
       if (roleHasFilter !== 'all') params.set('role', roleHasFilter);
       if (activeFilter === 'active') params.set('isActive', 'true');
       if (activeFilter === 'inactive') params.set('isActive', 'false');
-
-=======
       params.set('includeUnitScopes', 'true');
->>>>>>> origin/main
       const res = await fetch(`${apiBase}/users?${params.toString()}`, {
         headers: authHeaders(),
       });
@@ -323,6 +363,35 @@ export const UserManagement: React.FC<{
     }
   };
 
+  const loadDepartmentHodScopes = async (
+    userId: string,
+    departmentName: string,
+  ) => {
+    setIsLoadingScopes(true);
+    try {
+      const params = new URLSearchParams({ department: departmentName });
+      const res = await fetch(
+        `${apiBase}/users/${userId}/department-hod-scopes?${params.toString()}`,
+        {
+          headers: authHeaders(),
+        },
+      );
+      if (!res.ok) throw new Error(await messageFromFailedResponse(res));
+      const data = (await res.json()) as Array<{ unitCode?: string }>;
+      const codes = (Array.isArray(data) ? data : [])
+        .map((r) => String(r?.unitCode || '').trim())
+        .filter(Boolean);
+      setSelectedUnitCodes(Array.from(new Set(codes)).sort((a, b) => a.localeCompare(b)));
+    } catch (e) {
+      setError(
+        e instanceof Error ? e.message : 'Failed to load department HOD unit scopes.',
+      );
+      setSelectedUnitCodes([]);
+    } finally {
+      setIsLoadingScopes(false);
+    }
+  };
+
   useEffect(() => {
     if (!activeUser) return;
     if (!isUnitScopedRole) {
@@ -330,7 +399,11 @@ export const UserManagement: React.FC<{
       setUnitScopeQuery('');
       return;
     }
-    void loadUnitScopes(activeUser.id, selectedRoleCode);
+    if (isDepartmentHodRoleCode(selectedRoleCode)) {
+      void loadDepartmentHodScopes(activeUser.id, selectedDepartmentHodName);
+      return;
+    }
+    void loadUnitScopes(activeUser.id, selectedRoleCode as BackendRoleCode);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeUser?.id, selectedRoleCode]);
 
@@ -341,19 +414,38 @@ export const UserManagement: React.FC<{
     setError(null);
     setNotice(null);
     try {
-      const res = await fetch(`${apiBase}/users/${activeUser.id}/unit-scopes`, {
-        method: 'POST',
-        headers: authHeaders(),
-        body: JSON.stringify({
-          roleCode: selectedRoleCode,
-          unitCodes: selectedUnitCodes,
-          assignedBy: 'SUPER_ADMIN_UI',
-        }),
-      });
+      const isDeptHod = isDepartmentHodRoleCode(selectedRoleCode);
+      const res = await fetch(
+        isDeptHod
+          ? `${apiBase}/users/${activeUser.id}/department-hod-scopes`
+          : `${apiBase}/users/${activeUser.id}/unit-scopes`,
+        {
+          method: 'POST',
+          headers: authHeaders(),
+          body: JSON.stringify(
+            isDeptHod
+              ? {
+                  departmentName: selectedDepartmentHodName,
+                  unitCodes: selectedUnitCodes,
+                  assignedBy: 'SUPER_ADMIN_UI',
+                }
+              : {
+                  roleCode: selectedRoleCode,
+                  unitCodes: selectedUnitCodes,
+                  assignedBy: 'SUPER_ADMIN_UI',
+                },
+          ),
+        },
+      );
       if (!res.ok) throw new Error(await messageFromFailedResponse(res));
       setNotice(
-        `${ROLE_LABEL[selectedRoleCode]} unit scopes saved (${selectedUnitCodes.length}).`,
+        `${
+          isDeptHod ? `HOD - ${selectedDepartmentHodName}` : ROLE_LABEL[selectedRoleCode as BackendRoleCode]
+        } unit scopes saved (${selectedUnitCodes.length}).`,
       );
+      const freshRows = await load();
+      const refreshed = (freshRows || []).find((r) => r.id === activeUser.id) || activeUser;
+      setActiveUser(refreshed);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to save unit scopes.');
     } finally {
@@ -363,22 +455,42 @@ export const UserManagement: React.FC<{
 
   const handleAssignRole = async () => {
     if (!activeUser) return;
+    const isDeptHod = isDepartmentHodRoleCode(selectedRoleCode);
     setIsSaving(true);
     setError(null);
     try {
-      const res = await fetch(`${apiBase}/users/${activeUser.id}/roles`, {
-        method: 'POST',
-        headers: authHeaders(),
-        body: JSON.stringify({
-          roleCode: selectedRoleCode,
-          assignedBy: 'SUPER_ADMIN_UI',
-        }),
-      });
+      const res = await fetch(
+        isDeptHod
+          ? `${apiBase}/users/${activeUser.id}/department-hod-scopes`
+          : `${apiBase}/users/${activeUser.id}/roles`,
+        {
+          method: 'POST',
+          headers: authHeaders(),
+          body: JSON.stringify(
+            isDeptHod
+              ? {
+                  departmentName: selectedDepartmentHodName,
+                  unitCodes: selectedUnitCodes,
+                  assignedBy: 'SUPER_ADMIN_UI',
+                }
+              : {
+                  roleCode: selectedRoleCode,
+                  assignedBy: 'SUPER_ADMIN_UI',
+                },
+          ),
+        },
+      );
       if (!res.ok) throw new Error(await messageFromFailedResponse(res));
       await load();
       setActiveUser(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to assign role.');
+      setError(
+        e instanceof Error
+          ? e.message
+          : isDeptHod
+            ? 'Failed to assign department HOD.'
+            : 'Failed to assign role.',
+      );
     } finally {
       setIsSaving(false);
     }
@@ -411,6 +523,37 @@ export const UserManagement: React.FC<{
     }
   };
 
+  const handleRemoveDepartmentHod = async (departmentName: string) => {
+    if (!activeUser) return;
+    if (!departmentName) return;
+    const ok = window.confirm(
+      `Remove department HOD assignment "${departmentName}" from ${activeUser.name}?`,
+    );
+    if (!ok) return;
+    setIsRemoving(true);
+    setError(null);
+    try {
+      const params = new URLSearchParams({ department: departmentName });
+      const res = await fetch(
+        `${apiBase}/users/${activeUser.id}/department-hod-scopes?${params.toString()}`,
+        {
+          method: 'DELETE',
+          headers: authHeaders(),
+        },
+      );
+      if (!res.ok) throw new Error(await messageFromFailedResponse(res));
+      const freshRows = await load();
+      const refreshed = (freshRows || []).find((r) => r.id === activeUser.id) || null;
+      setActiveUser(refreshed);
+    } catch (e) {
+      setError(
+        e instanceof Error ? e.message : 'Failed to remove department HOD assignment.',
+      );
+    } finally {
+      setIsRemoving(false);
+    }
+  };
+
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
   const currentPage = Math.floor(skip / pageSize) + 1;
   const showingFrom = total === 0 ? 0 : skip + 1;
@@ -429,6 +572,35 @@ export const UserManagement: React.FC<{
       </>
     );
   }, [summary]);
+
+  const departmentHodRoleOptions = useMemo(
+    () =>
+      [...departments]
+        .sort((a, b) => a.localeCompare(b))
+        .map((d) => ({
+          code: makeDepartmentHodRoleCode(d),
+          label: `HOD - ${d}`,
+        })),
+    [departments],
+  );
+
+  const activeUserDepartmentHodGroups = useMemo(() => {
+    const map = new Map<string, string[]>();
+    for (const row of activeUser?.departmentHodAssignments || []) {
+      const dept = String(row.departmentName || '').trim();
+      const unit = String(row.unitCode || '').trim();
+      if (!dept || !unit) continue;
+      const prev = map.get(dept) ?? [];
+      prev.push(unit);
+      map.set(dept, prev);
+    }
+    return [...map.entries()]
+      .map(([departmentName, unitCodes]) => ({
+        departmentName,
+        unitCodes: Array.from(new Set(unitCodes)).sort((a, b) => a.localeCompare(b)),
+      }))
+      .sort((a, b) => a.departmentName.localeCompare(b.departmentName));
+  }, [activeUser?.departmentHodAssignments]);
 
   return (
     <div className="max-w-6xl mx-auto animate-fade-in">
@@ -615,9 +787,40 @@ export const UserManagement: React.FC<{
                       const sc = (u.unitScopes?.SELECTION_COMMITTEE || [])
                         .map((x) => String(x).trim())
                         .filter(Boolean);
-                      const chips: Array<{ k: string; label: string; tone: 'purple' | 'slate' }> = [];
+                      const hq = (u.unitScopes?.HOD_QUALITY || [])
+                        .map((x) => String(x).trim())
+                        .filter(Boolean);
+                      const hf = (u.unitScopes?.HOD_FINANCE || [])
+                        .map((x) => String(x).trim())
+                        .filter(Boolean);
+                      const hh = (u.unitScopes?.HOD_HR || [])
+                        .map((x) => String(x).trim())
+                        .filter(Boolean);
+                      const ho = (u.unitScopes?.HOD_OPS || [])
+                        .map((x) => String(x).trim())
+                        .filter(Boolean);
+                      const hn = (u.unitScopes?.HOD_NURSING || [])
+                        .map((x) => String(x).trim())
+                        .filter(Boolean);
+                      const chips: Array<{ k: string; label: string; tone: 'purple' | 'slate' | 'amber' }> =
+                        [];
                       uc.forEach((x) => chips.push({ k: `uc-${u.id}-${x}`, label: `UC:${x}`, tone: 'purple' }));
                       sc.forEach((x) => chips.push({ k: `sc-${u.id}-${x}`, label: `SC:${x}`, tone: 'slate' }));
+                      hq.forEach((x) =>
+                        chips.push({ k: `hq-${u.id}-${x}`, label: `Qual:${x}`, tone: 'amber' }),
+                      );
+                      hf.forEach((x) =>
+                        chips.push({ k: `hf-${u.id}-${x}`, label: `Fin:${x}`, tone: 'amber' }),
+                      );
+                      hh.forEach((x) =>
+                        chips.push({ k: `hh-${u.id}-${x}`, label: `HR:${x}`, tone: 'amber' }),
+                      );
+                      ho.forEach((x) =>
+                        chips.push({ k: `ho-${u.id}-${x}`, label: `Ops:${x}`, tone: 'amber' }),
+                      );
+                      hn.forEach((x) =>
+                        chips.push({ k: `hn-${u.id}-${x}`, label: `Nur:${x}`, tone: 'amber' }),
+                      );
                       if (!chips.length) return <span className="text-gray-500 font-bold">—</span>;
                       return (
                         <div className="flex flex-wrap gap-1.5">
@@ -681,13 +884,8 @@ export const UserManagement: React.FC<{
 
               {!rows.length && (
                 <tr>
-<<<<<<< HEAD
-                  <td className="px-5 py-10 text-center text-gray-600 font-bold" colSpan={5}>
-                    {isLoading ? 'Loading users…' : 'No users on this page — adjust filters or search.'}
-=======
                   <td className="px-5 py-10 text-center text-gray-600 font-bold" colSpan={7}>
-                    {isLoading ? 'Loading users…' : 'No users found.'}
->>>>>>> origin/main
+                    {isLoading ? 'Loading users…' : 'No users on this page — adjust filters or search.'}
                   </td>
                 </tr>
               )}
@@ -720,14 +918,33 @@ export const UserManagement: React.FC<{
         </div>
       </div>
 
-      {/* Modal */}
-      {activeUser && (
-        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto px-4 pt-8 pb-12 sm:pt-12">
-          <div className="absolute inset-0 bg-black/40" onClick={() => setActiveUser(null)} />
-          <div className="relative mt-0 w-full max-w-lg max-h-[calc(100vh-4rem)] overflow-y-auto bg-white rounded-2xl border border-gray-200 shadow-2xl">
-            <div className="px-6 py-5 border-b border-gray-200 flex items-start justify-between">
+      {/* Modal — portaled to body: ancestor `animate-fade-in` uses transform, which breaks `fixed` inside `<main>` scroll */}
+      {activeUser &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-[110] overflow-y-auto overscroll-contain touch-pan-y"
+            role="presentation"
+          >
+          <div className="relative flex min-h-full items-start justify-center px-4 sm:px-6 pt-8 sm:pt-10 pb-12 sm:pb-16">
+            <div
+              className="absolute inset-0 bg-black/40"
+              aria-hidden
+              onClick={() => setActiveUser(null)}
+            />
+            <div
+              className="relative z-10 w-full max-w-lg rounded-2xl border border-gray-200 bg-white shadow-2xl"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="user-management-modal-title"
+            >
+            <div className="px-6 py-5 border-b border-gray-200 flex items-start justify-between shrink-0">
               <div>
-                <div className="text-xs font-black text-gray-500 uppercase tracking-wide">Manage access</div>
+                <div
+                  id="user-management-modal-title"
+                  className="text-xs font-black text-gray-500 uppercase tracking-wide"
+                >
+                  Manage access
+                </div>
                 <div className="text-lg font-black text-gray-900 mt-0.5">{activeUser.name}</div>
                 <div className="text-xs text-gray-600 font-semibold mt-1">
                   {activeUser.employeeCode} • {activeUser.email}
@@ -749,7 +966,7 @@ export const UserManagement: React.FC<{
                 </label>
                 <select
                   value={selectedRoleCode}
-                  onChange={(e) => setSelectedRoleCode(e.target.value as BackendRoleCode)}
+                  onChange={(e) => setSelectedRoleCode(e.target.value)}
                   className="w-full border border-gray-300 rounded-xl px-3 py-2.5 text-sm text-gray-900 font-semibold focus:outline-none focus:ring-2 focus:ring-purple-200 focus:border-purple-300"
                 >
                   {ROLE_OPTIONS.map((o) => (
@@ -757,9 +974,20 @@ export const UserManagement: React.FC<{
                       {o.label}
                     </option>
                   ))}
+                  {departmentHodRoleOptions.length > 0 && (
+                    <optgroup label="Department HOD assignments">
+                      {departmentHodRoleOptions.map((o) => (
+                        <option key={o.code} value={o.code}>
+                          {o.label}
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
                 </select>
                 <div className="text-[11px] text-gray-500 font-semibold mt-2">
-                  This adds an additional role (it does not remove existing roles).
+                  {isDepartmentHodRoleCode(selectedRoleCode)
+                    ? 'This assigns the selected department HOD for the chosen unit code(s).'
+                    : 'This adds an additional role (it does not remove existing roles).'}
                 </div>
               </div>
 
@@ -768,10 +996,15 @@ export const UserManagement: React.FC<{
                   <div className="flex items-center justify-between gap-3">
                     <div>
                       <div className="text-xs font-black text-gray-700 uppercase tracking-wide">
-                        Unit scopes for {ROLE_LABEL[selectedRoleCode]}
+                        Unit scopes for{' '}
+                        {isDepartmentHodRoleCode(selectedRoleCode)
+                          ? `HOD - ${selectedDepartmentHodName}`
+                          : ROLE_LABEL[selectedRoleCode as BackendRoleCode]}
                       </div>
                       <div className="text-[11px] text-gray-500 font-semibold mt-1">
-                        Select which unit(s) this user can act on for this role.
+                        {isDepartmentHodRoleCode(selectedRoleCode)
+                          ? 'Select the unit code(s) where this user is the assigned department HOD.'
+                          : 'Select which unit(s) this user can act on for this role.'}
                       </div>
                     </div>
                     <button
@@ -882,6 +1115,38 @@ export const UserManagement: React.FC<{
                   ))}
                 </div>
               </div>
+
+              <div className="bg-gray-50 rounded-xl border border-gray-200 p-3">
+                <div className="text-xs font-black text-gray-600 uppercase tracking-wide mb-2">
+                  Department HOD assignments
+                </div>
+                {activeUserDepartmentHodGroups.length ? (
+                  <div className="flex flex-wrap gap-1.5">
+                    {activeUserDepartmentHodGroups.map((row) => (
+                      <span
+                        key={`dept-hod-${activeUser.id}-${row.departmentName}`}
+                        className="inline-flex items-center gap-1 px-2 py-1 rounded-full border bg-white text-[11px] font-extrabold text-gray-800 border-gray-200"
+                      >
+                        {`HOD - ${row.departmentName} (${row.unitCodes.join(', ')})`}
+                        <button
+                          type="button"
+                          onClick={() => void handleRemoveDepartmentHod(row.departmentName)}
+                          disabled={isSaving || isRemoving}
+                          className="ml-1 inline-flex items-center justify-center w-4 h-4 rounded-full border border-gray-200 text-gray-500 hover:text-red-700 hover:border-red-200 hover:bg-red-50 disabled:opacity-50"
+                          title="Remove department HOD assignment"
+                          aria-label={`Remove department HOD assignment ${row.departmentName}`}
+                        >
+                          ×
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-[11px] text-gray-500 font-semibold">
+                    No department HOD assignments.
+                  </div>
+                )}
+              </div>
             </div>
 
             <div className="px-6 py-5 border-t border-gray-200 flex gap-2">
@@ -897,12 +1162,18 @@ export const UserManagement: React.FC<{
                 className="flex-1 bg-gradient-to-r from-kauvery-purple to-kauvery-violet hover:opacity-95 text-white font-extrabold py-2.5 rounded-xl shadow-lg shadow-purple-200 disabled:opacity-60"
                 disabled={isSaving || isRemoving}
               >
-                {isSaving ? 'Saving…' : 'Assign role'}
+                {isSaving
+                  ? 'Saving…'
+                  : isDepartmentHodRoleCode(selectedRoleCode)
+                    ? 'Assign department HOD'
+                    : 'Assign role'}
               </button>
             </div>
+            </div>
           </div>
-        </div>
-      )}
+        </div>,
+          document.body,
+        )}
     </div>
   );
 };

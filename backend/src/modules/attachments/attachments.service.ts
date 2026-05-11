@@ -5,7 +5,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { mkdir, unlink, writeFile } from 'fs/promises';
-import { extname, join } from 'path';
+import { extname, join, relative, resolve } from 'path';
 import type { Express } from 'express';
 import { PrismaService } from '../../database/prisma.service';
 
@@ -116,6 +116,106 @@ export class AttachmentsService {
     }
 
     return { folderRelative, filePaths, files: meta };
+  }
+
+  /**
+   * HR reward proof photo — stored next to the Kaizen template files:
+   * 1) {@link templateFolderRelative} from the suggestion (`template_attachments_folder`)
+   * 2) else `kaizen/{implementer}/kaizen_template/` when {@link fallbackImplementerEmployeeCode} is set
+   * 3) else `kaizen/{uploader}/hr_reward_validation/`
+   */
+  async saveHrRewardValidationImage(
+    employeeCodeRaw: string,
+    file: Express.Multer.File,
+    opts?: {
+      templateFolderRelative?: string | null;
+      /** Implementer employee code — same layout as template uploads */
+      fallbackImplementerEmployeeCode?: string | null;
+    },
+  ): Promise<{ relativePath: string; appendToTemplateAttachmentPaths: boolean }> {
+    if (!file?.buffer?.length) {
+      throw new BadRequestException('No file uploaded');
+    }
+    const mime = String(file.mimetype || '').toLowerCase();
+    const okMime =
+      mime === 'image/jpeg' ||
+      mime === 'image/png' ||
+      mime === 'image/webp' ||
+      mime === 'image/gif';
+    if (!okMime) {
+      throw new BadRequestException(
+        'Reward validation must be an image (JPEG, PNG, WebP, or GIF).',
+      );
+    }
+    const emp = this.sanitizeEmployeeCode(employeeCodeRaw);
+    const uploadRoot = this.getUploadRoot();
+
+    const safeKaizenDir = (
+      normalizedFolder: string,
+    ): { folderRelative: string; absDir: string } | null => {
+      if (
+        !normalizedFolder ||
+        normalizedFolder.includes('..') ||
+        !normalizedFolder.startsWith('kaizen/')
+      ) {
+        return null;
+      }
+      const rootResolved = resolve(uploadRoot);
+      const absDir = resolve(uploadRoot, ...normalizedFolder.split('/'));
+      const relFromRoot = relative(rootResolved, absDir);
+      if (!relFromRoot || relFromRoot.startsWith('..') || relFromRoot.includes('..')) {
+        return null;
+      }
+      return { folderRelative: normalizedFolder, absDir };
+    };
+
+    let resolved = safeKaizenDir(
+      this.toPosix(String(opts?.templateFolderRelative ?? '').trim()).replace(
+        /^\/+/,
+        '',
+      ),
+    );
+
+    if (!resolved) {
+      const fb = this.sanitizeEmployeeCode(
+        opts?.fallbackImplementerEmployeeCode ?? '',
+      );
+      if (fb && fb !== 'unknown') {
+        resolved = safeKaizenDir(this.toPosix(join('kaizen', fb, 'kaizen_template')));
+      }
+    }
+
+    let appendToTemplateAttachmentPaths = false;
+    let folderRelative: string;
+    let absDir: string;
+
+    if (resolved) {
+      folderRelative = resolved.folderRelative;
+      absDir = resolved.absDir;
+      appendToTemplateAttachmentPaths = folderRelative.includes('/kaizen_template');
+    } else {
+      folderRelative = this.toPosix(join('kaizen', emp, 'hr_reward_validation'));
+      absDir = join(uploadRoot, 'kaizen', emp, 'hr_reward_validation');
+      appendToTemplateAttachmentPaths = false;
+    }
+
+    await mkdir(absDir, { recursive: true });
+
+    const stamp = this.formatDateTimeForFileName(new Date());
+    const ext =
+      extname(file.originalname || '') ||
+      (mime.includes('png')
+        ? '.png'
+        : mime.includes('webp')
+          ? '.webp'
+          : mime.includes('gif')
+            ? '.gif'
+            : '.jpg');
+    const storedFileName = `hr_reward_validation_${stamp}${ext}`;
+    const absPath = join(absDir, storedFileName);
+    await writeFile(absPath, file.buffer);
+    const relativePath = this.toPosix(join(folderRelative, storedFileName));
+    return { relativePath, appendToTemplateAttachmentPaths };
   }
 
   async deleteKaizenFile(employeeCodeRaw: string, relativePathRaw: string) {
