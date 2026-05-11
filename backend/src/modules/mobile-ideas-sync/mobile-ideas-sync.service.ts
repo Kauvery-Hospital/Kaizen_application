@@ -6,6 +6,7 @@ import { PrismaService } from '../../database/prisma.service';
 import { SuggestionSource, SyncStatus } from '@prisma/client';
 
 const IDEA_PREFIX = 'KH';
+const DEFAULT_MOBILE_IDEA_SYNC_START_DATE = '2026-05-10';
 
 export type MobileIdeasSyncRunResult = {
   scanned: number;
@@ -35,6 +36,23 @@ export class MobileIdeasSyncService {
       .trim()
       .toLowerCase();
     return raw !== 'false' && raw !== '0' && raw !== 'no' && raw !== 'off';
+  }
+
+  private getMobileIdeaSyncStartDate(): string {
+    const raw = String(
+      this.config.get<string>('MOBILE_IDEA_SYNC_START_DATE') ??
+        DEFAULT_MOBILE_IDEA_SYNC_START_DATE,
+    ).trim();
+    if (!raw) return DEFAULT_MOBILE_IDEA_SYNC_START_DATE;
+
+    const normalized = /^\d{2}\/\d{2}\/\d{4}$/.test(raw)
+      ? `${raw.slice(6, 10)}-${raw.slice(3, 5)}-${raw.slice(0, 2)}`
+      : raw;
+    const parsed = new Date(normalized);
+    if (Number.isNaN(parsed.getTime())) {
+      return DEFAULT_MOBILE_IDEA_SYNC_START_DATE;
+    }
+    return parsed.toISOString().slice(0, 10);
   }
 
   @Cron(process.env.MOBILE_IDEA_SYNC_CRON ?? '0 */5 * * * *')
@@ -155,13 +173,13 @@ export class MobileIdeasSyncService {
       suggestion: string;
       unit: string | null;
       department: string | null;
-      is_active: boolean;
       created_at: string;
     }> = [];
 
     let inserted = 0;
     let updated = 0;
     let skippedUnmappedEmployee = 0;
+    const syncStartDate = this.getMobileIdeaSyncStartDate();
 
     try {
       const res = await pool.query(
@@ -173,14 +191,13 @@ export class MobileIdeasSyncService {
           suggestion::text as suggestion,
           unit::text as unit,
           department::text as department,
-          is_active as is_active,
           created_at::text as created_at
         from hrms_suggestions
-        where is_active = true
-        order by created_at desc
-        limit $1
+        where date > $1::date
+        order by date desc, created_at desc
+        limit $2
         `,
-        [take],
+        [syncStartDate, take],
       );
       rows = Array.isArray(res.rows) ? (res.rows as any) : [];
 
