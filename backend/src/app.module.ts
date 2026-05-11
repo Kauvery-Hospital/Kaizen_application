@@ -14,6 +14,7 @@ import { AttachmentsModule } from './modules/attachments/attachments.module';
 import { HrmsSyncModule } from './modules/hrms-sync/hrms-sync.module';
 import { AiModule } from './modules/ai/ai.module';
 import { MobileIdeasSyncModule } from './modules/mobile-ideas-sync/mobile-ideas-sync.module';
+import { ReportsModule } from './modules/reports/reports.module';
 
 @Module({
   imports: [
@@ -29,6 +30,7 @@ import { MobileIdeasSyncModule } from './modules/mobile-ideas-sync/mobile-ideas-
     HrmsSyncModule,
     AiModule,
     MobileIdeasSyncModule,
+    ReportsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

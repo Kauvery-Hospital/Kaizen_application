@@ -21,6 +21,8 @@ const ROLE_DISPLAY_NAME: Partial<Record<RoleCode, string>> = {
   [RoleCode.HOD_FINANCE]: 'HOD Finance',
   [RoleCode.HOD_HR]: 'HOD HR',
   [RoleCode.HOD_QUALITY]: 'HOD Quality',
+  [RoleCode.HOD_OPS]: 'HOD Operations',
+  [RoleCode.HOD_NURSING]: 'HOD Nursing',
   [RoleCode.ADMIN]: 'Admin',
   [RoleCode.SUPER_ADMIN]: 'Super Admin',
   [RoleCode.BE_MEMBER]: 'BE Member',

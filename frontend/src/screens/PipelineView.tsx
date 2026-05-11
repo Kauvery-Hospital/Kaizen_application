@@ -1,7 +1,9 @@
 import React, { useMemo, useState } from 'react';
 import { Role, Status, Suggestion } from '../types';
+import { isL2ApprovalPhase } from '../utils/phasedApproval';
 import { STATUS_COLORS } from '../constants';
 import { employeeStatusStep } from '../utils/kaizenStatusHelp';
+import { effectiveImplementationProgressDisplay } from '../utils/implementerTemplateProgress';
 
 interface PipelineViewProps {
   suggestions: Suggestion[];
@@ -71,23 +73,28 @@ const filterByRole = (
   }
 
   if (role === Role.BUSINESS_EXCELLENCE_HEAD) {
-    return [Status.BE_EVALUATION_PENDING, Status.REWARD_PENDING, Status.REWARDED].includes(
-      s.status
-    );
+    return true;
   }
 
   if (role === Role.HR_HEAD) {
     if ([Status.REWARD_PENDING, Status.REWARDED].includes(s.status)) return true;
     return (
       s.status === Status.VERIFIED_PENDING_APPROVAL &&
+      isL2ApprovalPhase(s) &&
       s.requiredApprovals?.includes(role) &&
       !s.approvals?.[role]
     );
   }
 
-  if (role === Role.QUALITY_HOD || role === Role.FINANCE_HOD) {
+  if (
+    role === Role.QUALITY_HOD ||
+    role === Role.FINANCE_HOD ||
+    role === Role.OPS_HEAD ||
+    role === Role.NURSING_HEAD
+  ) {
     return (
       s.status === Status.VERIFIED_PENDING_APPROVAL &&
+      isL2ApprovalPhase(s) &&
       s.requiredApprovals?.includes(role) &&
       !s.approvals?.[role]
     );
@@ -187,7 +194,7 @@ export const PipelineView: React.FC<PipelineViewProps> = ({
           if (!search.trim()) return true;
           const q = search.toLowerCase();
           return (
-            s.theme.toLowerCase().includes(q) ||
+            (s.theme || '').toLowerCase().includes(q) ||
             s.description.toLowerCase().includes(q) ||
             s.employeeName.toLowerCase().includes(q)
           );
@@ -387,7 +394,9 @@ export const PipelineView: React.FC<PipelineViewProps> = ({
 
       {/* Cards grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
-        {filtered.map(s => (
+        {filtered.map(s => {
+          const prog = effectiveImplementationProgressDisplay(s);
+          return (
           <button
             key={s.id}
             onClick={() => onSelect(s)}
@@ -419,10 +428,10 @@ export const PipelineView: React.FC<PipelineViewProps> = ({
             <div className="mb-3">
               <div className="flex items-center justify-between text-[10px] text-gray-500 font-bold uppercase mb-1">
                 <span>Progress</span>
-                <span>{s.implementationProgress || 0}%</span>
+                <span>{prog}%</span>
               </div>
               <div className="w-full h-1.5 bg-gray-200 rounded overflow-hidden">
-                <div className="h-full bg-kauvery-purple" style={{ width: `${s.implementationProgress || 0}%` }} />
+                <div className="h-full bg-kauvery-purple" style={{ width: `${prog}%` }} />
               </div>
             </div>
 
@@ -448,7 +457,8 @@ export const PipelineView: React.FC<PipelineViewProps> = ({
               </div>
             </div>
           </button>
-        ))}
+          );
+        })}
 
         {filtered.length === 0 && (
           <div className="col-span-full py-16 text-center border border-dashed border-gray-300 rounded-2xl bg-gray-50 px-4">

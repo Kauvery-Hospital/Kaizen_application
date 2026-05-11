@@ -12,6 +12,8 @@ const TOKEN_TO_APP_ROLE: Record<string, AppRole> = {
   HOD_FINANCE: AppRole.FINANCE_HOD,
   HOD_HR: AppRole.HR_HEAD,
   HOD_QUALITY: AppRole.QUALITY_HOD,
+  HOD_OPS: AppRole.OPS_HEAD,
+  HOD_NURSING: AppRole.NURSING_HEAD,
   ADMIN: AppRole.ADMIN,
   SUPER_ADMIN: AppRole.ADMIN,
 };

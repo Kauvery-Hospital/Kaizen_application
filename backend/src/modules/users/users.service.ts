@@ -17,6 +17,10 @@ export class UsersService {
     return String(v ?? '').trim();
   }
 
+  private normalizeDepartmentName(v: string): string {
+    return String(v ?? '').trim();
+  }
+
   private async userHasSuperAdmin(userId: string): Promise<boolean> {
     const count = await this.prisma.userRoleMapping.count({
       where: {
@@ -25,6 +29,14 @@ export class UsersService {
       },
     });
     return count > 0;
+  }
+
+  async usersSummary() {
+    const [total, active] = await Promise.all([
+      this.prisma.user.count(),
+      this.prisma.user.count({ where: { isActive: true } }),
+    ]);
+    return { totalUsers: total, activeUsers: active };
   }
 
   async getEmployeeHrms(employeeIdRaw: string) {
@@ -93,6 +105,102 @@ export class UsersService {
     };
   }
 
+  /**
+   * Users who have {@link RoleCode} HOD_* and a {@link UserRoleUnitScope} row for this unit
+   * (same source as functional-head inbox scoping).
+   */
+  async listUnitScopedHods(unitCodeRaw: string, roleCodeRaw: string) {
+    const unitCode = this.normalizeUnitCode(unitCodeRaw);
+    const rc = String(roleCodeRaw || '')
+      .trim()
+      .toUpperCase();
+    const hodRoles = new Set<string>([
+      'HOD_FINANCE',
+      'HOD_QUALITY',
+      'HOD_HR',
+      'HOD_OPS',
+      'HOD_NURSING',
+    ]);
+    if (!unitCode || !hodRoles.has(rc)) return [];
+
+    const rows = await this.prisma.userRoleUnitScope.findMany({
+      where: {
+        roleCode: rc as RoleCode,
+        unitCode: { equals: unitCode, mode: 'insensitive' },
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            employeeCode: true,
+            name: true,
+            isActive: true,
+          },
+        },
+      },
+      take: 500,
+    });
+
+    const seen = new Set<string>();
+    const out: { employeeCode: string; name: string }[] = [];
+    for (const row of rows) {
+      const u = row.user;
+      if (!u?.isActive) continue;
+      const uid = String(u.id);
+      if (seen.has(uid)) continue;
+      seen.add(uid);
+      const emp = String(u.employeeCode ?? '').trim();
+      const key = emp || uid;
+      out.push({
+        employeeCode: key,
+        name: String(u.name ?? '').trim() || emp || uid,
+      });
+    }
+    out.sort((a, b) => a.name.localeCompare(b.name));
+    return out;
+  }
+
+  /**
+   * Level 1 departmental sign-off candidates:
+   * only the admin-assigned department HOD for the given unit + department.
+   */
+  async listUnitDepartmentMembers(unitCodeRaw: string, departmentRaw: string) {
+    const unitCode = this.normalizeUnitCode(unitCodeRaw);
+    const department = this.normalizeDepartmentName(departmentRaw);
+    if (!unitCode || !department) return [];
+
+    const rows = await (this.prisma as any).departmentHodAssignment.findMany({
+      where: {
+        unitCode: { equals: unitCode, mode: 'insensitive' },
+        departmentName: { equals: department, mode: 'insensitive' },
+        user: { isActive: true },
+      },
+      include: {
+        user: {
+          select: { employeeCode: true, name: true, isActive: true },
+        },
+      },
+      orderBy: [{ assignedAt: 'desc' }],
+      take: 50,
+    });
+
+    const seen = new Set<string>();
+    const out: { employeeCode: string; name: string }[] = [];
+    for (const row of rows) {
+      const u = row.user;
+      if (!u?.isActive) continue;
+      const emp = String(u.employeeCode ?? '').trim();
+      if (!emp || seen.has(emp)) continue;
+      seen.add(emp);
+      out.push({
+        employeeCode: emp,
+        name: String(u.name ?? '').trim() || emp,
+      });
+    }
+    out.sort((a, b) => a.name.localeCompare(b.name));
+    return out;
+  }
+
   async listImplementers(unitCodeRaw: string, departmentRaw: string) {
     const unitCode = unitCodeRaw?.trim();
     const department = departmentRaw?.trim();
@@ -140,36 +248,65 @@ export class UsersService {
     }));
   }
 
-  async listEmployees(
-    search?: string,
-    department?: string,
-    includeUnitScopes = false,
-  ) {
-    const q = search?.trim();
-    const dept = department?.trim();
-    const users = await this.prisma.user.findMany({
-      where: {
-        ...(dept ? { department: { equals: dept, mode: 'insensitive' } } : {}),
-        ...(q
-          ? {
-              OR: [
-                { employeeCode: { contains: q, mode: 'insensitive' } },
-                { name: { contains: q, mode: 'insensitive' } },
-                { email: { contains: q, mode: 'insensitive' } },
-                { department: { contains: q, mode: 'insensitive' } },
-              ],
-            }
-          : {}),
-      },
-      include: {
-        roles: {
-          include: {
-            role: true,
+  async listEmployees(args: {
+    search?: string;
+    department?: string;
+    includeUnitScopes?: boolean;
+    skip?: number;
+    take?: number;
+    roleCode?: string;
+    isActive?: boolean;
+  }) {
+    const includeUnitScopes = Boolean(args.includeUnitScopes);
+    const skip = Math.max(0, args.skip ?? 0);
+    const take = Math.min(200, Math.max(1, args.take ?? 50));
+    const q = args.search?.trim();
+    const dept = args.department?.trim();
+    const roleCodeRaw = args.roleCode?.trim();
+    let roleFilter: RoleCode | undefined;
+    if (roleCodeRaw) {
+      const rc = roleCodeRaw.toUpperCase();
+      if ((Object.values(RoleCode) as string[]).includes(rc)) {
+        roleFilter = rc as RoleCode;
+      }
+    }
+
+    const where: Prisma.UserWhereInput = {
+      ...(dept
+        ? { department: { equals: dept, mode: 'insensitive' } }
+        : {}),
+      ...(typeof args.isActive === 'boolean' ? { isActive: args.isActive } : {}),
+      ...(roleFilter
+        ? { roles: { some: { role: { code: roleFilter } } } }
+        : {}),
+      ...(q
+        ? {
+            OR: [
+              { employeeCode: { contains: q, mode: 'insensitive' } },
+              { name: { contains: q, mode: 'insensitive' } },
+              { email: { contains: q, mode: 'insensitive' } },
+              { department: { contains: q, mode: 'insensitive' } },
+            ],
+          }
+        : {}),
+    };
+
+    const [users, total] = await Promise.all([
+      this.prisma.user.findMany({
+        where,
+        skip,
+        take,
+        include: {
+          roles: {
+            include: {
+              role: true,
+            },
           },
         },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
+        orderBy: { name: 'asc' },
+      }),
+      this.prisma.user.count({ where }),
+    ]);
 
     const employeeCodes = users
       .map((u) => String(u.employeeCode || '').trim())
@@ -192,16 +329,35 @@ export class UsersService {
     });
 
     const userIds = users.map((u) => u.id);
-    const unitScopesByUserRole = new Map<
-      string,
-      { UNIT_COORDINATOR?: string[]; SELECTION_COMMITTEE?: string[] }
-    >();
+    type UnitScopeBundle = {
+      UNIT_COORDINATOR?: string[];
+      SELECTION_COMMITTEE?: string[];
+      HOD_FINANCE?: string[];
+      HOD_QUALITY?: string[];
+      HOD_HR?: string[];
+      HOD_OPS?: string[];
+      HOD_NURSING?: string[];
+    };
+    type DepartmentHodScopeRow = {
+      departmentName: string;
+      unitCode: string;
+    };
+    const unitScopesByUserRole = new Map<string, UnitScopeBundle>();
+    const departmentHodScopesByUser = new Map<string, DepartmentHodScopeRow[]>();
     if (includeUnitScopes && userIds.length) {
       const rows = await (this.prisma as any).userRoleUnitScope.findMany({
         where: {
           userId: { in: userIds },
           roleCode: {
-            in: [RoleCode.UNIT_COORDINATOR, RoleCode.SELECTION_COMMITTEE],
+            in: [
+              RoleCode.UNIT_COORDINATOR,
+              RoleCode.SELECTION_COMMITTEE,
+              RoleCode.HOD_FINANCE,
+              RoleCode.HOD_QUALITY,
+              RoleCode.HOD_HR,
+              'HOD_OPS' as RoleCode,
+              'HOD_NURSING' as RoleCode,
+            ],
           },
         },
         select: { userId: true, roleCode: true, unitCode: true },
@@ -213,19 +369,47 @@ export class UsersService {
         const role = String(r.roleCode || '');
         const unit = String(r.unitCode || '').trim();
         if (!unit) return;
-        const entry = unitScopesByUserRole.get(uid) || ({} as any);
+        const entry = unitScopesByUserRole.get(uid) || ({} as UnitScopeBundle);
         const key =
           role === 'UNIT_COORDINATOR'
             ? 'UNIT_COORDINATOR'
-            : 'SELECTION_COMMITTEE';
+            : role === 'SELECTION_COMMITTEE'
+              ? 'SELECTION_COMMITTEE'
+              : role === 'HOD_FINANCE'
+                ? 'HOD_FINANCE'
+                : role === 'HOD_QUALITY'
+                  ? 'HOD_QUALITY'
+                  : role === 'HOD_HR'
+                    ? 'HOD_HR'
+                    : role === 'HOD_OPS'
+                      ? 'HOD_OPS'
+                      : role === 'HOD_NURSING'
+                        ? 'HOD_NURSING'
+                    : null;
+        if (!key) return;
         entry[key] = Array.from(new Set([...(entry[key] || []), unit])).sort(
           (a, b) => a.localeCompare(b),
         );
         unitScopesByUserRole.set(uid, entry);
       });
+
+      const deptRows = await (this.prisma as any).departmentHodAssignment.findMany({
+        where: { userId: { in: userIds } },
+        select: { userId: true, departmentName: true, unitCode: true },
+        take: 50000,
+      });
+      (Array.isArray(deptRows) ? deptRows : []).forEach((r) => {
+        const uid = String(r.userId || '');
+        const departmentName = this.normalizeDepartmentName(r.departmentName);
+        const unitCode = this.normalizeUnitCode(r.unitCode);
+        if (!uid || !departmentName || !unitCode) return;
+        const prev = departmentHodScopesByUser.get(uid) ?? [];
+        prev.push({ departmentName, unitCode });
+        departmentHodScopesByUser.set(uid, prev);
+      });
     }
 
-    return users.map((u) => ({
+    const items = users.map((u) => ({
       id: u.id,
       employeeCode: u.employeeCode,
       name: u.name,
@@ -235,12 +419,21 @@ export class UsersService {
       unitScopes: includeUnitScopes
         ? (unitScopesByUserRole.get(u.id) ?? {})
         : undefined,
+      departmentHodAssignments: includeUnitScopes
+        ? (departmentHodScopesByUser.get(u.id) ?? []).sort((a, b) =>
+            `${a.departmentName}:${a.unitCode}`.localeCompare(
+              `${b.departmentName}:${b.unitCode}`,
+            ),
+          )
+        : undefined,
       department: u.department,
       designation: u.designation,
       isActive: u.isActive,
       lastLoginAt: u.lastLoginAt,
       roles: u.roles.map((r) => String(r.role.code)),
     }));
+
+    return { items, total, skip, take };
   }
 
   async assignRole(userId: string, dto: AssignRoleDto) {
@@ -305,6 +498,92 @@ export class UsersService {
       mappingId: mapping.id,
       userId: user.id,
       role: role.code,
+    };
+  }
+
+  async getDepartmentHodScopes(userId: string, departmentNameRaw: string) {
+    const departmentName = this.normalizeDepartmentName(departmentNameRaw);
+    if (!departmentName) return [];
+    const rows = await (this.prisma as any).departmentHodAssignment.findMany({
+      where: {
+        userId,
+        departmentName: { equals: departmentName, mode: 'insensitive' },
+      },
+      orderBy: { unitCode: 'asc' },
+      select: { unitCode: true, assignedBy: true, assignedAt: true },
+      take: 5000,
+    });
+    return (Array.isArray(rows) ? rows : []).map((r) => ({
+      unitCode: String(r.unitCode),
+      assignedBy: r.assignedBy ? String(r.assignedBy) : null,
+      assignedAt: r.assignedAt ? String(r.assignedAt) : null,
+    }));
+  }
+
+  async setDepartmentHodScopes(
+    userId: string,
+    dto: { departmentName: string; unitCodes: string[]; assignedBy?: string },
+  ) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new NotFoundException('User not found');
+
+    const departmentName = this.normalizeDepartmentName(dto.departmentName);
+    if (!departmentName) {
+      throw new NotFoundException('Department not provided');
+    }
+    const unitCodes = Array.from(
+      new Set(
+        (Array.isArray(dto.unitCodes) ? dto.unitCodes : [])
+          .map((u) => this.normalizeUnitCode(u))
+          .filter(Boolean),
+      ),
+    ).slice(0, 5000);
+    const assignedBy = dto.assignedBy?.trim() || 'ADMIN_UI';
+
+    await this.prisma.$transaction(async (tx) => {
+      await (tx as any).departmentHodAssignment.deleteMany({
+        where: {
+          userId,
+          departmentName: { equals: departmentName, mode: 'insensitive' },
+        },
+      });
+      if (unitCodes.length) {
+        await (tx as any).departmentHodAssignment.deleteMany({
+          where: {
+            unitCode: { in: unitCodes },
+            departmentName: { equals: departmentName, mode: 'insensitive' },
+          },
+        });
+        await (tx as any).departmentHodAssignment.createMany({
+          data: unitCodes.map((unitCode) => ({
+            userId,
+            unitCode,
+            departmentName,
+            assignedBy,
+          })),
+          skipDuplicates: true,
+        });
+      }
+    });
+
+    return this.getDepartmentHodScopes(userId, departmentName);
+  }
+
+  async removeDepartmentHodScopes(userId: string, departmentNameRaw: string) {
+    const departmentName = this.normalizeDepartmentName(departmentNameRaw);
+    if (!departmentName) {
+      throw new NotFoundException('Department not provided');
+    }
+    await (this.prisma as any).departmentHodAssignment.deleteMany({
+      where: {
+        userId,
+        departmentName: { equals: departmentName, mode: 'insensitive' },
+      },
+    });
+    return {
+      message: 'Department HOD assignment removed',
+      userId,
+      departmentName,
     };
   }
 

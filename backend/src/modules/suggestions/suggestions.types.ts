@@ -6,6 +6,8 @@ export enum AppRole {
   QUALITY_HOD = 'Head - Quality',
   FINANCE_HOD = 'Head - Finance',
   HR_HEAD = 'Head - HR',
+  OPS_HEAD = 'Head - Operations',
+  NURSING_HEAD = 'Head - Nursing',
   BUSINESS_EXCELLENCE = 'Business Excellence Member',
   BUSINESS_EXCELLENCE_HEAD = 'Business Excellence Head',
   ADMIN = 'Admin',

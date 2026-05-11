@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   ForbiddenException,
@@ -9,9 +10,13 @@ import {
   Query,
   Req,
   Res,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
 import type { Response } from 'express';
+import type { Express } from 'express';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { mapTokenRolesToAppRoles } from '../auth/auth-role-mapping';
 import {
   JwtAuthGuard,
@@ -139,6 +144,28 @@ export class SuggestionsController {
       id,
       body?.slides ?? [],
       body?.fileNameBase,
+    );
+  }
+
+  @Post(':id/hr-reward-validation')
+  @UseInterceptors(
+    FileInterceptor('file', { limits: { fileSize: 20 * 1024 * 1024 } }),
+  )
+  uploadHrRewardValidation(
+    @Req() req: { user: JwtAccessPayload },
+    @Param('id') id: string,
+    @UploadedFile() file: Express.Multer.File | undefined,
+  ) {
+    if (!file) {
+      throw new BadRequestException('Image file is required');
+    }
+    return this.suggestionsService.uploadHrRewardValidationImage(
+      id,
+      req.user.sub,
+      req.user.employeeCode,
+      req.user.roles ?? [],
+      req.user.name ?? 'User',
+      file,
     );
   }
 

@@ -1,5 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Role, Status, Suggestion } from '../types';
+import {
+  isL2ApprovalPhase,
+  pendingDepartmentL1ForUser,
+} from '../utils/phasedApproval';
 
 type NotificationItem = {
   id: string;
@@ -39,6 +43,7 @@ function makeItems(args: {
 
   const needsHodApproval = (s: Suggestion) =>
     s.status === Status.VERIFIED_PENDING_APPROVAL &&
+    isL2ApprovalPhase(s) &&
     Array.isArray(s.requiredApprovals) &&
     s.requiredApprovals.includes(role) &&
     !s.approvals?.[role];
@@ -120,7 +125,13 @@ function makeItems(args: {
           subtitle: `${s.unit} • ${s.department}`,
         });
       }
-    } else if (role === Role.FINANCE_HOD || role === Role.QUALITY_HOD || role === Role.HR_HEAD) {
+    } else if (
+      role === Role.FINANCE_HOD ||
+      role === Role.QUALITY_HOD ||
+      role === Role.HR_HEAD ||
+      role === Role.OPS_HEAD ||
+      role === Role.NURSING_HEAD
+    ) {
       if (needsHodApproval(s)) {
         items.push({
           id: `${s.id}-hod-approve`,
@@ -158,6 +169,17 @@ function makeItems(args: {
           suggestion: s,
           title: `Update · ${suggestionLabel(s)}`,
           subtitle: `${s.status} • ${s.unit}`,
+        });
+      }
+      if (
+        pendingDepartmentL1ForUser(s, currentUserName, currentUserEmployeeCode)
+      ) {
+        items.push({
+          id: `${s.id}-dept-l1`,
+          kind: 'action',
+          suggestion: s,
+          title: `Department sign-off · ${suggestionLabel(s)}`,
+          subtitle: `${s.unit} • Level 1 approval`,
         });
       }
     }

@@ -7,24 +7,18 @@ import { SuggestionSource, SyncStatus } from '@prisma/client';
 
 const IDEA_PREFIX = 'KH';
 
-type SyncResult = {
+export type MobileIdeasSyncRunResult = {
   scanned: number;
   inserted: number;
   updated: number;
   skippedUnmappedEmployee: number;
+  /** True when SUGGESTION_SYNC=false — nothing was read from HRMS */
+  disabled?: boolean;
+  message?: string;
 };
 
 function toYmd(d: Date) {
   return d.toISOString().slice(0, 10);
-}
-
-function titleFromText(text: string) {
-  const cleaned = String(text || '')
-    .replace(/\s+/g, ' ')
-    .trim();
-  if (!cleaned) return 'Mobile Idea';
-  const words = cleaned.split(' ').slice(0, 10).join(' ');
-  return words.length > 120 ? words.slice(0, 120) : words;
 }
 
 @Injectable()
@@ -71,13 +65,62 @@ export class MobileIdeasSyncService {
     return row.next;
   }
 
-  async runNow(opts: { take?: number } = {}): Promise<SyncResult> {
+  /**
+   * Map HRMS unit text to Kaizen `hrms_units.code` so Unit Coordinator lists (scoped by unit_code) match.
+   */
+  private matchHrmsUnitToCode(
+    raw: string,
+    hrmsUnits: { code: string; name: string }[],
+  ): string | null {
+    const t = String(raw ?? '').trim();
+    if (!t) return null;
+    const lower = t.toLowerCase();
+    for (const u of hrmsUnits) {
+      if (u.code.toLowerCase() === lower) return u.code;
+    }
+    for (const u of hrmsUnits) {
+      if (u.name.toLowerCase() === lower) return u.code;
+    }
+    return null;
+  }
+
+  /**
+   * Prefer suggestion row unit → employee master unit → 'NA'.
+   * Canonical codes come from {@link HrmsUnit} when names/codes align.
+   */
+  private async resolveMobileSuggestionUnit(
+    pool: Pool,
+    employeeCode: string,
+    hrmsSuggestionUnit: string | null | undefined,
+    hrmsUnits: { code: string; name: string }[],
+  ): Promise<string> {
+    let raw = String(hrmsSuggestionUnit ?? '').trim();
+    if (!raw) {
+      try {
+        const er = await pool.query(
+          `select unit::text as unit from hrms_employees where employee_id::text = $1 limit 1`,
+          [employeeCode],
+        );
+        raw = String(er.rows?.[0]?.unit ?? '').trim();
+      } catch {
+        // HRMS schema may differ by deployment
+      }
+    }
+    const canon = this.matchHrmsUnitToCode(raw, hrmsUnits);
+    if (canon) return canon;
+    return raw || 'NA';
+  }
+
+  async runNow(opts: { take?: number } = {}): Promise<MobileIdeasSyncRunResult> {
     if (!this.isSuggestionSyncEnabled()) {
       return {
         scanned: 0,
         inserted: 0,
         updated: 0,
         skippedUnmappedEmployee: 0,
+        disabled: true,
+        message:
+          'Suggestion sync is turned off (SUGGESTION_SYNC is false or unset to off in backend .env). Set SUGGESTION_SYNC=true and restart the API — no rows were read from HRMS.',
       };
     }
     const take = Math.min(Math.max(Number(opts.take ?? 500), 1), 5000);
@@ -141,6 +184,10 @@ export class MobileIdeasSyncService {
       );
       rows = Array.isArray(res.rows) ? (res.rows as any) : [];
 
+      const hrmsUnits = await this.prisma.hrmsUnit.findMany({
+        select: { code: true, name: true },
+      });
+
       for (const r of rows) {
         const sourceId = String(r.id);
         const employeeCode = String(r.employee_id || '').trim();
@@ -163,11 +210,19 @@ export class MobileIdeasSyncService {
           select: { id: true, status: true },
         });
 
+        const resolvedUnit = await this.resolveMobileSuggestionUnit(
+          pool,
+          employeeCode,
+          r.unit,
+          hrmsUnits,
+        );
+
         const payload = {
           source: SuggestionSource.MOBILE,
           sourceId,
-          theme: titleFromText(String(r.suggestion || '')),
-          unit: String(r.unit || '').trim() || 'NA',
+          // Full text stays in `description`; Unit Coordinator sets the display heading at screening.
+          theme: '',
+          unit: resolvedUnit,
           area: 'Mobile',
           department: String(r.department || '').trim() || 'NA',
           dateSubmitted: String(r.date || '').trim() || toYmd(new Date()),

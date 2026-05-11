@@ -78,6 +78,24 @@ const HTML_TO_IMAGE_OPTS = {
 
 const EXPORT_FRAME = { width: 1920, height: 1080 } as const; // 16:9 landscape (sharper in PPT)
 
+/** Slide 1 team photo grid + member rows (aligned with PPTX export). */
+const MAX_SLIDE1_TEAM_MEMBERS = 3;
+
+/** Sum of horizontal deployment costs above this (₹) requires Finance signature on Slide 2 */
+const FINANCE_APPROVAL_COST_THRESHOLD_INR = 500_000;
+/** Finance column (Unit – Head of Finance) is omitted from the slide when total is at or below this */
+const SHOW_FINANCE_COLUMN_THRESHOLD_INR = 50_000;
+
+function sumHorizontalDeploymentCostRowsInr(rows: unknown): number {
+  if (!Array.isArray(rows)) return 0;
+  let sum = 0;
+  for (const r of rows) {
+    const n = Number(String((r as { cost?: string })?.cost ?? '').replace(/,/g, ''));
+    if (!Number.isNaN(n) && n >= 0) sum += n;
+  }
+  return sum;
+}
+
 /**
  * Textareas keep a fixed height in the UI (scroll for overflow). html-to-image rasterizes
  * that box only — long text is clipped like a scrollbar view. Before capture, expand each
@@ -155,6 +173,38 @@ function serializePqcdsemLevel(level: PqcdsemLevel): boolean | 'primary' | 'seco
   if (level === 'none') return false;
   if (level === 'primary') return 'primary';
   return 'secondary';
+}
+
+/** Idea submission chips (includes separate Energy; template sheet uses 7 letters only). */
+const IDEA_SUBMISSION_PQCDSEM_KEYS = [
+  'productivity',
+  'quality',
+  'cost',
+  'delivery',
+  'safety',
+  'environment',
+  'morale',
+  'energy',
+] as const;
+
+const PQCDSEM_TEMPLATE_KEYS = [
+  'productivity',
+  'quality',
+  'cost',
+  'delivery',
+  'safety',
+  'environment',
+  'morale',
+] as const;
+
+function countPqcdsemTemplateActiveDims(
+  benefits: Record<string, unknown> | undefined | null,
+): number {
+  let n = 0;
+  for (const k of PQCDSEM_TEMPLATE_KEYS) {
+    if (readPqcdsemLevel(benefits?.[k]) !== 'none') n++;
+  }
+  return n;
 }
 
 async function captureNodeAsLandscapePng(node: HTMLElement): Promise<string | null> {
@@ -303,6 +353,7 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
     afterDescription: '',
     standardization: { opl: false, sop: false, manual: false, others: false, othersDescription: '' },
     horizontalDeployment: '',
+    horizontalDeploymentCostRows: [{ item: '', cost: '' }] as Array<{ item: string; cost: string }>,
     quantitativeResults: '',
     howMuch: '',
     teamMembers: '',
@@ -376,6 +427,8 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
         higherIsBetter: false,
       },
     ] as ResultKpi[],
+    /** Results slide: how many KPI graphs show side-by-side (1–3). Persisted with draft. */
+    resultsGraphDisplayCount: 1 as 1 | 2 | 3,
   });
 
   /** Sheet 2 Why–Why: ≥3 rows; + adds up to 5 (declared before effects that sync from draft) */
@@ -529,6 +582,21 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
         } else {
           merged.resultKpis = fromLegacy;
         }
+
+        const rgdRaw = Number((merged as any).resultsGraphDisplayCount);
+        (merged as any).resultsGraphDisplayCount =
+          rgdRaw === 2 || rgdRaw === 3 ? rgdRaw : 1;
+
+        const hdrIn = (merged as any).horizontalDeploymentCostRows;
+        if (!Array.isArray(hdrIn) || hdrIn.length === 0) {
+          (merged as any).horizontalDeploymentCostRows = [{ item: '', cost: '' }];
+        } else {
+          (merged as any).horizontalDeploymentCostRows = hdrIn.map((r: any) => ({
+            item: String(r?.item ?? '').trim(),
+            cost: String(r?.cost ?? '').trim(),
+          }));
+        }
+
         return merged;
       });
 
@@ -666,6 +734,48 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
       }
     }));
   };
+
+  /** Idea phase: exactly one PQCDSEM dimension (boolean true), or none unchecked. */
+  const handleIdeaPqcdsemExclusiveChange = useCallback(
+    (key: (typeof IDEA_SUBMISSION_PQCDSEM_KEYS)[number], checked: boolean) => {
+      setFormData((prev: any) => {
+        const nextEb = { ...(prev.expectedBenefits || {}) } as Record<string, boolean | string>;
+        if (checked) {
+          for (const k of IDEA_SUBMISSION_PQCDSEM_KEYS) {
+            nextEb[k] = k === key;
+          }
+        } else {
+          nextEb[key] = false;
+        }
+        return { ...prev, expectedBenefits: nextEb };
+      });
+    },
+    [],
+  );
+
+  /** Kaizen template sheet: at most two dimensions highlighted (green/yellow); cycle within each cell. */
+  const handlePqcdsemTemplateCellClick = useCallback((mapKey: (typeof PQCDSEM_TEMPLATE_KEYS)[number]) => {
+    setFormData((prev: any) => {
+      const eb = { ...(prev.expectedBenefits || {}) } as Record<string, boolean | string>;
+      const current = readPqcdsemLevel(eb[mapKey]);
+      const next = nextPqcdsemLevel(current);
+      if (current === 'none' && next === 'primary') {
+        let others = 0;
+        for (const k of PQCDSEM_TEMPLATE_KEYS) {
+          if (k === mapKey) continue;
+          if (readPqcdsemLevel(eb[k]) !== 'none') others++;
+        }
+        if (others >= 2) return prev;
+      }
+      return {
+        ...prev,
+        expectedBenefits: {
+          ...eb,
+          [mapKey]: serializePqcdsemLevel(next),
+        },
+      };
+    });
+  }, []);
 
   const addWhyWhyRow = () => {
     setWhyWhyVisibleCount((c) => (c < 5 ? ((c + 1) as 3 | 4 | 5) : c));
@@ -867,7 +977,12 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
 
   const isCreateMode = mode === 'create';
   const [currentSheet, setCurrentSheet] = useState(1);
-  const [resultsGraphCount, setResultsGraphCount] = useState<1 | 2 | 3>(1);
+  const resultsGraphCount = useMemo((): 1 | 2 | 3 => {
+    const n = Number(formData.resultsGraphDisplayCount);
+    if (n === 2) return 2;
+    if (n === 3) return 3;
+    return 1;
+  }, [formData.resultsGraphDisplayCount]);
   const beforeAfterCount = Array.isArray((formData as any).beforeAfterSlides)
     ? ((formData as any).beforeAfterSlides as any[]).length
     : 0;
@@ -1121,7 +1236,8 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
     zone: 'beforeAfter' | 'processVideo' | 'results';
     deleteEnabled: boolean;
   }) => {
-    if (isCreateMode || isTemplatePreview || currentSheet < 3) return null;
+    if (isCreateMode || isTemplatePreview || currentSheet < 3 || isExportCaptureMode)
+      return null;
     const delTitle =
       opts.zone === 'beforeAfter'
         ? 'Delete this Before/After slide'
@@ -1325,7 +1441,7 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
       const rows: TeamMemberRow[] = Array.isArray(prev.teamMemberRows)
         ? [...prev.teamMemberRows]
         : [];
-      if (rows.length >= 5) return prev;
+      if (rows.length >= MAX_SLIDE1_TEAM_MEMBERS) return prev;
       rows.push({ employeeId: '', name: '', unit: '', department: '' });
       return { ...prev, teamMemberRows: rows };
     });
@@ -1535,13 +1651,15 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
       unique.push(r);
     }
 
-    const teamMembers = unique
+    const capped = unique.slice(0, MAX_SLIDE1_TEAM_MEMBERS);
+
+    const teamMembers = capped
       .map((r) => r.name)
       .filter(Boolean)
       .join(', ');
 
     const photoPaths: Record<string, string> = { ...(input?.teamMemberPhotoPaths || {}) };
-    const keepIds = new Set(unique.map((r) => r.employeeId).filter(Boolean));
+    const keepIds = new Set(capped.map((r) => r.employeeId).filter(Boolean));
     for (const k of Object.keys(photoPaths)) {
       if (!keepIds.has(k)) delete photoPaths[k];
     }
@@ -1583,22 +1701,223 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
     // Allow empty (user can delete all process slides)
     const pv0 = processVideoSlidesOut?.[0];
 
+    const rgcIn = Number((input as any)?.resultsGraphDisplayCount);
+    const resultsGraphDisplayCount = rgcIn === 2 || rgcIn === 3 ? rgcIn : 1;
+
+    const hdCostSumInr = sumHorizontalDeploymentCostRowsInr(
+      (input as any)?.horizontalDeploymentCostRows,
+    );
+    const templateSigValidatedFinanceOut =
+      hdCostSumInr > FINANCE_APPROVAL_COST_THRESHOLD_INR
+        ? String((input as any)?.templateSigValidatedFinance ?? '').trim()
+        : '';
+
     return {
       ...input,
-      teamMemberRows: unique.length ? unique : [{ employeeId: '', name: '', unit: '', department: '' }],
+      teamMemberRows: capped.length ? capped : [{ employeeId: '', name: '', unit: '', department: '' }],
       teamMembers,
       teamMemberPhotoPaths: photoPaths,
       resultKpis: resultKpisOut,
+      resultsGraphDisplayCount,
       processVideoSlides: processVideoSlidesOut,
       processBeforeVideoPath: String(pv0?.processBeforeVideoPath || ''),
       processAfterVideoPath: String(pv0?.processAfterVideoPath || ''),
+      templateSigValidatedFinance: templateSigValidatedFinanceOut,
     };
   }, []);
+
+  /** Full-template validation (implement mode). Each slide mounts alone, so HTML `required` is insufficient. */
+  const collectImplementationTemplateErrors = useCallback(
+    (fd: any): string[] => {
+      const errs: string[] = [];
+
+      if (!String(fd.theme ?? '').trim()) errs.push('Slide 1 — Title / theme is required.');
+
+      const rows: TeamMemberRow[] = Array.isArray(fd.teamMemberRows)
+        ? (fd.teamMemberRows as TeamMemberRow[])
+        : [];
+      const filledRows = rows
+        .slice(0, MAX_SLIDE1_TEAM_MEMBERS)
+        .filter((r) => String(r?.employeeId || '').trim() || String(r?.name || '').trim());
+      if (filledRows.length === 0) {
+        errs.push('Slide 1 — Add at least one team member (employee number and name).');
+      }
+      const photoPaths = (fd.teamMemberPhotoPaths || {}) as Record<string, string>;
+      for (const r of filledRows) {
+        const id = String(r.employeeId || '').trim();
+        const name = String(r.name || '').trim();
+        if (!id || !name) errs.push('Slide 1 — Each team member needs both employee number and name.');
+      }
+      for (const r of filledRows) {
+        const id = String(r.employeeId || '').trim();
+        if (!id) continue;
+        if (!String(photoPaths[id] || '').trim()) {
+          errs.push(`Slide 1 — Upload a photo for team member ${id}.`);
+        }
+      }
+
+      if (!String(fd.category ?? '').trim()) errs.push('Slide 2 — Category is required.');
+      if (!String(fd.unit ?? '').trim()) errs.push('Slide 2 — Unit is required.');
+      if (!String(fd.area ?? '').trim()) errs.push('Slide 2 — Area / location is required.');
+      if (!String(fd.startDate ?? '').trim()) errs.push('Slide 2 — Start date is required.');
+      if (!String(fd.completionDate ?? '').trim()) errs.push('Slide 2 — Completion date is required.');
+
+      const pr = fd.problem || {};
+      if (!String(pr.what ?? '').trim()) errs.push('Slide 2 — Problem: What is required.');
+      if (!String(pr.where ?? '').trim()) errs.push('Slide 2 — Problem: Where is required.');
+      if (!String(pr.when ?? '').trim()) errs.push('Slide 2 — Problem: When is required.');
+      if (!String(pr.how ?? '').trim()) errs.push('Slide 2 — Problem: How is required.');
+      if (!String(fd.howMuch ?? '').trim()) errs.push('Slide 2 — Present status: How Much is required.');
+
+      const analysis = fd.analysis || {};
+      for (let n = 1; n <= whyWhyVisibleCount; n++) {
+        const key = `why${n}` as keyof typeof analysis;
+        if (!String((analysis as any)[key] ?? '').trim()) {
+          errs.push(`Slide 2 — Why-Why #${n} is required.`);
+        }
+      }
+      if (!String(analysis.rootCause ?? '').trim()) errs.push('Slide 2 — Root cause is required.');
+      if (!String(fd.ideaToEliminate ?? '').trim()) errs.push('Slide 2 — Idea to eliminate is required.');
+      if (!String(fd.counterMeasure ?? '').trim()) errs.push('Slide 2 — Counter measure is required.');
+
+      if (countPqcdsemTemplateActiveDims(fd.expectedBenefits) < 1) {
+        errs.push('Slide 2 — Select at least one PQCDSEM dimension (green or yellow).');
+      }
+
+      const std = fd.standardization || {};
+      const stdAny =
+        Boolean(std.opl) || Boolean(std.sop) || Boolean(std.manual) || Boolean(std.others);
+      if (!stdAny) errs.push('Slide 2 — Standardization: choose at least one option (OPL / SOP / Manual / Others).');
+      if (Boolean(std.others) && !String(std.othersDescription ?? '').trim()) {
+        errs.push('Slide 2 — Describe “Others” under Standardization.');
+      }
+
+      if (!String(fd.quantitativeResults ?? '').trim()) errs.push('Slide 2 — Quantitative results is required.');
+      if (!String(fd.horizontalDeployment ?? '').trim()) errs.push('Slide 2 — Horizontal deployment is required.');
+
+      const hdCostRows = Array.isArray(fd.horizontalDeploymentCostRows)
+        ? (fd.horizontalDeploymentCostRows as { item?: string; cost?: string }[])
+        : [];
+      if (hdCostRows.length === 0) {
+        errs.push('Slide 2 — Add at least one horizontal deployment cost row (Items / Cost).');
+      }
+      hdCostRows.forEach((r, i) => {
+        const n = i + 1;
+        if (!String(r?.item ?? '').trim()) {
+          errs.push(`Slide 2 — Horizontal deployment row ${n}: item is required.`);
+        }
+        const costStr = String(r?.cost ?? '').trim();
+        if (!costStr) {
+          errs.push(`Slide 2 — Horizontal deployment row ${n}: cost (₹) is required.`);
+        } else {
+          const val = Number(costStr.replace(/,/g, ''));
+          if (Number.isNaN(val) || val < 0) {
+            errs.push(`Slide 2 — Horizontal deployment row ${n}: enter a valid cost.`);
+          }
+        }
+      });
+
+      const hdCostTotal = sumHorizontalDeploymentCostRowsInr(hdCostRows);
+      if (hdCostTotal > FINANCE_APPROVAL_COST_THRESHOLD_INR) {
+        if (!String(fd.templateSigValidatedFinance ?? '').trim()) {
+          errs.push(
+            `Slide 2 — Total horizontal deployment cost (₹${hdCostTotal.toLocaleString('en-IN')}) exceeds ₹5 Lakhs: Unit – Head of Finance signature is required.`,
+          );
+        }
+      }
+
+      if (!String(fd.templateSigPreparedBy ?? '').trim()) errs.push('Slide 2 — Prepared By name is required.');
+      if (!String(fd.templateSigReportingTo ?? '').trim()) errs.push('Slide 2 — Reporting to is required.');
+      if (!String(fd.templateSigValidatedDeptHod ?? '').trim()) {
+        errs.push('Slide 2 — Validated By (Dept / HOD) name is required.');
+      }
+      if (!String(fd.templateSigApprovedOpsHead ?? '').trim()) {
+        errs.push('Slide 2 — Approved By (Ops Head / Medical Admin) name is required.');
+      }
+
+      const bas = Array.isArray(fd.beforeAfterSlides) ? fd.beforeAfterSlides : [];
+      bas.forEach((row: any, i: number) => {
+        const sn = i + 1;
+        if (!String(row?.beforeImagePath ?? '').trim()) {
+          errs.push(`Before/After slide ${sn} — Before image is required.`);
+        }
+        if (!String(row?.afterImagePath ?? '').trim()) {
+          errs.push(`Before/After slide ${sn} — After image is required.`);
+        }
+        if (!String(row?.beforeCaption ?? '').trim()) {
+          errs.push(`Before/After slide ${sn} — Before caption is required.`);
+        }
+        if (!String(row?.afterCaption ?? '').trim()) {
+          errs.push(`Before/After slide ${sn} — After caption is required.`);
+        }
+      });
+
+      const pvs = Array.isArray(fd.processVideoSlides) ? fd.processVideoSlides : [];
+      pvs.forEach((row: any, i: number) => {
+        const sn = i + 1;
+        if (!String(row?.processBeforeVideoPath ?? '').trim()) {
+          errs.push(`Process video slide ${sn} — Before video is required.`);
+        }
+        if (!String(row?.processAfterVideoPath ?? '').trim()) {
+          errs.push(`Process video slide ${sn} — After video is required.`);
+        }
+      });
+
+      const kpis: ResultKpi[] = Array.isArray(fd.resultKpis) ? fd.resultKpis : [];
+      const rgcRaw = Number(fd.resultsGraphDisplayCount);
+      const rgc = rgcRaw === 2 ? 2 : rgcRaw === 3 ? 3 : 1;
+      if (kpis.length === 0) {
+        errs.push('Results — At least one KPI is required.');
+      } else {
+        const pages = Math.ceil(kpis.length / 3);
+        for (let page = 0; page < pages; page++) {
+          for (let c = 0; c < rgc; c++) {
+            const idx = page * 3 + c;
+            const k = kpis[idx];
+            if (!k) continue;
+            const label = `Results slide ${page + 1} — Column ${c + 1}`;
+            if (!String(k.title ?? '').trim()) errs.push(`${label}: KPI title is required.`);
+            if (!String(k.metricLabel ?? '').trim()) errs.push(`${label}: Metric label is required.`);
+            const bStr = String(k.before ?? '').trim();
+            const aStr = String(k.after ?? '').trim();
+            if (bStr === '') errs.push(`${label}: Before value is required.`);
+            else if (Number.isNaN(Number(bStr))) errs.push(`${label}: Before value must be a number.`);
+            if (aStr === '') errs.push(`${label}: After value is required.`);
+            else if (Number.isNaN(Number(aStr))) errs.push(`${label}: After value must be a number.`);
+            if (!String(k.resultNote ?? '').trim()) errs.push(`${label}: Result note is required.`);
+          }
+        }
+      }
+
+      return errs;
+    },
+    [whyWhyVisibleCount],
+  );
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const dynamicFlowFields = getDynamicFlowFields();
-    const basePayload = sanitizeTeamRows({ ...formData, ...dynamicFlowFields });
+    const mergedForSubmit = { ...formData, ...dynamicFlowFields };
+
+    if (!isCreateMode && !isTemplatePreview) {
+      const validationErrors = collectImplementationTemplateErrors(mergedForSubmit);
+      if (validationErrors.length) {
+        const max = 30;
+        const extra =
+          validationErrors.length > max
+            ? `\n\n…and ${validationErrors.length - max} more.`
+            : '';
+        window.alert(
+          `Cannot submit — please complete all template fields:\n\n${validationErrors
+            .slice(0, max)
+            .map((line) => `• ${line}`)
+            .join('\n')}${extra}`,
+        );
+        return;
+      }
+    }
+
+    const basePayload = sanitizeTeamRows(mergedForSubmit);
 
     // Implement mode: auto-generate FINAL PPT/PDF from the exact UI template and store paths.
     if (!isCreateMode && !isTemplatePreview) {
@@ -1656,6 +1975,30 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
       setIsDraftSaving(false);
     }
   };
+
+  const pqcdsemTemplateDimCount = countPqcdsemTemplateActiveDims(formData.expectedBenefits);
+  const horizontalDeploymentCostTotalInr = useMemo(
+    () =>
+      sumHorizontalDeploymentCostRowsInr(
+        Array.isArray(formData.horizontalDeploymentCostRows)
+          ? formData.horizontalDeploymentCostRows
+          : [],
+      ),
+    [formData.horizontalDeploymentCostRows],
+  );
+
+  /** Same threshold as note “If cost saving is > ₹ 5 Lakhs” — finance signature column shown only above this */
+  const financeSignatureEnabled =
+    horizontalDeploymentCostTotalInr > FINANCE_APPROVAL_COST_THRESHOLD_INR;
+
+  useEffect(() => {
+    if (financeSignatureEnabled) return;
+    setFormData((prev: any) => {
+      const cur = String(prev.templateSigValidatedFinance ?? '').trim();
+      if (!cur) return prev;
+      return { ...prev, templateSigValidatedFinance: '' };
+    });
+  }, [financeSignatureEnabled]);
 
   return (
     <div className="bg-white rounded-xl shadow-lg border border-gray-300 overflow-hidden w-full min-w-0 max-w-full">
@@ -1768,21 +2111,29 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                   <div className="mb-4">
                     <div className="flex items-center gap-2 mb-2">
                       <h3 className="text-[11px] font-extrabold text-gray-700 uppercase">Expected Benefits (PQCDSEM)</h3>
-                      <span className="text-[10px] text-gray-500 font-semibold">Select all that apply</span>
+                      <span className="text-[10px] text-gray-500 font-semibold">Select one</span>
                     </div>
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                      {['productivity', 'quality', 'cost', 'delivery', 'safety', 'environment', 'morale', 'energy'].map(key => (
-                        <label key={key} className={`cursor-pointer px-3 py-2 rounded-md border transition-all select-none text-center font-bold ${formData.expectedBenefits?.[key] ? 'bg-kauvery-purple text-white border-purple-800' : 'bg-white text-gray-800 border-gray-300 hover:bg-gray-50'}`}>
-                          <input
-                            type="checkbox"
-                            disabled={!isCreateMode}
-                            checked={formData.expectedBenefits?.[key]}
-                            onChange={e => handleNestedChange('expectedBenefits', key, e.target.checked)}
-                            className="hidden"
-                          />
-                          <span className="text-[11px] uppercase">{key}</span>
-                        </label>
-                      ))}
+                      {IDEA_SUBMISSION_PQCDSEM_KEYS.map((key) => {
+                        const selected = formData.expectedBenefits?.[key] === true;
+                        return (
+                          <label
+                            key={key}
+                            className={`cursor-pointer px-3 py-2 rounded-md border transition-all select-none text-center font-bold ${selected ? 'bg-kauvery-purple text-white border-purple-800' : 'bg-white text-gray-800 border-gray-300 hover:bg-gray-50'}`}
+                          >
+                            <input
+                              type="checkbox"
+                              disabled={!isCreateMode}
+                              checked={selected}
+                              onChange={(e) =>
+                                handleIdeaPqcdsemExclusiveChange(key, e.target.checked)
+                              }
+                              className="hidden"
+                            />
+                            <span className="text-[11px] uppercase">{key}</span>
+                          </label>
+                        );
+                      })}
                     </div>
                   </div>
 
@@ -1893,19 +2244,11 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                   const memberIds = rows
                     .map((r) => (r.employeeId || '').trim())
                     .filter(Boolean)
-                    .slice(0, 5);
+                    .slice(0, MAX_SLIDE1_TEAM_MEMBERS);
 
                   const count = memberIds.length;
                   const gridClass =
-                    count <= 1
-                      ? 'grid grid-cols-1'
-                      : count === 2
-                        ? 'grid grid-cols-2'
-                        : count === 3
-                          ? 'grid grid-cols-3'
-                          : count === 4
-                            ? 'grid grid-cols-2'
-                            : 'grid grid-cols-3';
+                    count <= 1 ? 'grid grid-cols-1' : count === 2 ? 'grid grid-cols-2' : 'grid grid-cols-3';
 
                   const cellHeight =
                     count <= 1 ? 'h-[260px]' : count === 2 ? 'h-[240px]' : 'h-[200px]';
@@ -1976,28 +2319,35 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                   );
                 })()}
 
-                <div className="absolute bottom-0 right-0 bg-yellow-300 text-black font-black px-3 py-0.5 z-20 pointer-events-none">
-                  1
-                </div>
+                {!isExportCaptureMode && (
+                  <div className="absolute bottom-0 right-0 bg-yellow-300 text-black font-black px-3 py-0.5 z-20 pointer-events-none">
+                    1
+                  </div>
+                )}
               </div>
 
-              {/* Team members (default 1 row, max 5) */}
+              {/* Team members (default 1 row, max 3 on slide 1) */}
               <div className="grid grid-cols-12 border-t border-gray-500 text-sm">
                 <div className="col-span-12 p-2">
                   <div className="flex items-center justify-between mb-2">
                     <div className="text-xs font-black text-gray-800">
-                      Team members (max 5)
+                      Team members (max {MAX_SLIDE1_TEAM_MEMBERS})
                     </div>
-                    <button
-                      type="button"
-                      onClick={handleAddTeamMember}
-                      disabled={Array.isArray(formData.teamMemberRows) && formData.teamMemberRows.length >= 5}
-                      className="w-7 h-7 rounded-full bg-kauvery-purple text-white font-black flex items-center justify-center disabled:opacity-40"
-                      title="Add team member"
-                      aria-label="Add team member"
-                    >
-                      +
-                    </button>
+                    {!isExportCaptureMode && (
+                      <button
+                        type="button"
+                        onClick={handleAddTeamMember}
+                        disabled={
+                          Array.isArray(formData.teamMemberRows) &&
+                          formData.teamMemberRows.length >= MAX_SLIDE1_TEAM_MEMBERS
+                        }
+                        className="w-7 h-7 rounded-full bg-kauvery-purple text-white font-black flex items-center justify-center disabled:opacity-40"
+                        title="Add team member"
+                        aria-label="Add team member"
+                      >
+                        +
+                      </button>
+                    )}
                   </div>
 
                   <div className="grid grid-cols-12 gap-2 text-[11px] font-bold text-gray-700 mb-1">
@@ -2010,8 +2360,11 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                   {(Array.isArray(formData.teamMemberRows)
                     ? (formData.teamMemberRows as TeamMemberRow[])
                     : ([] as TeamMemberRow[])
-                  ).slice(0, 5).map((row, idx) => (
-                    <div key={idx} className="relative grid grid-cols-12 gap-2 mb-2 items-center pr-5">
+                  ).slice(0, MAX_SLIDE1_TEAM_MEMBERS).map((row, idx) => (
+                    <div
+                      key={idx}
+                      className={`relative grid grid-cols-12 gap-2 mb-2 items-center ${isExportCaptureMode ? '' : 'pr-5'}`}
+                    >
                       <div className="col-span-3">
                         <input
                           className="w-full border border-gray-300 rounded px-2 py-1 text-sm text-gray-900 font-medium"
@@ -2052,15 +2405,17 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                           readOnly
                         />
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteTeamMember(idx)}
-                        className="absolute top-0 right-0 w-4 h-4 rounded border border-gray-300 bg-white text-red-600 hover:bg-red-50 flex items-center justify-center"
-                        title="Remove team member"
-                        aria-label="Remove team member"
-                      >
-                        <span className="material-icons-round text-[12px] leading-none">close</span>
-                      </button>
+                      {!isExportCaptureMode && (
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteTeamMember(idx)}
+                          className="absolute top-0 right-0 w-4 h-4 rounded border border-gray-300 bg-white text-red-600 hover:bg-red-50 flex items-center justify-center"
+                          title="Remove team member"
+                          aria-label="Remove team member"
+                        >
+                          <span className="material-icons-round text-[12px] leading-none">close</span>
+                        </button>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -2324,6 +2679,7 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                       ] as const
                     ).map(([letter, mapKey]) => {
                       const level = readPqcdsemLevel(formData.expectedBenefits?.[mapKey]);
+                      const blockNewDim = pqcdsemTemplateDimCount >= 2 && level === 'none';
                       const cellCls =
                         level === 'primary'
                           ? 'bg-emerald-600 text-white'
@@ -2334,15 +2690,13 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                         <button
                           key={mapKey}
                           type="button"
-                          title="Click: off → primary (green) → secondary (yellow) → off"
-                          className={`flex flex-col items-center justify-center py-2.5 border-r border-black last:border-r-0 min-h-[2.75rem] cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-kauvery-purple focus-visible:ring-inset ${cellCls}`}
-                          onClick={() =>
-                            handleNestedChange(
-                              'expectedBenefits',
-                              mapKey,
-                              serializePqcdsemLevel(nextPqcdsemLevel(level)),
-                            )
+                          title={
+                            blockNewDim
+                              ? 'At most two dimensions — turn off another letter first'
+                              : 'Click: off → primary (green) → secondary (yellow) → off'
                           }
+                          className={`flex flex-col items-center justify-center py-2.5 border-r border-black last:border-r-0 min-h-[2.75rem] outline-none focus-visible:ring-2 focus-visible:ring-kauvery-purple focus-visible:ring-inset ${cellCls} ${blockNewDim ? 'opacity-45 cursor-not-allowed' : 'cursor-pointer'}`}
+                          onClick={() => handlePqcdsemTemplateCellClick(mapKey)}
                         >
                           <span className="text-sm font-black">{letter}</span>
                         </button>
@@ -2350,10 +2704,11 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                     })}
                   </div>
                   <div className="text-[9px] leading-snug px-2 py-1 text-slate-600 border-b border-slate-200 bg-white">
-                    Click each letter: <span className="font-bold text-emerald-700">green = primary</span>
+                    Up to <span className="font-bold text-slate-800">two dimensions</span>. Click each letter:{' '}
+                    <span className="font-bold text-emerald-700">green = primary</span>
                     {' · '}
                     <span className="font-bold text-amber-700">yellow = secondary</span>
-                    {' · white = not highlighted'}
+                    {' · white = off'}
                   </div>
 
                   <div className="text-xs font-black text-center border-b border-slate-300 py-2 bg-slate-100 text-slate-800 tracking-wide">
@@ -2414,6 +2769,118 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                       value={formData.horizontalDeployment || ''}
                       onChange={e => setFormData({ ...formData, horizontalDeployment: e.target.value })}
                     />
+
+                    <div className="mt-3 border border-slate-300 rounded-sm overflow-hidden bg-slate-50/80">
+                      <div
+                        className={`grid ${isExportCaptureMode ? 'grid-cols-[1fr_7rem]' : 'grid-cols-[1fr_7rem_auto]'} gap-1 items-center px-2 py-1.5 bg-slate-200/90 border-b border-slate-300 text-[10px] font-black text-slate-800 uppercase tracking-wide`}
+                      >
+                        <span>Items</span>
+                        <span className="text-center">Cost (₹)</span>
+                        {!isExportCaptureMode && <span className="w-7 shrink-0" aria-hidden />}
+                      </div>
+                      {(Array.isArray(formData.horizontalDeploymentCostRows)
+                        ? formData.horizontalDeploymentCostRows
+                        : [{ item: '', cost: '' }]
+                      ).map((row: { item: string; cost: string }, idx: number) => {
+                        const list = Array.isArray(formData.horizontalDeploymentCostRows)
+                          ? formData.horizontalDeploymentCostRows
+                          : [{ item: '', cost: '' }];
+                        return (
+                          <div
+                            key={idx}
+                            className={`grid ${isExportCaptureMode ? 'grid-cols-[1fr_7rem]' : 'grid-cols-[1fr_7rem_auto]'} gap-1 items-center px-2 py-1 border-b border-slate-200 last:border-b-0 bg-white`}
+                          >
+                            <input
+                              type="text"
+                              placeholder="Item"
+                              className="w-full border border-slate-400 rounded-sm px-2 py-1 text-[11px] text-slate-900"
+                              value={row.item}
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                setFormData((prev: any) => {
+                                  const rows = [...(Array.isArray(prev.horizontalDeploymentCostRows) ? prev.horizontalDeploymentCostRows : [])];
+                                  while (rows.length <= idx) rows.push({ item: '', cost: '' });
+                                  rows[idx] = { ...rows[idx], item: v };
+                                  return { ...prev, horizontalDeploymentCostRows: rows };
+                                });
+                              }}
+                            />
+                            <input
+                              type="text"
+                              inputMode="decimal"
+                              placeholder="0"
+                              className="w-full border border-slate-400 rounded-sm px-2 py-1 text-[11px] text-slate-900 tabular-nums text-right"
+                              value={row.cost}
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                setFormData((prev: any) => {
+                                  const rows = [...(Array.isArray(prev.horizontalDeploymentCostRows) ? prev.horizontalDeploymentCostRows : [])];
+                                  while (rows.length <= idx) rows.push({ item: '', cost: '' });
+                                  rows[idx] = { ...rows[idx], cost: v };
+                                  return { ...prev, horizontalDeploymentCostRows: rows };
+                                });
+                              }}
+                            />
+                            {!isExportCaptureMode && (
+                              <button
+                                type="button"
+                                title={list.length <= 1 ? 'At least one row' : 'Remove row'}
+                                disabled={list.length <= 1}
+                                onClick={() => {
+                                  if (list.length <= 1) return;
+                                  setFormData((prev: any) => {
+                                    const rows = [...(Array.isArray(prev.horizontalDeploymentCostRows) ? prev.horizontalDeploymentCostRows : [])];
+                                    rows.splice(idx, 1);
+                                    return {
+                                      ...prev,
+                                      horizontalDeploymentCostRows: rows.length ? rows : [{ item: '', cost: '' }],
+                                    };
+                                  });
+                                }}
+                                className="flex size-7 shrink-0 items-center justify-center rounded border border-slate-300 bg-white text-slate-500 hover:bg-red-50 hover:text-red-700 hover:border-red-200 disabled:opacity-35 disabled:hover:bg-white disabled:hover:text-slate-500"
+                                aria-label="Remove row"
+                              >
+                                <span className="material-icons-round text-[16px] leading-none">close</span>
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })}
+                      <div className="flex items-center justify-between gap-2 px-2 py-2 bg-slate-100 border-t border-slate-300">
+                        {!isExportCaptureMode && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setFormData((prev: any) => ({
+                                ...prev,
+                                horizontalDeploymentCostRows: [
+                                  ...(Array.isArray(prev.horizontalDeploymentCostRows)
+                                    ? prev.horizontalDeploymentCostRows
+                                    : []),
+                                  { item: '', cost: '' },
+                                ],
+                              }))
+                            }
+                            className="inline-flex items-center gap-0.5 rounded border border-kauvery-purple bg-white px-2 py-1 text-[10px] font-black text-kauvery-purple hover:bg-purple-50"
+                            aria-label="Add item row"
+                          >
+                            <span className="material-icons-round text-[16px] leading-none">add</span>
+                            Add row
+                          </button>
+                        )}
+                        <div className="text-right">
+                          <div className="text-[9px] font-bold text-slate-600 uppercase tracking-wide">Total (₹)</div>
+                          <div className="text-sm font-black text-slate-900 tabular-nums">
+                            {horizontalDeploymentCostTotalInr.toLocaleString('en-IN')}
+                          </div>
+                          {horizontalDeploymentCostTotalInr > FINANCE_APPROVAL_COST_THRESHOLD_INR && (
+                            <div className="mt-1 text-[9px] font-bold text-amber-800">
+                              Above ₹5 Lakhs — Finance validation signature required.
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -2428,24 +2895,31 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                     Validated By
                   </div>
                   <div className="col-span-3 bg-kauvery-purple text-white font-black text-center py-2.5 px-1 flex items-center justify-center leading-tight">
-                    Approved By: <span className="font-normal text-white/90 ml-1">FD — Ops. Head</span>
+                    Approved By:{' '}
+                    <span className="font-normal text-white/90 ml-1">FD — Ops. Head / Medical Admin</span>
                   </div>
                 </div>
                 <div className="grid grid-cols-12 border-b border-slate-400 text-[9px] sm:text-[10px] bg-white">
                   <div className="col-span-3 border-r border-slate-300 px-1 py-2 text-slate-700 font-bold text-center flex items-center justify-center">
                     (Idea initiated by)
                   </div>
-                  <div className="col-span-3 border-r border-slate-300 px-1 py-2 text-slate-700 font-bold text-center flex items-center justify-center leading-snug">
+                  <div
+                    className={`border-r border-slate-300 px-1 py-2 text-slate-700 font-bold text-center flex items-center justify-center leading-snug ${
+                      financeSignatureEnabled ? 'col-span-3' : 'col-span-6'
+                    }`}
+                  >
                     Department In-charger / HOD
                   </div>
-                  <div className="col-span-3 border-r border-slate-300 px-1 py-2 text-slate-700 font-bold text-center flex flex-col items-center justify-center leading-snug">
-                    <span>Unit – Head of Finance</span>
-                    <span className="text-[8px] font-semibold text-slate-500 normal-case mt-0.5">
-                      (Note: If cost saving is {'>'} ₹ 5 Lakhs)
-                    </span>
-                  </div>
+                  {financeSignatureEnabled && (
+                    <div className="col-span-3 border-r border-slate-300 px-1 py-2 text-slate-700 font-bold text-center flex flex-col items-center justify-center leading-snug">
+                      <span>Unit – Head of Finance</span>
+                      <span className="text-[8px] font-semibold text-slate-500 normal-case mt-0.5">
+                        (Note: If cost saving is {'>'} ₹ 5 Lakhs)
+                      </span>
+                    </div>
+                  )}
                   <div className="col-span-3 px-1 py-2 text-slate-700 font-bold text-center flex items-center justify-center">
-                    Ops. Head
+                    Ops. Head / Medical Admin
                   </div>
                 </div>
                 <div className="grid grid-cols-12 border-b border-slate-500 text-xs items-stretch bg-white">
@@ -2465,7 +2939,11 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                       onChange={(e) => setFormData({ ...formData, templateSigReportingTo: e.target.value })}
                     />
                   </div>
-                  <div className="col-span-3 border-r border-slate-400 p-2 flex flex-col">
+                  <div
+                    className={`border-r border-slate-400 p-2 flex flex-col ${
+                      financeSignatureEnabled ? 'col-span-3' : 'col-span-6'
+                    }`}
+                  >
                     <input
                       type="text"
                       className={`${KTZ_DATE} bg-white font-semibold`}
@@ -2474,15 +2952,20 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                       onChange={(e) => setFormData({ ...formData, templateSigValidatedDeptHod: e.target.value })}
                     />
                   </div>
-                  <div className="col-span-3 border-r border-slate-400 p-2 flex flex-col">
-                    <input
-                      type="text"
-                      className={`${KTZ_DATE} bg-white font-semibold`}
-                      placeholder="Name / role"
-                      value={formData.templateSigValidatedFinance ?? ''}
-                      onChange={(e) => setFormData({ ...formData, templateSigValidatedFinance: e.target.value })}
-                    />
-                  </div>
+                  {financeSignatureEnabled && (
+                    <div className="col-span-3 border-r border-slate-400 p-2 flex flex-col">
+                      <input
+                        type="text"
+                        disabled={isTemplatePreview}
+                        className={`${KTZ_DATE} bg-white font-semibold`}
+                        placeholder="Name / role"
+                        value={formData.templateSigValidatedFinance ?? ''}
+                        onChange={(e) =>
+                          setFormData({ ...formData, templateSigValidatedFinance: e.target.value })
+                        }
+                      />
+                    </div>
+                  )}
                   <div className="col-span-3 p-2 flex flex-col">
                     <input
                       type="text"
@@ -2495,9 +2978,11 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                 </div>
               </div>
 
-              <div className="flex justify-end border-t border-gray-400">
-                <div className="bg-yellow-300 text-black font-black px-3 py-0.5">2</div>
-              </div>
+              {!isExportCaptureMode && (
+                <div className="flex justify-end border-t border-gray-400">
+                  <div className="bg-yellow-300 text-black font-black px-3 py-0.5">2</div>
+                </div>
+              )}
             </div>
             </>
             )}
@@ -2675,9 +3160,11 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                 </div>
               </div>
 
-              <div className="flex justify-end border-t border-gray-200 bg-white">
-                <div className="bg-yellow-300 text-black font-black px-3 py-1 shadow-sm">{currentSheet}</div>
-              </div>
+              {!isExportCaptureMode && (
+                <div className="flex justify-end border-t border-gray-200 bg-white">
+                  <div className="bg-yellow-300 text-black font-black px-3 py-1 shadow-sm">{currentSheet}</div>
+                </div>
+              )}
             </div>
             </div>
             )}
@@ -2820,9 +3307,11 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                 </div>
               </div>
 
-              <div className="flex justify-end">
-                <div className="bg-yellow-300 text-black font-black px-3 py-0.5">{currentSheet}</div>
-              </div>
+              {!isExportCaptureMode && (
+                <div className="flex justify-end">
+                  <div className="bg-yellow-300 text-black font-black px-3 py-0.5">{currentSheet}</div>
+                </div>
+              )}
                   </>
                 );
               })()}
@@ -2846,31 +3335,44 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                 <div className="col-span-3 bg-kauvery-purple text-white text-center font-black py-1" />
               </div>
 
-              <div className="relative px-3 py-2 border-b border-gray-300 bg-white text-[11px] font-bold text-gray-700">
-                Fill any 3 result KPIs (safety / cost / time / quality / etc.)
-                <div className="absolute right-2 top-1.5 flex items-center gap-1">
-                  <button
-                    type="button"
-                    onClick={() => setResultsGraphCount((c) => (c < 3 ? ((c + 1) as 1 | 2 | 3) : c))}
-                    disabled={resultsGraphCount >= 3}
-                    className="w-5 h-5 rounded border border-gray-300 bg-white text-gray-900 hover:bg-gray-50 disabled:opacity-40 flex items-center justify-center"
-                    title="Add graph"
-                    aria-label="Add graph"
-                  >
-                    <span className="material-icons-round text-[14px] leading-none">add</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setResultsGraphCount((c) => (c > 1 ? ((c - 1) as 1 | 2 | 3) : c))}
-                    disabled={resultsGraphCount <= 1}
-                    className="w-5 h-5 rounded border border-gray-300 bg-white text-red-600 hover:bg-red-50 disabled:opacity-40 flex items-center justify-center"
-                    title="Remove graph"
-                    aria-label="Remove graph"
-                  >
-                    <span className="material-icons-round text-[14px] leading-none">delete</span>
-                  </button>
+              {!isExportCaptureMode && (
+                <div className="relative flex justify-end px-3 py-1.5 border-b border-gray-300 bg-white">
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setFormData((prev: any) => {
+                          const c = Number(prev.resultsGraphDisplayCount) || 1;
+                          if (c >= 3) return prev;
+                          return { ...prev, resultsGraphDisplayCount: (c + 1) as 1 | 2 | 3 };
+                        })
+                      }
+                      disabled={resultsGraphCount >= 3}
+                      className="w-5 h-5 rounded border border-gray-300 bg-white text-gray-900 hover:bg-gray-50 disabled:opacity-40 flex items-center justify-center"
+                      title="Add graph"
+                      aria-label="Add graph"
+                    >
+                      <span className="material-icons-round text-[14px] leading-none">add</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setFormData((prev: any) => {
+                          const c = Number(prev.resultsGraphDisplayCount) || 1;
+                          if (c <= 1) return prev;
+                          return { ...prev, resultsGraphDisplayCount: (c - 1) as 1 | 2 | 3 };
+                        })
+                      }
+                      disabled={resultsGraphCount <= 1}
+                      className="w-5 h-5 rounded border border-gray-300 bg-white text-red-600 hover:bg-red-50 disabled:opacity-40 flex items-center justify-center"
+                      title="Remove graph"
+                      aria-label="Remove graph"
+                    >
+                      <span className="material-icons-round text-[14px] leading-none">delete</span>
+                    </button>
+                  </div>
                 </div>
-              </div>
+              )}
 
               {(() => {
                 const shown = visibleResultKpis.slice(0, resultsGraphCount);
@@ -2882,17 +3384,6 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                       : 'grid-cols-3';
                 return (
                   <>
-              <div className={`grid ${colsCls} border-b border-gray-500 text-white text-center text-xs font-bold`}>
-                {shown.map((row: any, idx: number) => (
-                  <div
-                    key={`${row.id}-header`}
-                    className={`${idx < shown.length - 1 ? 'border-r border-gray-500' : ''} bg-kauvery-purple py-1`}
-                  >
-                    {row.title || `KPI ${idx + 1}`}
-                  </div>
-                ))}
-              </div>
-
               <div className={`grid ${colsCls} min-h-[500px] border-b border-gray-500 items-stretch`}>
                 {shown.map((row: any, idx: number) => (
                   <div
@@ -3036,8 +3527,8 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                               x2="75"
                               y2={100 - Math.min(100, Math.max(0, row.afterPct))}
                               stroke="#2563eb"
-                              strokeWidth="1.75"
-                              strokeDasharray="5 4"
+                              strokeWidth="0.7"
+                              strokeDasharray="3 2.5"
                               strokeLinecap="round"
                             />
                             <path
@@ -3055,9 +3546,9 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                                 const uy = dy / len;
                                 const nx = -uy;
                                 const ny = ux;
-                                const s = 2.4;
-                                const ax = x2 - ux * 4.5;
-                                const ay = y2 - uy * 4.5;
+                                const s = 1.35;
+                                const ax = x2 - ux * 2.8;
+                                const ay = y2 - uy * 2.8;
                                 return `M ${x2} ${y2} L ${ax + nx * s} ${ay + ny * s} L ${ax - nx * s} ${ay - ny * s} Z`;
                               })()}
                               fill="#2563eb"
@@ -3145,9 +3636,11 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                 );
               })()}
 
-              <div className="flex justify-end">
-                <div className="bg-yellow-300 text-black font-black px-3 py-0.5">{currentSheet}</div>
-              </div>
+              {!isExportCaptureMode && (
+                <div className="flex justify-end">
+                  <div className="bg-yellow-300 text-black font-black px-3 py-0.5">{currentSheet}</div>
+                </div>
+              )}
             </div>
             </div>
             )}

@@ -1,5 +1,5 @@
 
-import React, { useState, useCallback, useEffect, useMemo } from 'react';
+import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { LoginPage } from './screens/LoginPage';
 import { Dashboard } from './screens/Dashboard';
@@ -10,11 +10,45 @@ import { NotificationsButton } from './components/NotificationsButton';
 import { PipelineView } from './screens/PipelineView';
 import { UserManagement } from './screens/UserManagement';
 import { BeOverview } from './screens/BeOverview';
+import { Reports } from './screens/Reports';
 import { RoleListView } from './screens/RoleListView';
 import { HodApprovalDesk } from './screens/HodApprovalDesk';
 import { Role, Suggestion, Status, ViewType, User } from './types';
 import { clearSession, loadSession, saveSession } from './auth/session';
 import { resolveImplementationPatchActor } from './utils/implementationPatchActor';
+import {
+  clampImplementationPercent,
+  computeImplementationProgressPercentFromDraft,
+} from './utils/implementerTemplateProgress';
+import {
+  isL2ApprovalPhase,
+  pendingDepartmentL1ForUser,
+} from './utils/phasedApproval';
+
+const BACKEND_TO_UI_ROLE: Record<string, Role> = {
+  EMPLOYEE: Role.EMPLOYEE,
+  UNIT_COORDINATOR: Role.UNIT_COORDINATOR,
+  SELECTION_COMMITTEE: Role.SELECTION_COMMITTEE,
+  IMPLEMENTER: Role.IMPLEMENTER,
+  BUSINESS_EXCELLENCE: Role.BUSINESS_EXCELLENCE,
+  BUSINESS_EXCELLENCE_HEAD: Role.BUSINESS_EXCELLENCE_HEAD,
+  HOD_FINANCE: Role.FINANCE_HOD,
+  HOD_HR: Role.HR_HEAD,
+  HOD_QUALITY: Role.QUALITY_HOD,
+  HOD_OPS: Role.OPS_HEAD,
+  HOD_NURSING: Role.NURSING_HEAD,
+  BE_MEMBER: Role.BUSINESS_EXCELLENCE,
+  BE_HEAD: Role.BUSINESS_EXCELLENCE_HEAD,
+  ADMIN: Role.ADMIN,
+  SUPER_ADMIN: Role.ADMIN,
+};
+
+function mapBackendRolesToUiRoles(rawRoles: string[] | undefined): Role[] {
+  const mapped = (Array.isArray(rawRoles) ? rawRoles : [])
+    .map((r) => BACKEND_TO_UI_ROLE[String(r)] ?? Role.EMPLOYEE)
+    .filter((v, i, arr) => arr.indexOf(v) === i);
+  return mapped.length ? mapped : [Role.EMPLOYEE];
+}
 
 const getRoleScopedSuggestions = (
   allSuggestions: Suggestion[],
@@ -26,9 +60,12 @@ const getRoleScopedSuggestions = (
 
   if (role === Role.EMPLOYEE) {
     if (!currentUserName) return [];
-    return allSuggestions.filter(
-      s => s.employeeName.trim().toLowerCase() === currentUserName.trim().toLowerCase()
-    );
+    return allSuggestions.filter((s) => {
+      const mine =
+        s.employeeName.trim().toLowerCase() === currentUserName.trim().toLowerCase();
+      if (mine) return true;
+      return pendingDepartmentL1ForUser(s, currentUserName, currentUserEmployeeCode);
+    });
   }
 
   if (role === Role.UNIT_COORDINATOR) {
@@ -84,14 +121,8 @@ const getRoleScopedSuggestions = (
     });
   }
 
-  if (role === Role.BUSINESS_EXCELLENCE) {
+  if (role === Role.BUSINESS_EXCELLENCE || role === Role.BUSINESS_EXCELLENCE_HEAD) {
     return allSuggestions;
-  }
-
-  if (role === Role.BUSINESS_EXCELLENCE_HEAD) {
-    return allSuggestions.filter(s =>
-      [Status.BE_EVALUATION_PENDING, Status.REWARD_PENDING, Status.REWARDED].includes(s.status)
-    );
   }
 
   if (role === Role.HR_HEAD) {
@@ -100,7 +131,8 @@ const getRoleScopedSuggestions = (
       if (!s.requiredApprovals?.includes(role)) return false;
       if (
         s.status === Status.VERIFIED_PENDING_APPROVAL &&
-        !s.approvals?.[role]
+        !s.approvals?.[role] &&
+        isL2ApprovalPhase(s)
       )
         return true;
       if (s.approvals?.[role]) return true;
@@ -108,12 +140,18 @@ const getRoleScopedSuggestions = (
     });
   }
 
-  if (role === Role.QUALITY_HOD || role === Role.FINANCE_HOD) {
+  if (
+    role === Role.QUALITY_HOD ||
+    role === Role.FINANCE_HOD ||
+    role === Role.OPS_HEAD ||
+    role === Role.NURSING_HEAD
+  ) {
     return allSuggestions.filter((s) => {
       if (!s.requiredApprovals?.includes(role)) return false;
       if (
         s.status === Status.VERIFIED_PENDING_APPROVAL &&
-        !s.approvals?.[role]
+        !s.approvals?.[role] &&
+        isL2ApprovalPhase(s)
       )
         return true;
       if (s.approvals?.[role]) return true;
@@ -124,9 +162,16 @@ const getRoleScopedSuggestions = (
   return allSuggestions;
 };
 
-const HOD_DESK_ROLES: Role[] = [Role.HR_HEAD, Role.QUALITY_HOD, Role.FINANCE_HOD];
+const HOD_DESK_ROLES: Role[] = [
+  Role.HR_HEAD,
+  Role.QUALITY_HOD,
+  Role.FINANCE_HOD,
+  Role.OPS_HEAD,
+  Role.NURSING_HEAD,
+];
 
 const App: React.FC = () => {
+  const lastSessionSyncTokenRef = useRef<string | null>(null);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [currentView, setCurrentView] = useState<ViewType>('dashboard');
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
@@ -189,6 +234,84 @@ const App: React.FC = () => {
     return headers;
   }, [currentUser]);
 
+  const refreshSession = useCallback(async () => {
+    const token = currentUser?.accessToken;
+    if (!token) return;
+    try {
+      const res = await fetch(`${apiBase}/auth/refresh-session`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      if (!res.ok) return;
+      const data = (await res.json()) as {
+        accessToken?: string;
+        user?: {
+          id?: string;
+          name?: string;
+          employeeCode?: string;
+          roles?: string[];
+          departmentHodAssignments?: string[];
+        };
+      };
+      const nextToken = String(data?.accessToken || token);
+      const nextRoles = mapBackendRolesToUiRoles(data?.user?.roles);
+      lastSessionSyncTokenRef.current = nextToken;
+      setCurrentUser((prev) => {
+        if (!prev) return prev;
+        const nextRole = nextRoles.includes(prev.role)
+          ? prev.role
+          : nextRoles.includes(Role.ADMIN)
+            ? Role.ADMIN
+            : nextRoles.includes(Role.EMPLOYEE)
+              ? Role.EMPLOYEE
+              : nextRoles[0];
+        const updated: User = {
+          ...prev,
+          id: String(data?.user?.id || prev.id),
+          name: String(data?.user?.name || prev.name),
+          employeeCode: String(data?.user?.employeeCode || prev.employeeCode || ''),
+          accessToken: nextToken,
+          role: nextRole,
+          roles: nextRoles,
+          departmentHodAssignments: Array.isArray(data?.user?.departmentHodAssignments)
+            ? data.user.departmentHodAssignments.filter(Boolean)
+            : (prev.departmentHodAssignments ?? []),
+        };
+        saveSession(updated);
+        return updated;
+      });
+    } catch {
+      // ignore: the existing session remains usable
+    }
+  }, [apiBase, currentUser?.accessToken]);
+
+  useEffect(() => {
+    if (!currentUser?.accessToken) {
+      lastSessionSyncTokenRef.current = null;
+      return;
+    }
+    if (lastSessionSyncTokenRef.current !== currentUser.accessToken) {
+      void refreshSession();
+    }
+    const handleSessionVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        void refreshSession();
+      }
+    };
+    const handleWindowFocus = () => {
+      void refreshSession();
+    };
+    window.addEventListener('focus', handleWindowFocus);
+    document.addEventListener('visibilitychange', handleSessionVisibility);
+    return () => {
+      window.removeEventListener('focus', handleWindowFocus);
+      document.removeEventListener('visibilitychange', handleSessionVisibility);
+    };
+  }, [currentUser?.accessToken, refreshSession]);
+
   useEffect(() => {
     if (!currentUser?.accessToken) {
       setUnitOptions([]);
@@ -241,30 +364,27 @@ const App: React.FC = () => {
     currentUser?.employeeCode,
   );
 
-  useEffect(() => {
+  const refreshSuggestions = useCallback(async () => {
     if (!currentUser) return;
-
     const query = new URLSearchParams({
       role: currentUser.role,
       currentUserName: currentUser.name,
     });
-
-    fetch(`${apiBase}/suggestions?${query.toString()}`, {
-      headers: authHeaders(),
-    })
-      .then(async (res) => {
-        if (!res.ok) {
-          throw new Error(await res.text());
-        }
-        return res.json();
-      })
-      .then((items: Suggestion[]) => {
-        setSuggestions(Array.isArray(items) ? items : []);
-      })
-      .catch((err) => {
-        console.error('Failed to load suggestions', err);
+    try {
+      const res = await fetch(`${apiBase}/suggestions?${query.toString()}`, {
+        headers: authHeaders(),
       });
+      if (!res.ok) throw new Error(await res.text());
+      const items = (await res.json()) as Suggestion[];
+      setSuggestions(Array.isArray(items) ? items : []);
+    } catch (err) {
+      console.error('Failed to load suggestions', err);
+    }
   }, [apiBase, authHeaders, currentUser]);
+
+  useEffect(() => {
+    void refreshSuggestions();
+  }, [refreshSuggestions]);
 
   const handleCreateSuggestion = async (
     data: Partial<Suggestion>,
@@ -341,6 +461,7 @@ const App: React.FC = () => {
           actor: {
             name: currentUser?.name || 'System User',
             role: actorRole,
+            employeeCode: currentUser?.employeeCode,
           },
           status,
           extraData,
@@ -367,6 +488,7 @@ const App: React.FC = () => {
               suggestions={roleScopedSuggestions}
               role={currentRole}
               userName={currentUser?.name}
+              onNavigateToReports={() => setCurrentView('reports')}
               onNewIdea={() => setCurrentView('create')}
             />
           </div>
@@ -410,6 +532,19 @@ const App: React.FC = () => {
               setSelectedSuggestion(s);
               setIsDetailModalOpen(true);
             }}
+          />
+        </div>
+      );
+    }
+    if (currentView === 'reports') {
+      return (
+        <div className="animate-fade-in">
+          <Reports
+            apiBase={apiBase}
+            accessToken={currentUser.accessToken}
+            role={currentRole}
+            unitOptions={unitOptions.map((u) => ({ code: u.code, name: u.name }))}
+            departmentOptions={departmentOptions.map((d) => ({ name: d.name }))}
           />
         </div>
       );
@@ -463,7 +598,11 @@ const App: React.FC = () => {
 
     if (currentView === 'users') {
       return (
-        <UserManagement apiBase={apiBase} authHeaders={authHeaders} />
+        <UserManagement
+          apiBase={apiBase}
+          authHeaders={authHeaders}
+          onAfterMobileSuggestionSync={refreshSuggestions}
+        />
       );
     }
 
@@ -531,17 +670,25 @@ const App: React.FC = () => {
                 implActor,
               );
             }}
-            onSaveDraft={(data) => {
+            onSaveDraft={async (data) => {
               const implActor = resolveImplementationPatchActor(
                 selectedSuggestion,
                 currentUser,
               );
-              handleUpdateStatus(
+              const draft = data as Record<string, unknown>;
+              await handleUpdateStatus(
                 selectedSuggestion.id,
                 selectedSuggestion.status as Status,
-                { implementationDraft: data },
+                {
+                  implementationDraft: data,
+                  implementationProgress: clampImplementationPercent(
+                    computeImplementationProgressPercentFromDraft(draft),
+                  ),
+                  implementationUpdateDate: new Date().toISOString().split('T')[0],
+                },
                 implActor,
               );
+              await refreshSuggestions();
             }}
             onCancel={() => setCurrentView('dashboard')}
           />
@@ -556,6 +703,7 @@ const App: React.FC = () => {
           suggestions={roleScopedSuggestions}
           role={currentRole}
           userName={currentUser?.name}
+          onNavigateToReports={() => setCurrentView('reports')}
           onNewIdea={() => setCurrentView('create')}
         />
       </div>
@@ -585,6 +733,7 @@ const App: React.FC = () => {
         onViewChange={setCurrentView} 
         currentRole={currentRole}
         availableRoles={currentUser.roles}
+        departmentHodAssignments={currentUser.departmentHodAssignments}
         onRoleChange={handleRoleChange}
         currentUserName={currentUser.name}
         onLogout={() => {
@@ -679,6 +828,10 @@ const App: React.FC = () => {
         userRoles={currentUser.roles?.length ? currentUser.roles : [currentUser.role]}
         implementationActorUser={currentUser}
         onUpdateStatus={handleUpdateStatus}
+        onSuggestionRefreshed={(s) => {
+          setSuggestions((prev) => prev.map((x) => (x.id === s.id ? s : x)));
+          setSelectedSuggestion((prev) => (prev?.id === s.id ? s : prev));
+        }}
         initialView={detailViewMode}
         apiBase={apiBase}
         accessToken={currentUser.accessToken}

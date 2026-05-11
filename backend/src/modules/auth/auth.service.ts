@@ -4,6 +4,7 @@ import * as bcrypt from 'bcrypt';
 import { createHash } from 'crypto';
 import { PrismaService } from '../../database/prisma.service';
 import { LoginDto } from './dto/login.dto';
+import type { JwtAccessPayload } from './guards/jwt-auth.guard';
 
 @Injectable()
 export class AuthService {
@@ -11,6 +12,21 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
   ) {}
+
+  private async listDepartmentHodAssignments(userId: string): Promise<string[]> {
+    const rows = await (this.prisma as any).departmentHodAssignment.findMany({
+      where: { userId },
+      select: { departmentName: true },
+      take: 5000,
+    });
+    return Array.from(
+      new Set(
+        (Array.isArray(rows) ? rows : [])
+          .map((r: any) => String(r?.departmentName ?? '').trim())
+          .filter(Boolean),
+      ),
+    ).sort((a, b) => a.localeCompare(b));
+  }
 
   async login(dto: LoginDto) {
     const user = await this.prisma.user.findFirst({
@@ -62,6 +78,9 @@ export class AuthService {
     }
 
     const roles = user.roles.map((mapping: any) => String(mapping.role.code));
+    const departmentHodAssignments = await this.listDepartmentHodAssignments(
+      user.id,
+    );
 
     const accessToken = await this.jwtService.signAsync({
       sub: user.id,
@@ -84,6 +103,48 @@ export class AuthService {
         email: user.email,
         name: user.name,
         roles,
+        departmentHodAssignments,
+      },
+    };
+  }
+
+  async refreshSession(token: JwtAccessPayload) {
+    const user = await this.prisma.user.findFirst({
+      where: { id: token.sub },
+      include: {
+        roles: {
+          include: {
+            role: true,
+          },
+        },
+      },
+    });
+
+    if (!user || !user.isActive) {
+      throw new UnauthorizedException('User not found or inactive');
+    }
+
+    const roles = user.roles.map((mapping: any) => String(mapping.role.code));
+    const departmentHodAssignments = await this.listDepartmentHodAssignments(
+      user.id,
+    );
+    const accessToken = await this.jwtService.signAsync({
+      sub: user.id,
+      employeeCode: user.employeeCode,
+      email: user.email,
+      name: user.name,
+      roles,
+    });
+
+    return {
+      accessToken,
+      user: {
+        id: user.id,
+        employeeCode: user.employeeCode,
+        email: user.email,
+        name: user.name,
+        roles,
+        departmentHodAssignments,
       },
     };
   }

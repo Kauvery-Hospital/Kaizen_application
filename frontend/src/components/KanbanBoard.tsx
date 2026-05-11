@@ -2,11 +2,13 @@
 import React from 'react';
 import { Suggestion, Status, Role } from '../types';
 import { STATUS_COLORS } from '../constants';
+import { isL2ApprovalPhase, pendingDepartmentL1ForUser } from '../utils/phasedApproval';
 
 interface KanbanBoardProps {
   suggestions: Suggestion[];
   role: Role;
   currentUserName?: string;
+  currentUserEmployeeCode?: string;
   onSelect: (suggestion: Suggestion) => void;
 }
 
@@ -23,12 +25,19 @@ const COLUMNS = [
   { id: 'done', title: 'Rewarded', statuses: [Status.REWARDED] },
 ];
 
-const filterSuggestionsForRole = (role: Role, suggestion: Suggestion, currentUserName?: string) => {
+const filterSuggestionsForRole = (
+  role: Role,
+  suggestion: Suggestion,
+  currentUserName?: string,
+  currentUserEmployeeCode?: string,
+) => {
   // Mirror role-based visibility from SuggestionList so both views stay in sync.
   if (role === Role.ADMIN) return true;
 
   if (role === Role.EMPLOYEE) {
-    return currentUserName ? suggestion.employeeName === currentUserName : true;
+    if (!currentUserName) return true;
+    if (suggestion.employeeName === currentUserName) return true;
+    return pendingDepartmentL1ForUser(suggestion, currentUserName, currentUserEmployeeCode);
   }
 
   if (role === Role.UNIT_COORDINATOR) {
@@ -71,25 +80,28 @@ const filterSuggestionsForRole = (role: Role, suggestion: Suggestion, currentUse
   }
 
   if (role === Role.BUSINESS_EXCELLENCE_HEAD) {
-    return [
-      Status.BE_EVALUATION_PENDING,
-      Status.REWARD_PENDING,
-      Status.REWARDED,
-    ].includes(suggestion.status);
+    return true;
   }
 
   if (role === Role.HR_HEAD) {
     if ([Status.REWARD_PENDING, Status.REWARDED].includes(suggestion.status)) return true;
     return (
       suggestion.status === Status.VERIFIED_PENDING_APPROVAL &&
+      isL2ApprovalPhase(suggestion) &&
       suggestion.requiredApprovals?.includes(role) &&
       !suggestion.approvals?.[role]
     );
   }
 
-  if (role === Role.QUALITY_HOD || role === Role.FINANCE_HOD) {
+  if (
+    role === Role.QUALITY_HOD ||
+    role === Role.FINANCE_HOD ||
+    role === Role.OPS_HEAD ||
+    role === Role.NURSING_HEAD
+  ) {
     return (
       suggestion.status === Status.VERIFIED_PENDING_APPROVAL &&
+      isL2ApprovalPhase(suggestion) &&
       suggestion.requiredApprovals?.includes(role) &&
       !suggestion.approvals?.[role]
     );
@@ -98,13 +110,21 @@ const filterSuggestionsForRole = (role: Role, suggestion: Suggestion, currentUse
   return true;
 };
 
-export const KanbanBoard: React.FC<KanbanBoardProps> = ({ suggestions, role, currentUserName, onSelect }) => {
+export const KanbanBoard: React.FC<KanbanBoardProps> = ({
+  suggestions,
+  role,
+  currentUserName,
+  currentUserEmployeeCode,
+  onSelect,
+}) => {
   return (
     <div className="h-[calc(100vh-140px)] overflow-x-auto pb-4">
       <div className="flex gap-4 h-full min-w-max">
         {COLUMNS.map(col => {
             const items = suggestions
-              .filter(s => filterSuggestionsForRole(role, s, currentUserName))
+              .filter((s) =>
+                filterSuggestionsForRole(role, s, currentUserName, currentUserEmployeeCode),
+              )
               .filter(s => col.statuses.includes(s.status));
             
             return (
