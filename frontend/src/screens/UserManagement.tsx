@@ -311,7 +311,7 @@ export const UserManagement: React.FC<{
         let line = `Mobile sync done. Scanned: ${scanned}, Inserted: ${inserted}, Updated: ${updated}, Skipped (unmapped employee): ${skipped}.`;
         if (scanned === 0 && inserted === 0 && updated === 0) {
           line +=
-            ' No rows returned from hrms_suggestions after the configured mobile sync start date, or HRMS_DATABASE_URL points to an empty DB.';
+            ' No rows returned from hrms_suggestions (is_active = false, after the configured start date / date field), or HRMS_DATABASE_URL points to an empty DB.';
         } else {
           line +=
             ' Dashboard / Pipeline lists refresh automatically — switch there to see new ideas.';

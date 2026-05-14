@@ -45,14 +45,28 @@ export class MobileIdeasSyncService {
     ).trim();
     if (!raw) return DEFAULT_MOBILE_IDEA_SYNC_START_DATE;
 
-    const normalized = /^\d{2}\/\d{2}\/\d{4}$/.test(raw)
-      ? `${raw.slice(6, 10)}-${raw.slice(3, 5)}-${raw.slice(0, 2)}`
-      : raw;
-    const parsed = new Date(normalized);
+    if (/^\d{2}\/\d{2}\/\d{4}$/.test(raw)) {
+      return `${raw.slice(6, 10)}-${raw.slice(3, 5)}-${raw.slice(0, 2)}`;
+    }
+    // Avoid `new Date('YYYY-MM-DD')` → UTC midnight → wrong calendar day in some TZs when re-serialized.
+    if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+      return raw;
+    }
+    const parsed = new Date(raw);
     if (Number.isNaN(parsed.getTime())) {
       return DEFAULT_MOBILE_IDEA_SYNC_START_DATE;
     }
     return parsed.toISOString().slice(0, 10);
+  }
+
+  /** Which HRMS column drives the start-date filter: idea `date` vs row `created_at`. */
+  private getMobileIdeaSyncDateField(): 'date' | 'created_at' {
+    const v = String(
+      this.config.get<string>('MOBILE_IDEA_SYNC_DATE_FIELD') ?? 'date',
+    )
+      .trim()
+      .toLowerCase();
+    return v === 'created_at' || v === 'created' ? 'created_at' : 'date';
   }
 
   @Cron(process.env.MOBILE_IDEA_SYNC_CRON ?? '0 */5 * * * *')
@@ -180,8 +194,23 @@ export class MobileIdeasSyncService {
     let updated = 0;
     let skippedUnmappedEmployee = 0;
     const syncStartDate = this.getMobileIdeaSyncStartDate();
+    const dateField = this.getMobileIdeaSyncDateField();
+    this.logger.log(
+      `Mobile ideas sync: startDate=${syncStartDate} dateField=${dateField} take=${take}`,
+    );
 
     try {
+      // Inclusive cutoff: `date >= $1` so rows on MOBILE_IDEA_SYNC_START_DATE are not skipped.
+      // Sync only HRMS rows with `is_active = false` (per business / deployment rule).
+      const datePredicate =
+        dateField === 'created_at'
+          ? 'coalesce(created_at::date, date) >= $1::date'
+          : 'date >= $1::date';
+      const orderBy =
+        dateField === 'created_at'
+          ? 'order by created_at desc nulls last, date desc'
+          : 'order by date desc, created_at desc';
+
       const res = await pool.query(
         `
         select
@@ -193,8 +222,9 @@ export class MobileIdeasSyncService {
           department::text as department,
           created_at::text as created_at
         from hrms_suggestions
-        where date > $1::date
-        order by date desc, created_at desc
+        where (${datePredicate})
+          and is_active = false
+        ${orderBy}
         limit $2
         `,
         [syncStartDate, take],
