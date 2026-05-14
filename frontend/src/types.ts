@@ -77,6 +77,8 @@ export interface Suggestion {
   department: string; // Originator Dept
   dateSubmitted: string;
   employeeName: string; // Originator
+  /** Originator employee code when the API provides it (e.g. mobile sync). */
+  employeeCode?: string;
   description: string; // Basic idea description
   /** Idea phase may use booleans; Kaizen sheet may use primary / secondary highlights */
   expectedBenefits: {
