@@ -2,9 +2,20 @@ import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import { createHash } from 'crypto';
+import { RoleCode } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
 import { LoginDto } from './dto/login.dto';
 import type { JwtAccessPayload } from './guards/jwt-auth.guard';
+
+export type AuthUserUnitScopes = {
+  UNIT_COORDINATOR?: string[];
+  SELECTION_COMMITTEE?: string[];
+  HOD_FINANCE?: string[];
+  HOD_QUALITY?: string[];
+  HOD_HR?: string[];
+  HOD_OPS?: string[];
+  HOD_NURSING?: string[];
+};
 
 @Injectable()
 export class AuthService {
@@ -12,6 +23,55 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
   ) {}
+
+  private async listUnitScopesForUser(userId: string): Promise<AuthUserUnitScopes> {
+    const rows = await this.prisma.userRoleUnitScope.findMany({
+      where: {
+        userId,
+        roleCode: {
+          in: [
+            RoleCode.UNIT_COORDINATOR,
+            RoleCode.SELECTION_COMMITTEE,
+            RoleCode.HOD_FINANCE,
+            RoleCode.HOD_QUALITY,
+            RoleCode.HOD_HR,
+            RoleCode.HOD_OPS,
+            RoleCode.HOD_NURSING,
+          ],
+        },
+      },
+      select: { roleCode: true, unitCode: true },
+      take: 5000,
+    });
+
+    const bundle: AuthUserUnitScopes = {};
+    (Array.isArray(rows) ? rows : []).forEach((r) => {
+      const role = String(r.roleCode || '');
+      const unit = String(r.unitCode || '').trim();
+      if (!unit) return;
+      const key =
+        role === 'UNIT_COORDINATOR'
+          ? 'UNIT_COORDINATOR'
+          : role === 'SELECTION_COMMITTEE'
+            ? 'SELECTION_COMMITTEE'
+            : role === 'HOD_FINANCE'
+              ? 'HOD_FINANCE'
+              : role === 'HOD_QUALITY'
+                ? 'HOD_QUALITY'
+                : role === 'HOD_HR'
+                  ? 'HOD_HR'
+                  : role === 'HOD_OPS'
+                    ? 'HOD_OPS'
+                    : role === 'HOD_NURSING'
+                      ? 'HOD_NURSING'
+                      : null;
+      if (!key) return;
+      bundle[key] = Array.from(new Set([...(bundle[key] || []), unit])).sort((a, b) =>
+        a.localeCompare(b),
+      );
+    });
+    return bundle;
+  }
 
   private async listDepartmentHodAssignments(userId: string): Promise<string[]> {
     const rows = await (this.prisma as any).departmentHodAssignment.findMany({
@@ -78,9 +138,10 @@ export class AuthService {
     }
 
     const roles = user.roles.map((mapping: any) => String(mapping.role.code));
-    const departmentHodAssignments = await this.listDepartmentHodAssignments(
-      user.id,
-    );
+    const [departmentHodAssignments, unitScopes] = await Promise.all([
+      this.listDepartmentHodAssignments(user.id),
+      this.listUnitScopesForUser(user.id),
+    ]);
 
     const accessToken = await this.jwtService.signAsync({
       sub: user.id,
@@ -104,6 +165,7 @@ export class AuthService {
         name: user.name,
         roles,
         departmentHodAssignments,
+        unitScopes,
       },
     };
   }
@@ -125,9 +187,10 @@ export class AuthService {
     }
 
     const roles = user.roles.map((mapping: any) => String(mapping.role.code));
-    const departmentHodAssignments = await this.listDepartmentHodAssignments(
-      user.id,
-    );
+    const [departmentHodAssignments, unitScopes] = await Promise.all([
+      this.listDepartmentHodAssignments(user.id),
+      this.listUnitScopesForUser(user.id),
+    ]);
     const accessToken = await this.jwtService.signAsync({
       sub: user.id,
       employeeCode: user.employeeCode,
@@ -145,6 +208,7 @@ export class AuthService {
         name: user.name,
         roles,
         departmentHodAssignments,
+        unitScopes,
       },
     };
   }

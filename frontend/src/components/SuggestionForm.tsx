@@ -9,8 +9,33 @@ import React, {
   useImperativeHandle,
 } from 'react';
 import { flushSync } from 'react-dom';
-import { Suggestion } from '../types';
+import { Role, Suggestion } from '../types';
+import { appRoleToHodRoleCode } from '../constants/hodDirectory';
 import { toPng } from 'html-to-image';
+import { SearchableSelect } from './SearchableSelect';
+
+function formatSignatureDisplay(name: string, employeeId: string): string {
+  const n = String(name ?? '').trim();
+  const id = String(employeeId ?? '').trim();
+  if (n && id) return `${n} - ${id}`;
+  if (n) return n;
+  return id;
+}
+
+/** @deprecated use formatSignatureDisplay */
+const formatPreparedByDisplay = formatSignatureDisplay;
+
+function namesLooselyMatch(a: string, b: string): boolean {
+  const x = String(a ?? '')
+    .trim()
+    .toLowerCase();
+  const y = String(b ?? '')
+    .trim()
+    .toLowerCase();
+  if (!x || !y) return false;
+  if (x === y) return true;
+  return x.includes(y) || y.includes(x);
+}
 
 /** Tries common filenames / folder layouts under `frontend/public/images/` */
 const KAUVERY_LOGO_SRC_CANDIDATES = [
@@ -86,6 +111,40 @@ const FINANCE_APPROVAL_COST_THRESHOLD_INR = 500_000;
 /** Finance column (Unit – Head of Finance) is omitted from the slide when total is at or below this */
 const SHOW_FINANCE_COLUMN_THRESHOLD_INR = 50_000;
 
+/** Fixed horizontal-deployment cost categories (Slide 2). */
+const HORIZONTAL_DEPLOYMENT_COST_LABELS = ['One time', 'Avoidance', 'Recurrence'] as const;
+
+type HorizontalDeploymentCostRow = { item: string; cost: string };
+
+function defaultHorizontalDeploymentCostRows(): HorizontalDeploymentCostRow[] {
+  return HORIZONTAL_DEPLOYMENT_COST_LABELS.map((item) => ({ item, cost: '' }));
+}
+
+function normalizeHorizontalDeploymentCostRows(input: unknown): HorizontalDeploymentCostRow[] {
+  const defaults = defaultHorizontalDeploymentCostRows();
+  if (!Array.isArray(input) || input.length === 0) return defaults;
+
+  const incoming = input.map((r) => ({
+    item: String((r as { item?: string })?.item ?? '').trim(),
+    cost: String((r as { cost?: string })?.cost ?? '').trim(),
+  }));
+
+  return HORIZONTAL_DEPLOYMENT_COST_LABELS.map((label, idx) => {
+    const key = label.toLowerCase();
+    const match =
+      incoming.find((r) => r.item.toLowerCase() === key) ??
+      incoming.find((r) => {
+        const n = r.item.toLowerCase();
+        if (label === 'One time') return n.includes('one') && (n.includes('time') || n === 'onetime');
+        if (label === 'Avoidance') return n.includes('avoid');
+        if (label === 'Recurrence') return n.includes('recur');
+        return false;
+      }) ??
+      incoming[idx];
+    return { item: label, cost: match?.cost ?? '' };
+  });
+}
+
 function sumHorizontalDeploymentCostRowsInr(rows: unknown): number {
   if (!Array.isArray(rows)) return 0;
   let sum = 0;
@@ -154,6 +213,261 @@ const KTZ_SELECT =
 const KTZ_DATE =
   'w-full border border-slate-400 bg-white rounded-sm px-2 py-1.5 text-xs text-slate-900 font-medium min-h-[2.5rem] box-border focus:border-kauvery-purple focus:ring-1 focus:ring-kauvery-purple/30';
 
+/** Per-field character limits on Slide 2 (implementation template). */
+const SLIDE2_TEXT_LIMITS = {
+  unit: 80,
+  area: 100,
+  problem: 120,
+  howMuch: 150,
+  whyWhy: 80,
+  rootCause: 250,
+  ideaToEliminate: 250,
+  counterMeasure: 400,
+  standardizationOthers: 150,
+  quantitativeResults: 400,
+  horizontalDeployment: 400,
+  hdItem: 80,
+  hdCost: 14,
+  signatureEmployeeId: 20,
+  signatureName: 60,
+} as const;
+
+function clampSlide2Text(value: string, max: number): string {
+  return String(value ?? '').slice(0, max);
+}
+
+function parseSignatureDisplayInput(raw: string): { name: string; employeeId: string } {
+  const s = String(raw ?? '').trim();
+  if (!s) return { name: '', employeeId: '' };
+  const sep = s.lastIndexOf(' - ');
+  if (sep >= 0) {
+    return {
+      name: clampSlide2Text(s.slice(0, sep).trim(), SLIDE2_TEXT_LIMITS.signatureName),
+      employeeId: clampSlide2Text(
+        s.slice(sep + 3).trim(),
+        SLIDE2_TEXT_LIMITS.signatureEmployeeId,
+      ),
+    };
+  }
+  return {
+    name: clampSlide2Text(s, SLIDE2_TEXT_LIMITS.signatureName),
+    employeeId: '',
+  };
+}
+
+function employeeIdFromPreparedByInput(raw: string): string {
+  const s = String(raw ?? '').trim();
+  if (!s) return '';
+  const sep = s.lastIndexOf(' - ');
+  if (sep >= 0) {
+    return clampSlide2Text(
+      s.slice(sep + 3).trim(),
+      SLIDE2_TEXT_LIMITS.signatureEmployeeId,
+    );
+  }
+  return clampSlide2Text(s, SLIDE2_TEXT_LIMITS.signatureEmployeeId);
+}
+
+const SLIDE2_SIGNATURE_DISPLAY_MAX_LEN =
+  SLIDE2_TEXT_LIMITS.signatureName + 3 + SLIDE2_TEXT_LIMITS.signatureEmployeeId;
+
+function Slide2CharCount({ length, max }: { length: number; max: number }) {
+  return (
+    <div
+      className={`text-[9px] text-right tabular-nums leading-none mt-0.5 ${
+        length >= max
+          ? 'font-bold text-amber-700'
+          : length >= Math.floor(max * 0.85)
+            ? 'text-slate-500'
+            : 'text-slate-400'
+      }`}
+      aria-live="polite"
+    >
+      {length}/{max}
+    </div>
+  );
+}
+
+type Slide2TextareaProps = Omit<
+  React.TextareaHTMLAttributes<HTMLTextAreaElement>,
+  'value' | 'onChange'
+> & {
+  limit: number;
+  value: string;
+  onValueChange: (value: string) => void;
+};
+
+function Slide2Textarea({ limit, value, onValueChange, className, ...rest }: Slide2TextareaProps) {
+  const text = String(value ?? '');
+  return (
+    <div className="flex flex-col min-h-0 w-full">
+      <textarea
+        {...rest}
+        maxLength={limit}
+        className={className}
+        value={text}
+        onChange={(e) => onValueChange(clampSlide2Text(e.target.value, limit))}
+      />
+      <Slide2CharCount length={text.length} max={limit} />
+    </div>
+  );
+}
+
+type Slide2InputProps = Omit<React.InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange'> & {
+  limit: number;
+  value: string;
+  onValueChange: (value: string) => void;
+  showCount?: boolean;
+};
+
+function Slide2Input({
+  limit,
+  value,
+  onValueChange,
+  className,
+  showCount = true,
+  ...rest
+}: Slide2InputProps) {
+  const text = String(value ?? '');
+  return (
+    <div className="w-full">
+      <input
+        {...rest}
+        maxLength={limit}
+        className={className}
+        value={text}
+        onChange={(e) => onValueChange(clampSlide2Text(e.target.value, limit))}
+      />
+      {showCount ? <Slide2CharCount length={text.length} max={limit} /> : null}
+    </div>
+  );
+}
+
+type Slide2PreparedByFieldProps = {
+  employeeId: string;
+  name: string;
+  disabled?: boolean;
+  onDraftChange: (employeeId: string) => void;
+  onLookup: (employeeId: string) => void | Promise<void>;
+};
+
+/** Single Prepared By field: type Emp. No → Enter → shows "Name - Emp. No". */
+function Slide2PreparedByField({
+  employeeId,
+  name,
+  disabled,
+  onDraftChange,
+  onLookup,
+}: Slide2PreparedByFieldProps) {
+  const resolved = Boolean(String(name ?? '').trim() && String(employeeId ?? '').trim());
+  const fieldValue = resolved
+    ? formatPreparedByDisplay(name, employeeId)
+    : String(employeeId ?? '');
+  const maxLen = resolved
+    ? SLIDE2_TEXT_LIMITS.signatureName +
+      3 +
+      SLIDE2_TEXT_LIMITS.signatureEmployeeId
+    : SLIDE2_TEXT_LIMITS.signatureEmployeeId;
+
+  return (
+    <input
+      type="text"
+      disabled={disabled}
+      maxLength={maxLen}
+      className="w-full border border-slate-400 bg-white rounded-sm px-2 py-1.5 text-[11px] text-slate-900 font-semibold min-h-[2rem] box-border focus:border-kauvery-purple focus:ring-1 focus:ring-kauvery-purple/30"
+      placeholder="Emp. No (press Enter)"
+      data-prepared-by-lookup="true"
+      value={fieldValue}
+      onChange={(e) => {
+        const id = employeeIdFromPreparedByInput(e.target.value);
+        onDraftChange(id);
+      }}
+      onKeyDown={(e) => {
+        if (e.key !== 'Enter') return;
+        e.preventDefault();
+        const id = employeeIdFromPreparedByInput(e.currentTarget.value);
+        void onLookup(id);
+      }}
+    />
+  );
+}
+
+type Slide2SignatureDisplayFieldProps = {
+  name: string;
+  employeeId: string;
+  placeholder?: string;
+  disabled?: boolean;
+  className?: string;
+  onChange: (name: string, employeeId: string) => void;
+};
+
+/** Auto-filled or editable signature: "Name - Emp. No" when both are known. */
+function Slide2SignatureDisplayField({
+  name,
+  employeeId,
+  placeholder = 'Name - Emp. No',
+  disabled,
+  className = '',
+  onChange,
+}: Slide2SignatureDisplayFieldProps) {
+  return (
+    <input
+      type="text"
+      disabled={disabled}
+      maxLength={SLIDE2_SIGNATURE_DISPLAY_MAX_LEN}
+      className={`w-full border border-slate-400 bg-slate-50 rounded-sm px-2 py-1.5 text-[11px] text-slate-900 font-semibold min-h-[2rem] box-border focus:border-kauvery-purple focus:ring-1 focus:ring-kauvery-purple/30 ${className}`}
+      placeholder={placeholder}
+      value={formatSignatureDisplay(name, employeeId)}
+      onChange={(e) => {
+        const parsed = parseSignatureDisplayInput(e.target.value);
+        onChange(parsed.name, parsed.employeeId);
+      }}
+    />
+  );
+}
+
+function appendSlide2TextLimitErrors(fd: any, errs: string[], whyWhyVisibleCount: number): void {
+  const L = SLIDE2_TEXT_LIMITS;
+  const over = (label: string, val: unknown, max: number) => {
+    if (String(val ?? '').length > max) {
+      errs.push(`Slide 2 — ${label} must be at most ${max} characters.`);
+    }
+  };
+  over('Unit', fd.unit, L.unit);
+  over('Area / location', fd.area, L.area);
+  const pr = fd.problem || {};
+  over('Problem — What', pr.what, L.problem);
+  over('Problem — Where', pr.where, L.problem);
+  over('Problem — When', pr.when, L.problem);
+  over('Problem — How', pr.how, L.problem);
+  over('Present status — How Much', fd.howMuch, L.howMuch);
+  const analysis = fd.analysis || {};
+  for (let n = 1; n <= whyWhyVisibleCount; n++) {
+    over(`Why-Why #${n}`, (analysis as any)[`why${n}`], L.whyWhy);
+  }
+  over('Root cause', analysis.rootCause, L.rootCause);
+  over('Idea to eliminate', fd.ideaToEliminate, L.ideaToEliminate);
+  over('Counter measure', fd.counterMeasure, L.counterMeasure);
+  const std = fd.standardization || {};
+  if (std.others) over('Standardization — Others', std.othersDescription, L.standardizationOthers);
+  over('Quantitative results', fd.quantitativeResults, L.quantitativeResults);
+  over('Horizontal deployment', fd.horizontalDeployment, L.horizontalDeployment);
+  const hdRows = Array.isArray(fd.horizontalDeploymentCostRows)
+    ? (fd.horizontalDeploymentCostRows as { item?: string; cost?: string }[])
+    : [];
+  normalizeHorizontalDeploymentCostRows(hdRows).forEach((r) => {
+    over(`Horizontal deployment — ${r.item} cost`, r.cost, L.hdCost);
+  });
+  over('Prepared By — Emp. No', fd.templateSigPreparedByEmployeeId, L.signatureEmployeeId);
+  over('Prepared By name', fd.templateSigPreparedBy, L.signatureName);
+  over('Validated By (Dept / HOD) — Emp. No', fd.templateSigValidatedDeptHodEmployeeId, L.signatureEmployeeId);
+  over('Validated By (Dept / HOD) name', fd.templateSigValidatedDeptHod, L.signatureName);
+  over('Validated By (Finance) — Emp. No', fd.templateSigValidatedFinanceEmployeeId, L.signatureEmployeeId);
+  over('Validated By (Finance) name', fd.templateSigValidatedFinance, L.signatureName);
+  over('Approved By — Emp. No', fd.templateSigApprovedOpsHeadEmployeeId, L.signatureEmployeeId);
+  over('Approved By name', fd.templateSigApprovedOpsHead, L.signatureName);
+}
+
 /** Sheet 2 PQCDSEM row: green = primary, yellow = secondary (stored in expectedBenefits JSON). */
 type PqcdsemLevel = 'none' | 'primary' | 'secondary';
 
@@ -182,8 +496,8 @@ const IDEA_SUBMISSION_PQCDSEM_KEYS = [
   'cost',
   'delivery',
   'safety',
-  'environment',
   'morale',
+  'environment',
   'energy',
 ] as const;
 
@@ -193,8 +507,8 @@ const PQCDSEM_TEMPLATE_KEYS = [
   'cost',
   'delivery',
   'safety',
-  'environment',
   'morale',
+  'environment',
 ] as const;
 
 function countPqcdsemTemplateActiveDims(
@@ -353,7 +667,7 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
     afterDescription: '',
     standardization: { opl: false, sop: false, manual: false, others: false, othersDescription: '' },
     horizontalDeployment: '',
-    horizontalDeploymentCostRows: [{ item: '', cost: '' }] as Array<{ item: string; cost: string }>,
+    horizontalDeploymentCostRows: defaultHorizontalDeploymentCostRows(),
     quantitativeResults: '',
     howMuch: '',
     teamMembers: '',
@@ -366,10 +680,14 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
     preparedBy: '',
     validatedBy: '',
     approvedBy: '',
+    templateSigPreparedByEmployeeId: '',
     templateSigPreparedBy: '',
     templateSigReportingTo: '',
+    templateSigValidatedDeptHodEmployeeId: '',
     templateSigValidatedDeptHod: '',
+    templateSigValidatedFinanceEmployeeId: '',
     templateSigValidatedFinance: '',
+    templateSigApprovedOpsHeadEmployeeId: '',
     templateSigApprovedOpsHead: '',
     result1: '',
     result2: '',
@@ -448,6 +766,8 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
   const previewUrlRegistry = useRef<Set<string>>(new Set());
   const formDataRef = useRef(formData);
   formDataRef.current = formData;
+  const preparedByBootstrappedRef = useRef(false);
+  const preparedByLookupSeqRef = useRef(0);
   const teamPhotoInputRef = useRef<HTMLInputElement>(null);
   const beforeImageInputRef = useRef<HTMLInputElement>(null);
   const afterImageInputRef = useRef<HTMLInputElement>(null);
@@ -587,15 +907,9 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
         (merged as any).resultsGraphDisplayCount =
           rgdRaw === 2 || rgdRaw === 3 ? rgdRaw : 1;
 
-        const hdrIn = (merged as any).horizontalDeploymentCostRows;
-        if (!Array.isArray(hdrIn) || hdrIn.length === 0) {
-          (merged as any).horizontalDeploymentCostRows = [{ item: '', cost: '' }];
-        } else {
-          (merged as any).horizontalDeploymentCostRows = hdrIn.map((r: any) => ({
-            item: String(r?.item ?? '').trim(),
-            cost: String(r?.cost ?? '').trim(),
-          }));
-        }
+        (merged as any).horizontalDeploymentCostRows = normalizeHorizontalDeploymentCostRows(
+          (merged as any).horizontalDeploymentCostRows,
+        );
 
         return merged;
       });
@@ -1407,6 +1721,8 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
               name: string;
               unit: string | null;
               department: string | null;
+              hod?: string | null;
+              manager?: string | null;
             }
           | null;
       } catch {
@@ -1414,6 +1730,321 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
       }
     },
     [apiBase, accessToken],
+  );
+
+  const fetchUnitDepartmentMembers = useCallback(
+    async (unitCode: string, department: string) => {
+      const unit = unitCode.trim();
+      const dept = department.trim();
+      if (!unit || !dept || !apiBase || !accessToken) return [];
+      const res = await fetch(
+        `${apiBase}/users/unit-department-members?unitCode=${encodeURIComponent(unit)}&department=${encodeURIComponent(dept)}`,
+        { headers: { Authorization: `Bearer ${accessToken}` } },
+      );
+      if (!res.ok) return [];
+      try {
+        const data = (await res.json()) as { employeeCode: string; name: string }[];
+        return Array.isArray(data) ? data : [];
+      } catch {
+        return [];
+      }
+    },
+    [apiBase, accessToken],
+  );
+
+  const resolveUnitScopedHead = useCallback(
+    async (role: Role, preferredName: string | undefined, unitCode: string) => {
+      const roleCode = appRoleToHodRoleCode(role);
+      const unit = unitCode.trim();
+      if (!roleCode || !unit || !apiBase || !accessToken) return null;
+      const res = await fetch(
+        `${apiBase}/users/unit-scoped-hods?unitCode=${encodeURIComponent(unit)}&roleCode=${encodeURIComponent(roleCode)}`,
+        { headers: { Authorization: `Bearer ${accessToken}` } },
+      );
+      if (!res.ok) return null;
+      try {
+        const list = (await res.json()) as { employeeCode: string; name: string }[];
+        if (!Array.isArray(list) || list.length === 0) return null;
+        const want = String(preferredName ?? '').trim();
+        if (want) {
+          const hit = list.find((u) => namesLooselyMatch(u.name, want));
+          if (hit) return hit;
+        }
+        // Unit may have one primary head; if several are scoped, use first (sorted by name).
+        return list[0] ?? null;
+      } catch {
+        return null;
+      }
+    },
+    [apiBase, accessToken],
+  );
+
+  const getSuggestionApprovalContext = useCallback(() => {
+    const sug = (initialData || {}) as Suggestion;
+    const fd = (formDataRef.current || {}) as Partial<Suggestion>;
+    return {
+      unit: String(
+        sug.assignedUnit || sug.unit || fd.unit || '',
+      ).trim(),
+      department: String(
+        sug.assignedDepartment || sug.department || fd.department || '',
+      ).trim(),
+      departmentApprovals: Array.isArray(sug.departmentApprovals)
+        ? sug.departmentApprovals
+        : Array.isArray(fd.departmentApprovals)
+          ? fd.departmentApprovals
+          : [],
+      requiredApprovals: Array.isArray(sug.requiredApprovals)
+        ? sug.requiredApprovals
+        : Array.isArray(fd.requiredApprovals)
+          ? fd.requiredApprovals
+          : [],
+      hodApproverNames: {
+        ...(sug.hodApproverNames || {}),
+        ...(fd.hodApproverNames || {}),
+      } as Partial<Record<Role, string>>,
+    };
+  }, [initialData]);
+
+  /** Prepared By Emp. No → implementer name + assigned dept HOD / finance / ops heads on this idea. */
+  const applyPreparedByEmployeeLookup = useCallback(
+    async (employeeIdRaw: string) => {
+      const lookupSeq = ++preparedByLookupSeqRef.current;
+      const isStale = () => lookupSeq !== preparedByLookupSeqRef.current;
+
+      const employeeId = clampSlide2Text(
+        employeeIdRaw,
+        SLIDE2_TEXT_LIMITS.signatureEmployeeId,
+      );
+      const ctx = getSuggestionApprovalContext();
+
+      if (!employeeId.trim()) {
+        if (isStale()) return;
+        setFormData((prev: any) => ({
+          ...prev,
+          templateSigPreparedByEmployeeId: '',
+          templateSigPreparedBy: '',
+          templateSigValidatedDeptHodEmployeeId: '',
+          templateSigValidatedDeptHod: '',
+          templateSigValidatedFinanceEmployeeId: '',
+          templateSigValidatedFinance: '',
+          templateSigApprovedOpsHeadEmployeeId: '',
+          templateSigApprovedOpsHead: '',
+        }));
+        return;
+      }
+
+      const profile = await fetchHrmsEmployee(employeeId);
+      if (isStale()) return;
+      const unitForLookup =
+        ctx.unit || String(profile?.unit || '').trim();
+      const ideaDept =
+        ctx.department || String(profile?.department || '').trim();
+
+      const patch: Record<string, string> = {
+        templateSigPreparedByEmployeeId: employeeId,
+        templateSigPreparedBy: profile?.name
+          ? clampSlide2Text(profile.name, SLIDE2_TEXT_LIMITS.signatureName)
+          : '',
+        templateSigValidatedDeptHodEmployeeId: '',
+        templateSigValidatedDeptHod: '',
+        templateSigValidatedFinanceEmployeeId: '',
+        templateSigValidatedFinance: '',
+        templateSigApprovedOpsHeadEmployeeId: '',
+        templateSigApprovedOpsHead: '',
+      };
+
+      const deptApprovals = ctx.departmentApprovals;
+      const deptSlot =
+        deptApprovals.find((row) =>
+          namesLooselyMatch(String(row?.department ?? ''), ideaDept),
+        ) ?? deptApprovals[0];
+
+      if (deptSlot) {
+        let deptCode = String(deptSlot.approverEmployeeCode ?? '').trim();
+        const deptName = String(deptSlot.approverName ?? '').trim();
+        if (!deptCode && deptName && unitForLookup && ideaDept) {
+          const members = await fetchUnitDepartmentMembers(unitForLookup, ideaDept);
+          if (isStale()) return;
+          const hit =
+            members.find((m) => namesLooselyMatch(m.name, deptName)) ??
+            (members.length === 1 ? members[0] : null);
+          if (hit) deptCode = String(hit.employeeCode || '').trim();
+        }
+        if (deptCode) {
+          patch.templateSigValidatedDeptHodEmployeeId = clampSlide2Text(
+            deptCode,
+            SLIDE2_TEXT_LIMITS.signatureEmployeeId,
+          );
+        }
+        if (deptName) {
+          patch.templateSigValidatedDeptHod = clampSlide2Text(
+            deptName,
+            SLIDE2_TEXT_LIMITS.signatureName,
+          );
+        }
+      } else if (unitForLookup && ideaDept) {
+        const members = await fetchUnitDepartmentMembers(unitForLookup, ideaDept);
+        if (isStale()) return;
+        const assigned = members[0];
+        if (assigned?.name) {
+          patch.templateSigValidatedDeptHod = clampSlide2Text(
+            assigned.name,
+            SLIDE2_TEXT_LIMITS.signatureName,
+          );
+          if (assigned.employeeCode) {
+            patch.templateSigValidatedDeptHodEmployeeId = clampSlide2Text(
+              assigned.employeeCode,
+              SLIDE2_TEXT_LIMITS.signatureEmployeeId,
+            );
+          }
+        }
+      }
+
+      if (!patch.templateSigValidatedDeptHod) {
+        const hrmsHod = String(profile?.hod ?? '').trim();
+        if (hrmsHod) {
+          const hodLooksLikeId = /^\d{4,}$/.test(hrmsHod);
+          if (hodLooksLikeId) {
+            const hodProfile = await fetchHrmsEmployee(hrmsHod);
+            if (isStale()) return;
+            patch.templateSigValidatedDeptHod = hodProfile?.name
+              ? clampSlide2Text(hodProfile.name, SLIDE2_TEXT_LIMITS.signatureName)
+              : clampSlide2Text(hrmsHod, SLIDE2_TEXT_LIMITS.signatureName);
+            if (hodProfile?.employeeId) {
+              patch.templateSigValidatedDeptHodEmployeeId = clampSlide2Text(
+                hodProfile.employeeId,
+                SLIDE2_TEXT_LIMITS.signatureEmployeeId,
+              );
+            }
+          } else {
+            patch.templateSigValidatedDeptHod = clampSlide2Text(
+              hrmsHod,
+              SLIDE2_TEXT_LIMITS.signatureName,
+            );
+          }
+        }
+      }
+
+      const required = ctx.requiredApprovals;
+      const hodNames = ctx.hodApproverNames;
+      const hdCostTotal = sumHorizontalDeploymentCostRowsInr(
+        formData.horizontalDeploymentCostRows,
+      );
+      const showFinance =
+        hdCostTotal > FINANCE_APPROVAL_COST_THRESHOLD_INR ||
+        required.includes(Role.FINANCE_HOD);
+
+      if (showFinance) {
+        const preferred = String(hodNames[Role.FINANCE_HOD] ?? '').trim();
+        if (preferred) {
+          patch.templateSigValidatedFinance = clampSlide2Text(
+            preferred,
+            SLIDE2_TEXT_LIMITS.signatureName,
+          );
+        }
+        if (unitForLookup && !patch.templateSigValidatedFinance) {
+          const fin = await resolveUnitScopedHead(
+            Role.FINANCE_HOD,
+            preferred || undefined,
+            unitForLookup,
+          );
+          if (isStale()) return;
+          if (fin) {
+            patch.templateSigValidatedFinanceEmployeeId = clampSlide2Text(
+              fin.employeeCode,
+              SLIDE2_TEXT_LIMITS.signatureEmployeeId,
+            );
+            patch.templateSigValidatedFinance = clampSlide2Text(
+              fin.name,
+              SLIDE2_TEXT_LIMITS.signatureName,
+            );
+          }
+        }
+        if (unitForLookup && !patch.templateSigValidatedFinance) {
+          for (const deptTry of ['Finance and Accounts', 'Finance', 'Accounts']) {
+            const members = await fetchUnitDepartmentMembers(unitForLookup, deptTry);
+            if (isStale()) return;
+            const hit = members[0];
+            if (hit?.name) {
+              patch.templateSigValidatedFinance = clampSlide2Text(
+                hit.name,
+                SLIDE2_TEXT_LIMITS.signatureName,
+              );
+              if (hit.employeeCode) {
+                patch.templateSigValidatedFinanceEmployeeId = clampSlide2Text(
+                  hit.employeeCode,
+                  SLIDE2_TEXT_LIMITS.signatureEmployeeId,
+                );
+              }
+              break;
+            }
+          }
+        }
+      }
+
+      {
+        const preferred = String(hodNames[Role.OPS_HEAD] ?? '').trim();
+        if (preferred) {
+          patch.templateSigApprovedOpsHead = clampSlide2Text(
+            preferred,
+            SLIDE2_TEXT_LIMITS.signatureName,
+          );
+        }
+        if (unitForLookup && !patch.templateSigApprovedOpsHead) {
+          const ops = await resolveUnitScopedHead(
+            Role.OPS_HEAD,
+            preferred || undefined,
+            unitForLookup,
+          );
+          if (isStale()) return;
+          if (ops) {
+            patch.templateSigApprovedOpsHeadEmployeeId = clampSlide2Text(
+              ops.employeeCode,
+              SLIDE2_TEXT_LIMITS.signatureEmployeeId,
+            );
+            patch.templateSigApprovedOpsHead = clampSlide2Text(
+              ops.name,
+              SLIDE2_TEXT_LIMITS.signatureName,
+            );
+          }
+        }
+        if (unitForLookup && !patch.templateSigApprovedOpsHead) {
+          for (const deptTry of [
+            'Operations',
+            'Medical Admin',
+            'Medical Administration',
+          ]) {
+            const members = await fetchUnitDepartmentMembers(unitForLookup, deptTry);
+            if (isStale()) return;
+            const hit = members[0];
+            if (hit?.name) {
+              patch.templateSigApprovedOpsHead = clampSlide2Text(
+                hit.name,
+                SLIDE2_TEXT_LIMITS.signatureName,
+              );
+              if (hit.employeeCode) {
+                patch.templateSigApprovedOpsHeadEmployeeId = clampSlide2Text(
+                  hit.employeeCode,
+                  SLIDE2_TEXT_LIMITS.signatureEmployeeId,
+                );
+              }
+              break;
+            }
+          }
+        }
+      }
+
+      if (isStale()) return;
+      setFormData((prev: any) => ({ ...prev, ...patch }));
+    },
+    [
+      getSuggestionApprovalContext,
+      formData.horizontalDeploymentCostRows,
+      fetchHrmsEmployee,
+      fetchUnitDepartmentMembers,
+      resolveUnitScopedHead,
+    ],
   );
 
   const updateTeamMemberRow = useCallback(
@@ -1530,6 +2161,24 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
       cancelled = true;
     };
   }, [mode, initialData, fetchHrmsEmployee]);
+
+  // Default Prepared By + assigned approvers when opening implement template
+  useEffect(() => {
+    if (mode !== 'implement') return;
+    if (preparedByBootstrappedRef.current) return;
+    const implCode = String((initialData as any)?.assignedImplementerCode || '').trim();
+    if (!implCode) return;
+
+    const already = String(formDataRef.current?.templateSigPreparedByEmployeeId || '').trim();
+    if (already) {
+      preparedByBootstrappedRef.current = true;
+      return;
+    }
+
+    preparedByBootstrappedRef.current = true;
+    void applyPreparedByEmployeeLookup(implCode);
+  }, [mode, initialData, applyPreparedByEmployeeLookup]);
+
   const visibleResultKpis = useMemo(() => {
     const all: ResultKpi[] = Array.isArray(formData.resultKpis) ? formData.resultKpis : [];
     const start = kpiPageIdx * 3;
@@ -1795,25 +2444,13 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
       if (!String(fd.quantitativeResults ?? '').trim()) errs.push('Slide 2 — Quantitative results is required.');
       if (!String(fd.horizontalDeployment ?? '').trim()) errs.push('Slide 2 — Horizontal deployment is required.');
 
-      const hdCostRows = Array.isArray(fd.horizontalDeploymentCostRows)
-        ? (fd.horizontalDeploymentCostRows as { item?: string; cost?: string }[])
-        : [];
-      if (hdCostRows.length === 0) {
-        errs.push('Slide 2 — Add at least one horizontal deployment cost row (Items / Cost).');
-      }
-      hdCostRows.forEach((r, i) => {
-        const n = i + 1;
-        if (!String(r?.item ?? '').trim()) {
-          errs.push(`Slide 2 — Horizontal deployment row ${n}: item is required.`);
-        }
-        const costStr = String(r?.cost ?? '').trim();
-        if (!costStr) {
-          errs.push(`Slide 2 — Horizontal deployment row ${n}: cost (₹) is required.`);
-        } else {
-          const val = Number(costStr.replace(/,/g, ''));
-          if (Number.isNaN(val) || val < 0) {
-            errs.push(`Slide 2 — Horizontal deployment row ${n}: enter a valid cost.`);
-          }
+      const hdCostRows = normalizeHorizontalDeploymentCostRows(fd.horizontalDeploymentCostRows);
+      hdCostRows.forEach((r) => {
+        const costStr = String(r.cost ?? '').trim();
+        if (!costStr) return;
+        const val = Number(costStr.replace(/,/g, ''));
+        if (Number.isNaN(val) || val < 0) {
+          errs.push(`Slide 2 — Horizontal deployment (${r.item}): enter a valid cost (₹).`);
         }
       });
 
@@ -1827,13 +2464,14 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
       }
 
       if (!String(fd.templateSigPreparedBy ?? '').trim()) errs.push('Slide 2 — Prepared By name is required.');
-      if (!String(fd.templateSigReportingTo ?? '').trim()) errs.push('Slide 2 — Reporting to is required.');
       if (!String(fd.templateSigValidatedDeptHod ?? '').trim()) {
         errs.push('Slide 2 — Validated By (Dept / HOD) name is required.');
       }
       if (!String(fd.templateSigApprovedOpsHead ?? '').trim()) {
         errs.push('Slide 2 — Approved By (Ops Head / Medical Admin) name is required.');
       }
+
+      appendSlide2TextLimitErrors(fd, errs, whyWhyVisibleCount);
 
       const bas = Array.isArray(fd.beforeAfterSlides) ? fd.beforeAfterSlides : [];
       bas.forEach((row: any, i: number) => {
@@ -1995,10 +2633,25 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
     if (financeSignatureEnabled) return;
     setFormData((prev: any) => {
       const cur = String(prev.templateSigValidatedFinance ?? '').trim();
-      if (!cur) return prev;
-      return { ...prev, templateSigValidatedFinance: '' };
+      const curId = String(prev.templateSigValidatedFinanceEmployeeId ?? '').trim();
+      if (!cur && !curId) return prev;
+      return {
+        ...prev,
+        templateSigValidatedFinance: '',
+        templateSigValidatedFinanceEmployeeId: '',
+      };
     });
   }, [financeSignatureEnabled]);
+
+  // When finance column appears (cost > ₹5L), fill finance head if still empty
+  useEffect(() => {
+    if (!financeSignatureEnabled) return;
+    const prepId = String(formDataRef.current?.templateSigPreparedByEmployeeId || '').trim();
+    if (!prepId) return;
+    const finName = String(formDataRef.current?.templateSigValidatedFinance || '').trim();
+    if (finName) return;
+    void applyPreparedByEmployeeLookup(prepId);
+  }, [financeSignatureEnabled, applyPreparedByEmployeeLookup]);
 
   return (
     <div className="bg-white rounded-xl shadow-lg border border-gray-300 overflow-hidden w-full min-w-0 max-w-full">
@@ -2015,9 +2668,11 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
           const tag = el.tagName?.toLowerCase?.() || '';
           if (tag === 'textarea') return;
           if (tag === 'input') {
-            const type = ((el as HTMLInputElement).type || '').toLowerCase();
+            const input = el as HTMLInputElement;
+            const type = (input.type || '').toLowerCase();
             // allow Enter for explicit "action" inputs if any exist
             if (type === 'submit' || type === 'button' || type === 'checkbox' || type === 'radio') return;
+            if (input.dataset.preparedByLookup === 'true') return;
             e.preventDefault();
           }
         }}
@@ -2037,37 +2692,29 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                     <div>
                       <label className="block text-[11px] font-extrabold text-gray-700 uppercase tracking-wide mb-1">Unit</label>
-                      <select
+                      <SearchableSelect
+                        aria-label="Unit"
                         disabled={!isCreateMode || lockUnitDepartment}
-                        className="w-full bg-white border border-gray-300 rounded-md px-3 py-2.5 text-sm focus:ring-2 focus:ring-kauvery-purple outline-none text-gray-900 font-medium"
                         value={formData.unit}
-                        onChange={e => setFormData({...formData, unit: e.target.value})}
-                        required
-                      >
-                        <option value="">Select Unit...</option>
-                        {unitOptions.map(u => (
-                          <option key={u.id} value={u.code}>
-                            {u.name}
-                          </option>
-                        ))}
-                      </select>
+                        onChange={(v) => setFormData({ ...formData, unit: v })}
+                        emptyOptionLabel="Select Unit..."
+                        options={unitOptions.map((u) => ({ value: u.code, label: u.name }))}
+                        placeholder="Search units…"
+                        inputClassName="w-full bg-white border border-gray-300 rounded-md px-3 py-2.5 text-sm focus:ring-2 focus:ring-kauvery-purple outline-none text-gray-900 font-medium disabled:bg-gray-100 disabled:text-gray-500"
+                      />
                     </div>
                     <div>
                       <label className="block text-[11px] font-extrabold text-gray-700 uppercase tracking-wide mb-1">Department</label>
-                      <select
-                        required
+                      <SearchableSelect
+                        aria-label="Department"
                         disabled={!isCreateMode || lockUnitDepartment}
-                        className="w-full bg-white border border-gray-300 rounded-md px-3 py-2.5 text-sm focus:ring-2 focus:ring-kauvery-purple outline-none text-gray-900 font-medium"
                         value={formData.department}
-                        onChange={e => setFormData({...formData, department: e.target.value})}
-                      >
-                        <option value="">Select...</option>
-                        {departmentOptions.map(d => (
-                          <option key={d.id} value={d.name}>
-                            {d.name}
-                          </option>
-                        ))}
-                      </select>
+                        onChange={(v) => setFormData({ ...formData, department: v })}
+                        emptyOptionLabel="Select..."
+                        options={departmentOptions.map((d) => ({ value: d.name, label: d.name }))}
+                        placeholder="Search departments…"
+                        inputClassName="w-full bg-white border border-gray-300 rounded-md px-3 py-2.5 text-sm focus:ring-2 focus:ring-kauvery-purple outline-none text-gray-900 font-medium disabled:bg-gray-100 disabled:text-gray-500"
+                      />
                     </div>
                   </div>
 
@@ -2433,33 +3080,40 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
               <div className="grid grid-cols-12 border-b border-slate-500 text-[11px] font-bold text-slate-800 items-stretch bg-slate-50/50">
                 <div className="col-span-2 border-r border-slate-400 p-2 flex flex-col gap-1.5 min-h-[5.25rem] bg-white">
                   <span className="shrink-0 leading-tight text-slate-700 font-bold text-[11px]">Category:</span>
-                  <select
-                    className={`${KTZ_SELECT} mt-auto`}
+                  <SearchableSelect
+                    className="mt-auto w-full"
+                    aria-label="Kaizen category"
                     value={formData.category || 'Clinical'}
-                    onChange={e => setFormData({ ...formData, category: e.target.value })}
-                  >
-                    <option value="Clinical">Clinical</option>
-                    <option value="Supportive">Supportive</option>
-                  </select>
+                    onChange={(v) => setFormData({ ...formData, category: v })}
+                    options={[
+                      { value: 'Clinical', label: 'Clinical' },
+                      { value: 'Supportive', label: 'Supportive' },
+                    ]}
+                    placeholder="Search…"
+                    inputClassName={`${KTZ_SELECT} pr-8`}
+                    maxListHeightClass="max-h-40"
+                  />
                 </div>
                 <div className="col-span-2 border-r border-slate-400 p-2 flex flex-col gap-1.5 min-h-[5.25rem] bg-white">
                   <span className="shrink-0 leading-tight text-slate-700 font-bold text-[11px]">Unit:</span>
-                  <textarea
+                  <Slide2Textarea
                     spellCheck={false}
                     rows={2}
+                    limit={SLIDE2_TEXT_LIMITS.unit}
                     className={`${KTZ_TEXTAREA} flex-1 min-h-[2.5rem]`}
                     value={formData.unit || ''}
-                    onChange={e => setFormData({ ...formData, unit: e.target.value })}
+                    onValueChange={(unit) => setFormData({ ...formData, unit })}
                   />
                 </div>
                 <div className="col-span-2 border-r border-slate-400 p-2 flex flex-col gap-1.5 min-h-[5.25rem] bg-white">
                   <span className="shrink-0 leading-tight text-slate-700 font-bold text-[11px]">Area / Location:</span>
-                  <textarea
+                  <Slide2Textarea
                     spellCheck={false}
                     rows={2}
+                    limit={SLIDE2_TEXT_LIMITS.area}
                     className={`${KTZ_TEXTAREA} flex-1 min-h-[2.5rem]`}
                     value={formData.area || ''}
-                    onChange={e => setFormData({ ...formData, area: e.target.value })}
+                    onValueChange={(area) => setFormData({ ...formData, area })}
                   />
                 </div>
                 <div className="col-span-2 border-r border-slate-400 p-2 flex flex-col gap-1.5 min-h-[5.25rem] bg-white">
@@ -2512,9 +3166,10 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                             {label}:
                           </div>
                           <div className="p-1 flex min-h-0 bg-white">
-                            <textarea
+                            <Slide2Textarea
                               spellCheck={false}
                               rows={2}
+                              limit={SLIDE2_TEXT_LIMITS.problem}
                               className={`${KTZ_TEXTAREA} min-h-[2.75rem]`}
                               value={
                                 idx === 0
@@ -2523,9 +3178,9 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                                     ? formData.problem?.where || ''
                                     : formData.problem?.when || ''
                               }
-                              onChange={e => {
+                              onValueChange={(v) => {
                                 const key = idx === 0 ? 'what' : idx === 1 ? 'where' : 'when';
-                                handleNestedChange('problem', key, e.target.value);
+                                handleNestedChange('problem', key, v);
                               }}
                             />
                           </div>
@@ -2553,15 +3208,16 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                             {label}:
                           </div>
                           <div className="p-1 flex min-h-0 bg-white">
-                            <textarea
+                            <Slide2Textarea
                               spellCheck={false}
                               rows={2}
+                              limit={idx === 0 ? SLIDE2_TEXT_LIMITS.problem : SLIDE2_TEXT_LIMITS.howMuch}
                               className={`${KTZ_TEXTAREA} min-h-[2.75rem]`}
                               value={idx === 0 ? formData.problem?.how || '' : formData.howMuch || ''}
-                              onChange={e =>
+                              onValueChange={(v) =>
                                 idx === 0
-                                  ? handleNestedChange('problem', 'how', e.target.value)
-                                  : setFormData({ ...formData, howMuch: e.target.value })
+                                  ? handleNestedChange('problem', 'how', v)
+                                  : setFormData({ ...formData, howMuch: v })
                               }
                             />
                           </div>
@@ -2594,12 +3250,13 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                           Why?
                         </div>
                         <div className="p-1 flex min-h-0">
-                          <textarea
+                          <Slide2Textarea
                             spellCheck={false}
                             rows={2}
+                            limit={SLIDE2_TEXT_LIMITS.whyWhy}
                             className={`${KTZ_TEXTAREA} min-h-[2.75rem]`}
                             value={formData.analysis?.[`why${n}`] || ''}
-                            onChange={(e) => handleNestedChange('analysis', `why${n}`, e.target.value)}
+                            onValueChange={(v) => handleNestedChange('analysis', `why${n}`, v)}
                           />
                         </div>
                       </div>
@@ -2618,22 +3275,26 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                     <div className="grid grid-cols-2 text-xs border-b border-slate-300 items-stretch min-h-[8rem] bg-white">
                       <div className="p-2 border-r border-slate-300 flex flex-col gap-1.5 min-h-0">
                         <span className="text-kauvery-purple font-black shrink-0 text-[11px]">Root Cause:</span>
-                        <textarea
+                        <Slide2Textarea
                           spellCheck={false}
                           rows={3}
+                          limit={SLIDE2_TEXT_LIMITS.rootCause}
                           className={`${KTZ_TEXTAREA} flex-1 min-h-[4rem]`}
                           value={formData.analysis?.rootCause || ''}
-                          onChange={e => handleNestedChange('analysis', 'rootCause', e.target.value)}
+                          onValueChange={(v) => handleNestedChange('analysis', 'rootCause', v)}
                         />
                       </div>
                       <div className="p-2 flex flex-col gap-1.5 min-h-0">
                         <span className="text-kauvery-purple font-black shrink-0 text-[11px]">Idea to Eliminate:</span>
-                        <textarea
+                        <Slide2Textarea
                           spellCheck={false}
                           rows={3}
+                          limit={SLIDE2_TEXT_LIMITS.ideaToEliminate}
                           className={`${KTZ_TEXTAREA} flex-1 min-h-[4rem]`}
                           value={formData.ideaToEliminate || ''}
-                          onChange={e => setFormData({ ...formData, ideaToEliminate: e.target.value })}
+                          onValueChange={(ideaToEliminate) =>
+                            setFormData({ ...formData, ideaToEliminate })
+                          }
                         />
                       </div>
                     </div>
@@ -2643,11 +3304,12 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                     <div className="text-emerald-800 font-black text-[11px] mb-1.5 uppercase tracking-wide">
                       Counter Measure
                     </div>
-                    <textarea
+                    <Slide2Textarea
                       spellCheck={false}
+                      limit={SLIDE2_TEXT_LIMITS.counterMeasure}
                       className={`${KTZ_TEXTAREA} min-h-[5rem] ${editedFieldSet.has('counterMeasure') ? 'border-amber-400 bg-amber-50/80 ring-1 ring-amber-200' : ''}`}
                       value={formData.counterMeasure || ''}
-                      onChange={e => setFormData({ ...formData, counterMeasure: e.target.value })}
+                      onValueChange={(counterMeasure) => setFormData({ ...formData, counterMeasure })}
                     />
                   </div>
                 </div>
@@ -2663,8 +3325,8 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                     <span className="font-bold text-kauvery-purple">C</span> Cost ·{' '}
                     <span className="font-bold text-kauvery-purple">D</span> Delivery ·{' '}
                     <span className="font-bold text-kauvery-purple">S</span> Safety ·{' '}
-                    <span className="font-bold text-kauvery-purple">E</span> Environment/Energy ·{' '}
-                    <span className="font-bold text-kauvery-purple">M</span> Morale
+                    <span className="font-bold text-kauvery-purple">M</span> Morale ·{' '}
+                    <span className="font-bold text-kauvery-purple">E</span> Environment/Energy
                   </div>
                   <div className="grid grid-cols-7 text-[11px] font-black border-b border-black bg-white">
                     {(
@@ -2674,8 +3336,8 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                         ['C', 'cost'],
                         ['D', 'delivery'],
                         ['S', 'safety'],
-                        ['E', 'environment'],
                         ['M', 'morale'],
+                        ['E', 'environment'],
                       ] as const
                     ).map(([letter, mapKey]) => {
                       const level = readPqcdsemLevel(formData.expectedBenefits?.[mapKey]);
@@ -2729,14 +3391,15 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                       ))}
                     </div>
                     {formData.standardization?.others && (
-                      <textarea
+                      <Slide2Textarea
                         spellCheck={false}
                         rows={2}
+                        limit={SLIDE2_TEXT_LIMITS.standardizationOthers}
                         placeholder="Others (specify)"
                         className={`${KTZ_TEXTAREA} mt-2 min-h-[2.75rem]`}
                         value={formData.standardization?.othersDescription || ''}
-                        onChange={e =>
-                          handleNestedChange('standardization', 'othersDescription', e.target.value)
+                        onValueChange={(v) =>
+                          handleNestedChange('standardization', 'othersDescription', v)
                         }
                       />
                     )}
@@ -2746,12 +3409,15 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                     Quantitative Results
                   </div>
                   <div className="p-3 border-b border-slate-200 bg-white">
-                    <textarea
+                    <Slide2Textarea
                       spellCheck={false}
+                      limit={SLIDE2_TEXT_LIMITS.quantitativeResults}
                       placeholder="Enter measurable outcomes..."
                       className={`${KTZ_TEXTAREA} min-h-[5.5rem] ${editedFieldSet.has('quantitativeResults') ? 'border-amber-400 bg-amber-50/80 ring-1 ring-amber-200' : ''}`}
                       value={formData.quantitativeResults || ''}
-                      onChange={e => setFormData({ ...formData, quantitativeResults: e.target.value })}
+                      onValueChange={(quantitativeResults) =>
+                        setFormData({ ...formData, quantitativeResults })
+                      }
                     />
                   </div>
 
@@ -2762,112 +3428,55 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                     <p className="text-[10px] text-slate-600 leading-snug mb-2 font-medium">
                       Yes / No — If yes, describe where this Kaizen was replicated or extended.
                     </p>
-                    <textarea
+                    <Slide2Textarea
                       spellCheck={false}
+                      limit={SLIDE2_TEXT_LIMITS.horizontalDeployment}
                       placeholder="e.g., rolled out to sister units, other departments…"
                       className={`${KTZ_TEXTAREA} min-h-[4.25rem] ${editedFieldSet.has('horizontalDeployment') ? 'border-amber-400 bg-amber-50/80 ring-1 ring-amber-200' : ''}`}
                       value={formData.horizontalDeployment || ''}
-                      onChange={e => setFormData({ ...formData, horizontalDeployment: e.target.value })}
+                      onValueChange={(horizontalDeployment) =>
+                        setFormData({ ...formData, horizontalDeployment })
+                      }
                     />
 
                     <div className="mt-3 border border-slate-300 rounded-sm overflow-hidden bg-slate-50/80">
                       <div
-                        className={`grid ${isExportCaptureMode ? 'grid-cols-[1fr_7rem]' : 'grid-cols-[1fr_7rem_auto]'} gap-1 items-center px-2 py-1.5 bg-slate-200/90 border-b border-slate-300 text-[10px] font-black text-slate-800 uppercase tracking-wide`}
+                        className="grid grid-cols-[1fr_7rem] gap-1 items-center px-2 py-1.5 bg-slate-200/90 border-b border-slate-300 text-[10px] font-black text-slate-800 uppercase tracking-wide"
                       >
-                        <span>Items</span>
+                        <span>Category</span>
                         <span className="text-center">Cost (₹)</span>
-                        {!isExportCaptureMode && <span className="w-7 shrink-0" aria-hidden />}
                       </div>
-                      {(Array.isArray(formData.horizontalDeploymentCostRows)
-                        ? formData.horizontalDeploymentCostRows
-                        : [{ item: '', cost: '' }]
-                      ).map((row: { item: string; cost: string }, idx: number) => {
-                        const list = Array.isArray(formData.horizontalDeploymentCostRows)
-                          ? formData.horizontalDeploymentCostRows
-                          : [{ item: '', cost: '' }];
-                        return (
+                      {normalizeHorizontalDeploymentCostRows(formData.horizontalDeploymentCostRows).map(
+                        (row, idx) => (
                           <div
-                            key={idx}
-                            className={`grid ${isExportCaptureMode ? 'grid-cols-[1fr_7rem]' : 'grid-cols-[1fr_7rem_auto]'} gap-1 items-center px-2 py-1 border-b border-slate-200 last:border-b-0 bg-white`}
+                            key={row.item}
+                            className="grid grid-cols-[1fr_7rem] gap-1 items-center px-2 py-1 border-b border-slate-200 last:border-b-0 bg-white"
                           >
-                            <input
-                              type="text"
-                              placeholder="Item"
-                              className="w-full border border-slate-400 rounded-sm px-2 py-1 text-[11px] text-slate-900"
-                              value={row.item}
-                              onChange={(e) => {
-                                const v = e.target.value;
-                                setFormData((prev: any) => {
-                                  const rows = [...(Array.isArray(prev.horizontalDeploymentCostRows) ? prev.horizontalDeploymentCostRows : [])];
-                                  while (rows.length <= idx) rows.push({ item: '', cost: '' });
-                                  rows[idx] = { ...rows[idx], item: v };
-                                  return { ...prev, horizontalDeploymentCostRows: rows };
-                                });
-                              }}
-                            />
-                            <input
+                            <div className="px-2 py-1 text-[11px] font-semibold text-slate-800">
+                              {row.item}
+                            </div>
+                            <Slide2Input
                               type="text"
                               inputMode="decimal"
+                              limit={SLIDE2_TEXT_LIMITS.hdCost}
                               placeholder="0"
                               className="w-full border border-slate-400 rounded-sm px-2 py-1 text-[11px] text-slate-900 tabular-nums text-right"
                               value={row.cost}
-                              onChange={(e) => {
-                                const v = e.target.value;
+                              showCount={false}
+                              onValueChange={(v) => {
                                 setFormData((prev: any) => {
-                                  const rows = [...(Array.isArray(prev.horizontalDeploymentCostRows) ? prev.horizontalDeploymentCostRows : [])];
-                                  while (rows.length <= idx) rows.push({ item: '', cost: '' });
+                                  const rows = normalizeHorizontalDeploymentCostRows(
+                                    prev.horizontalDeploymentCostRows,
+                                  );
                                   rows[idx] = { ...rows[idx], cost: v };
                                   return { ...prev, horizontalDeploymentCostRows: rows };
                                 });
                               }}
                             />
-                            {!isExportCaptureMode && (
-                              <button
-                                type="button"
-                                title={list.length <= 1 ? 'At least one row' : 'Remove row'}
-                                disabled={list.length <= 1}
-                                onClick={() => {
-                                  if (list.length <= 1) return;
-                                  setFormData((prev: any) => {
-                                    const rows = [...(Array.isArray(prev.horizontalDeploymentCostRows) ? prev.horizontalDeploymentCostRows : [])];
-                                    rows.splice(idx, 1);
-                                    return {
-                                      ...prev,
-                                      horizontalDeploymentCostRows: rows.length ? rows : [{ item: '', cost: '' }],
-                                    };
-                                  });
-                                }}
-                                className="flex size-7 shrink-0 items-center justify-center rounded border border-slate-300 bg-white text-slate-500 hover:bg-red-50 hover:text-red-700 hover:border-red-200 disabled:opacity-35 disabled:hover:bg-white disabled:hover:text-slate-500"
-                                aria-label="Remove row"
-                              >
-                                <span className="material-icons-round text-[16px] leading-none">close</span>
-                              </button>
-                            )}
                           </div>
-                        );
-                      })}
-                      <div className="flex items-center justify-between gap-2 px-2 py-2 bg-slate-100 border-t border-slate-300">
-                        {!isExportCaptureMode && (
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setFormData((prev: any) => ({
-                                ...prev,
-                                horizontalDeploymentCostRows: [
-                                  ...(Array.isArray(prev.horizontalDeploymentCostRows)
-                                    ? prev.horizontalDeploymentCostRows
-                                    : []),
-                                  { item: '', cost: '' },
-                                ],
-                              }))
-                            }
-                            className="inline-flex items-center gap-0.5 rounded border border-kauvery-purple bg-white px-2 py-1 text-[10px] font-black text-kauvery-purple hover:bg-purple-50"
-                            aria-label="Add item row"
-                          >
-                            <span className="material-icons-round text-[16px] leading-none">add</span>
-                            Add row
-                          </button>
-                        )}
+                        ),
+                      )}
+                      <div className="flex items-center justify-end gap-2 px-2 py-2 bg-slate-100 border-t border-slate-300">
                         <div className="text-right">
                           <div className="text-[9px] font-bold text-slate-600 uppercase tracking-wide">Total (₹)</div>
                           <div className="text-sm font-black text-slate-900 tabular-nums">
@@ -2895,8 +3504,7 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                     Validated By
                   </div>
                   <div className="col-span-3 bg-kauvery-purple text-white font-black text-center py-2.5 px-1 flex items-center justify-center leading-tight">
-                    Approved By:{' '}
-                    <span className="font-normal text-white/90 ml-1">FD — Ops. Head / Medical Admin</span>
+                    Approved By
                   </div>
                 </div>
                 <div className="grid grid-cols-12 border-b border-slate-400 text-[9px] sm:text-[10px] bg-white">
@@ -2923,20 +3531,18 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                   </div>
                 </div>
                 <div className="grid grid-cols-12 border-b border-slate-500 text-xs items-stretch bg-white">
-                  <div className="col-span-3 border-r border-slate-400 p-2 flex flex-col gap-2">
-                    <input
-                      type="text"
-                      className={`${KTZ_DATE} bg-white font-semibold`}
-                      placeholder="Name"
-                      value={formData.templateSigPreparedBy ?? ''}
-                      onChange={(e) => setFormData({ ...formData, templateSigPreparedBy: e.target.value })}
-                    />
-                    <textarea
-                      spellCheck={false}
-                      placeholder="Reporting to (optional)"
-                      className={`${KTZ_TEXTAREA} min-h-[2.25rem] text-[10px]`}
-                      value={formData.templateSigReportingTo ?? ''}
-                      onChange={(e) => setFormData({ ...formData, templateSigReportingTo: e.target.value })}
+                  <div className="col-span-3 border-r border-slate-400 p-2">
+                    <Slide2PreparedByField
+                      employeeId={formData.templateSigPreparedByEmployeeId ?? ''}
+                      name={formData.templateSigPreparedBy ?? ''}
+                      onDraftChange={(raw) =>
+                        setFormData((prev: any) => ({
+                          ...prev,
+                          templateSigPreparedByEmployeeId: raw,
+                          templateSigPreparedBy: '',
+                        }))
+                      }
+                      onLookup={(raw) => void applyPreparedByEmployeeLookup(raw)}
                     />
                   </div>
                   <div
@@ -2944,35 +3550,48 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                       financeSignatureEnabled ? 'col-span-3' : 'col-span-6'
                     }`}
                   >
-                    <input
-                      type="text"
-                      className={`${KTZ_DATE} bg-white font-semibold`}
-                      placeholder="Name / role"
-                      value={formData.templateSigValidatedDeptHod ?? ''}
-                      onChange={(e) => setFormData({ ...formData, templateSigValidatedDeptHod: e.target.value })}
+                    <Slide2SignatureDisplayField
+                      name={formData.templateSigValidatedDeptHod ?? ''}
+                      employeeId={formData.templateSigValidatedDeptHodEmployeeId ?? ''}
+                      placeholder="Name - Emp. No"
+                      onChange={(templateSigValidatedDeptHod, templateSigValidatedDeptHodEmployeeId) =>
+                        setFormData({
+                          ...formData,
+                          templateSigValidatedDeptHod,
+                          templateSigValidatedDeptHodEmployeeId,
+                        })
+                      }
                     />
                   </div>
                   {financeSignatureEnabled && (
-                    <div className="col-span-3 border-r border-slate-400 p-2 flex flex-col">
-                      <input
-                        type="text"
+                    <div className="col-span-3 border-r border-slate-400 p-2">
+                      <Slide2SignatureDisplayField
+                        name={formData.templateSigValidatedFinance ?? ''}
+                        employeeId={formData.templateSigValidatedFinanceEmployeeId ?? ''}
                         disabled={isTemplatePreview}
-                        className={`${KTZ_DATE} bg-white font-semibold`}
-                        placeholder="Name / role"
-                        value={formData.templateSigValidatedFinance ?? ''}
-                        onChange={(e) =>
-                          setFormData({ ...formData, templateSigValidatedFinance: e.target.value })
+                        placeholder="Name - Emp. No"
+                        onChange={(templateSigValidatedFinance, templateSigValidatedFinanceEmployeeId) =>
+                          setFormData({
+                            ...formData,
+                            templateSigValidatedFinance,
+                            templateSigValidatedFinanceEmployeeId,
+                          })
                         }
                       />
                     </div>
                   )}
-                  <div className="col-span-3 p-2 flex flex-col">
-                    <input
-                      type="text"
-                      className={`${KTZ_DATE} bg-white font-semibold`}
-                      placeholder="Name"
-                      value={formData.templateSigApprovedOpsHead ?? ''}
-                      onChange={(e) => setFormData({ ...formData, templateSigApprovedOpsHead: e.target.value })}
+                  <div className="col-span-3 p-2">
+                    <Slide2SignatureDisplayField
+                      name={formData.templateSigApprovedOpsHead ?? ''}
+                      employeeId={formData.templateSigApprovedOpsHeadEmployeeId ?? ''}
+                      placeholder="Name - Emp. No"
+                      onChange={(templateSigApprovedOpsHead, templateSigApprovedOpsHeadEmployeeId) =>
+                        setFormData({
+                          ...formData,
+                          templateSigApprovedOpsHead,
+                          templateSigApprovedOpsHeadEmployeeId,
+                        })
+                      }
                     />
                   </div>
                 </div>

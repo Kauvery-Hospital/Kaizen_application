@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -19,6 +20,34 @@ export class UsersService {
 
   private normalizeDepartmentName(v: string): string {
     return String(v ?? '').trim();
+  }
+
+  /** Departments that use Level-2 functional heads (Head - Finance, etc.), not department HOD rows. */
+  private isFunctionalHeadDepartment(departmentName: string): boolean {
+    return this.functionalRoleCodeForDepartmentHod(departmentName) !== null;
+  }
+
+  private functionalRoleCodeForDepartmentHod(
+    departmentName: string,
+  ): RoleCode | null {
+    const d = this.normalizeDepartmentName(departmentName).toLowerCase();
+    if (!d) return null;
+    if (d.includes('operation') || d.includes('medical admin')) {
+      return 'HOD_OPS' as RoleCode;
+    }
+    if (d.includes('finance')) return RoleCode.HOD_FINANCE;
+    if (d.includes('quality')) return RoleCode.HOD_QUALITY;
+    if (d === 'hr' || d.includes('human resource')) return RoleCode.HOD_HR;
+    if (d.includes('nursing')) return 'HOD_NURSING' as RoleCode;
+    return null;
+  }
+
+  private departmentNameMatchesFunctionalRole(
+    departmentName: string,
+    roleCode: string,
+  ): boolean {
+    const mapped = this.functionalRoleCodeForDepartmentHod(departmentName);
+    return mapped !== null && String(mapped) === String(roleCode).trim().toUpperCase();
   }
 
   private async userHasSuperAdmin(userId: string): Promise<boolean> {
@@ -156,6 +185,40 @@ export class UsersService {
         name: String(u.name ?? '').trim() || emp || uid,
       });
     }
+    // Also include Level-1 department HOD assignments mapped to this functional role (e.g. Operations → HOD_OPS).
+    const deptRows = await (this.prisma as any).departmentHodAssignment.findMany({
+      where: {
+        unitCode: { equals: unitCode, mode: 'insensitive' },
+        user: { isActive: true },
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            employeeCode: true,
+            name: true,
+            isActive: true,
+          },
+        },
+      },
+      take: 500,
+    });
+    for (const row of Array.isArray(deptRows) ? deptRows : []) {
+      const dept = String(row.departmentName ?? '');
+      if (!this.departmentNameMatchesFunctionalRole(dept, rc)) continue;
+      const u = row.user;
+      if (!u?.isActive) continue;
+      const uid = String(u.id);
+      if (seen.has(uid)) continue;
+      seen.add(uid);
+      const emp = String(u.employeeCode ?? '').trim();
+      const key = emp || uid;
+      out.push({
+        employeeCode: key,
+        name: String(u.name ?? '').trim() || emp || uid,
+      });
+    }
+
     out.sort((a, b) => a.name.localeCompare(b.name));
     return out;
   }
@@ -531,6 +594,11 @@ export class UsersService {
     if (!departmentName) {
       throw new NotFoundException('Department not provided');
     }
+    if (this.isFunctionalHeadDepartment(departmentName)) {
+      throw new BadRequestException(
+        'Finance, Operations, and Nursing use functional head roles (Head - Finance, Head - Operations, Head - Nursing) with unit scopes—not department HOD assignment.',
+      );
+    }
     const unitCodes = Array.from(
       new Set(
         (Array.isArray(dto.unitCodes) ? dto.unitCodes : [])
@@ -580,6 +648,7 @@ export class UsersService {
         departmentName: { equals: departmentName, mode: 'insensitive' },
       },
     });
+
     return {
       message: 'Department HOD assignment removed',
       userId,

@@ -126,6 +126,8 @@ model Suggestion {
   department                  String             @db.VarChar(120)
   dateSubmitted               String             @map("date_submitted") @db.VarChar(20)
   employeeName                String             @map("employee_name") @db.VarChar(120)
+  /// Submitter portal / directory employee code (optional for legacy rows).
+  originatorEmployeeCode      String?            @map("originator_employee_code") @db.VarChar(30)
   description                 String
   /// Clinical/Supportive categorization for reporting (from Kaizen template / implementer submission).
   category                    String?            @db.VarChar(20)
@@ -178,6 +180,7 @@ model Suggestion {
   @@unique([source, sourceId], map: "uq_suggestions_source_source_id")
   @@index([department], map: "idx_suggestions_department")
   @@index([employeeName], map: "idx_suggestions_employee_name")
+  @@index([originatorEmployeeCode], map: "idx_suggestions_originator_employee_code")
   @@index([status], map: "idx_suggestions_status")
   @@index([currentStageRole], map: "idx_suggestions_current_stage_role")
   @@index([assignedImplementerCode], map: "idx_suggestions_assigned_implementer_code")

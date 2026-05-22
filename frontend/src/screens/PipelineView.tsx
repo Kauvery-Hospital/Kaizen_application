@@ -4,12 +4,15 @@ import { isL2ApprovalPhase } from '../utils/phasedApproval';
 import { STATUS_COLORS } from '../constants';
 import { employeeStatusStep } from '../utils/kaizenStatusHelp';
 import { effectiveImplementationProgressDisplay } from '../utils/implementerTemplateProgress';
+import { SearchableSelect } from '../components/SearchableSelect';
 
 interface PipelineViewProps {
   suggestions: Suggestion[];
   role: Role;
   currentUserName?: string;
   currentUserEmployeeCode?: string;
+  /** Unit codes assigned to UC / SC (from session). */
+  assignedUnitCodes?: string[];
   onSelect: (s: Suggestion) => void;
 }
 
@@ -108,15 +111,15 @@ export const PipelineView: React.FC<PipelineViewProps> = ({
   role,
   currentUserName,
   currentUserEmployeeCode,
+  assignedUnitCodes = [],
   onSelect,
 }) => {
   const [search, setSearch] = useState('');
+  const [unitFilter, setUnitFilter] = useState<string>('all');
   const [deptFilter, setDeptFilter] = useState<string>('all');
   const [coordinatorTab, setCoordinatorTab] = useState<'pending' | 'approved'>(
     'pending',
   );
-  // For implementers, default to showing all ideas they were assigned to implement (including completed/approved).
-  const [includeImplemented, setIncludeImplemented] = useState(true);
   const [implementerStageFilter, setImplementerStageFilter] = useState<
     'all' | 'started' | 'in_progress' | 'completed'
   >('all');
@@ -146,51 +149,91 @@ export const PipelineView: React.FC<PipelineViewProps> = ({
     return stage === 'completed';
   };
 
+  const roleVisibleSuggestions = useMemo(
+    () =>
+      suggestions.filter((s) => {
+        if (role === Role.IMPLEMENTER) {
+          return isInvolvedAsImplementer(s);
+        }
+        const roleOk = filterByRole(role, s, {
+          currentUserName,
+          currentUserEmployeeCode,
+        });
+        if (!roleOk) return false;
+
+        if (role === Role.UNIT_COORDINATOR) {
+          if (coordinatorTab === 'approved') {
+            return s.status === Status.APPROVED_FOR_ASSIGNMENT;
+          }
+          return [
+            Status.IDEA_SUBMITTED,
+            Status.BE_REVIEW_DONE,
+            Status.IMPLEMENTATION_DONE,
+          ].includes(s.status);
+        }
+        return true;
+      }),
+    [
+      suggestions,
+      role,
+      currentUserName,
+      currentUserEmployeeCode,
+      coordinatorTab,
+      implementerNameNorm,
+      implementerCodeNorm,
+    ],
+  );
+
+  const units = useMemo(() => {
+    const fromData = Array.from(
+      new Set(roleVisibleSuggestions.map((s) => s.unit).filter(Boolean)),
+    ).sort() as string[];
+    const isExecutive =
+      role === Role.ADMIN ||
+      role === Role.BUSINESS_EXCELLENCE ||
+      role === Role.BUSINESS_EXCELLENCE_HEAD;
+    const isMultiUnitRole =
+      role === Role.UNIT_COORDINATOR || role === Role.SELECTION_COMMITTEE;
+    if (isExecutive || !isMultiUnitRole || assignedUnitCodes.length === 0) {
+      return fromData;
+    }
+    const allowed = new Set(assignedUnitCodes.map((c) => c.trim().toLowerCase()));
+    return fromData.filter((u) => allowed.has(String(u).trim().toLowerCase()));
+  }, [roleVisibleSuggestions, role, assignedUnitCodes]);
+
   const departments = useMemo(
     () =>
       Array.from(
-        new Set(
-          suggestions
-            .filter(s => !!s.department)
-            .map(s => s.department)
-        )
-      ),
-    [suggestions]
+        new Set(roleVisibleSuggestions.filter((s) => !!s.department).map((s) => s.department)),
+      ).sort() as string[],
+    [roleVisibleSuggestions],
   );
+
+  const showUnitFilter = useMemo(() => {
+    if (units.length === 0) return false;
+    if (
+      role === Role.ADMIN ||
+      role === Role.BUSINESS_EXCELLENCE ||
+      role === Role.BUSINESS_EXCELLENCE_HEAD
+    ) {
+      return true;
+    }
+    if (role === Role.UNIT_COORDINATOR || role === Role.SELECTION_COMMITTEE) {
+      return assignedUnitCodes.length > 1;
+    }
+    if (role === Role.EMPLOYEE || role === Role.IMPLEMENTER) {
+      return units.length >= 1;
+    }
+    return units.length > 1;
+  }, [units.length, role, assignedUnitCodes.length]);
 
   const filtered = useMemo(
     () =>
-      suggestions
-        .filter((s) => {
-          // Implementer: default view is all ideas assigned to them.
-          // Toggle can restrict to only those currently pending implementation action.
-          if (role === Role.IMPLEMENTER && includeImplemented) {
-            return isInvolvedAsImplementer(s);
-          }
-          const roleOk = filterByRole(role, s, {
-            currentUserName,
-            currentUserEmployeeCode,
-          });
-          if (!roleOk) return false;
-
-          // Unit Coordinator: separate view for approved ideas vs pending actions
-          if (role === Role.UNIT_COORDINATOR) {
-            if (coordinatorTab === 'approved') {
-              return s.status === Status.APPROVED_FOR_ASSIGNMENT;
-            }
-            return [
-              Status.IDEA_SUBMITTED,
-              Status.BE_REVIEW_DONE,
-              Status.IMPLEMENTATION_DONE,
-            ].includes(s.status);
-          }
-          return true;
-        })
+      roleVisibleSuggestions
         .filter((s) => passesImplementerStage(s))
-        .filter(s =>
-          deptFilter === 'all' ? true : s.department === deptFilter
-        )
-        .filter(s => {
+        .filter((s) => (unitFilter === 'all' ? true : s.unit === unitFilter))
+        .filter((s) => (deptFilter === 'all' ? true : s.department === deptFilter))
+        .filter((s) => {
           if (!search.trim()) return true;
           const q = search.toLowerCase();
           return (
@@ -200,18 +243,12 @@ export const PipelineView: React.FC<PipelineViewProps> = ({
           );
         }),
     [
-      suggestions,
-      role,
-      currentUserName,
-      currentUserEmployeeCode,
+      roleVisibleSuggestions,
+      unitFilter,
       deptFilter,
       search,
-      includeImplemented,
-      implementerNameNorm,
-      implementerCodeNorm,
       implementerStageFilter,
-      coordinatorTab,
-    ]
+    ],
   );
 
   const pipelineStats = useMemo(() => {
@@ -229,25 +266,6 @@ export const PipelineView: React.FC<PipelineViewProps> = ({
 
   return (
     <div className="space-y-6 animate-fade-in">
-      <div className="flex items-center justify-between bg-white border border-gray-200 rounded-2xl p-6 shadow-sm">
-        <div>
-          <h1 className="text-2xl font-extrabold text-gray-900">
-            {role === Role.EMPLOYEE ? 'My ideas' : 'Improvement Pipeline'}
-          </h1>
-          <p className="text-sm text-gray-600 font-semibold">
-            {role === Role.EMPLOYEE
-              ? 'Browse and open any of your Kaizen submissions to see full details and history.'
-              : 'Track all Kaizen ideas in a unified pipeline view.'}
-          </p>
-        </div>
-        <div className="hidden md:flex items-center gap-3 text-xs text-gray-600 font-semibold">
-          <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-gray-100 border border-gray-300">
-            <span className="w-2 h-2 rounded-full bg-kauvery-purple" />
-            {role}
-          </span>
-        </div>
-      </div>
-
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
         <div className="bg-white border border-gray-200 rounded-xl p-4">
           <div className="text-xs font-extrabold uppercase text-gray-500">
@@ -284,19 +302,33 @@ export const PipelineView: React.FC<PipelineViewProps> = ({
               onChange={e => setSearch(e.target.value)}
             />
           </div>
-          <div className="w-44">
-            <select
-              className="w-full px-3 py-2.5 rounded-lg border border-gray-300 text-sm text-gray-900 font-medium bg-white focus:ring-2 focus:ring-kauvery-purple outline-none"
+          {showUnitFilter && (
+            <div className="w-40 shrink-0 sm:w-44">
+              <SearchableSelect
+                aria-label="Filter by unit"
+                value={unitFilter}
+                onChange={setUnitFilter}
+                options={[
+                  { value: 'all', label: 'All Units' },
+                  ...units.map((u) => ({ value: u, label: u })),
+                ]}
+                placeholder="Search units…"
+                inputClassName="w-full px-3 py-2.5 rounded-lg border border-gray-300 text-sm text-gray-900 font-medium bg-white focus:ring-2 focus:ring-kauvery-purple outline-none"
+              />
+            </div>
+          )}
+          <div className="w-40 shrink-0 sm:w-44">
+            <SearchableSelect
+              aria-label="Filter by department"
               value={deptFilter}
-              onChange={e => setDeptFilter(e.target.value)}
-            >
-              <option value="all">All Depts</option>
-              {departments.map(d => (
-                <option key={d} value={d}>
-                  {d}
-                </option>
-              ))}
-            </select>
+              onChange={setDeptFilter}
+              options={[
+                { value: 'all', label: 'All Depts' },
+                ...departments.map((d) => ({ value: d, label: d })),
+              ]}
+              placeholder="Search departments…"
+              inputClassName="w-full px-3 py-2.5 rounded-lg border border-gray-300 text-sm text-gray-900 font-medium bg-white focus:ring-2 focus:ring-kauvery-purple outline-none"
+            />
           </div>
         </div>
 
@@ -373,21 +405,6 @@ export const PipelineView: React.FC<PipelineViewProps> = ({
                 Completed
               </button>
             </div>
-            <button
-              type="button"
-              onClick={() => setIncludeImplemented((v) => !v)}
-              className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-lg border text-sm font-extrabold transition-colors ${
-                includeImplemented
-                  ? 'bg-kauvery-purple text-white border-purple-900 hover:bg-kauvery-violet'
-                  : 'bg-white text-gray-900 border-gray-300 hover:bg-gray-50'
-              }`}
-              title="Toggle between all assigned ideas and only pending implementation"
-            >
-              <span className="material-icons-round text-base">
-                {includeImplemented ? 'filter_alt' : 'filter_alt_off'}
-              </span>
-              {includeImplemented ? 'Showing: All assigned' : 'Showing: Pending only'}
-            </button>
           </div>
         )}
       </div>
@@ -467,7 +484,7 @@ export const PipelineView: React.FC<PipelineViewProps> = ({
             </p>
             <p className="text-gray-600 text-sm font-medium">
               {role === Role.EMPLOYEE
-                ? 'Try clearing the search box or department filter, or submit a new idea from the dashboard.'
+                ? 'Try clearing the search box or filters, or submit a new idea from the dashboard.'
                 : 'No ideas found for the current filters.'}
             </p>
           </div>

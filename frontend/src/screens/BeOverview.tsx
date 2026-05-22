@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Status, Suggestion } from '../types';
+import { SearchableSelect } from '../components/SearchableSelect';
 
 const BE_PAGE_SIZE = 50;
 
@@ -377,18 +378,9 @@ export const BeOverview: React.FC<{
   return (
     <div className="w-full max-w-[min(100%,1280px)] mx-auto animate-fade-in space-y-6 pb-10">
       <div className="rounded-2xl border border-purple-200/50 bg-gradient-to-br from-white via-white to-purple-50/30 p-6 sm:p-8 shadow-kauvery-card">
-        <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div className="min-w-0 flex-1">
-            <div className="text-xs font-semibold uppercase tracking-widest text-gray-500">
-              Business Excellence
-            </div>
-            <h1 className="mt-3 text-2xl sm:text-3xl font-black text-gray-900 tracking-tight">
-              {landscapeTab === 'org' ? 'Programme summary' : 'Employee directory'}
-            </h1>
-            <p className="mt-2 text-sm text-gray-500 font-medium">
-              {landscapeTab === 'org' ? 'KPIs and registers' : 'Activity by person'}
-            </p>
-            <div className="mt-5 inline-flex rounded-lg border border-gray-200 bg-white/90 p-0.5 shadow-sm">
+            <div className="inline-flex rounded-lg border border-gray-200 bg-white/90 p-0.5 shadow-sm">
               <button
                 type="button"
                 onClick={() => setLandscapeTab('org')}
@@ -640,35 +632,28 @@ export const BeOverview: React.FC<{
               </div>
 
               <div className="w-44">
-                <select
-                  value={unitFilter}
-                  onChange={(e) => setUnitFilter(e.target.value)}
-                  className="w-full px-3 py-2.5 rounded-xl border border-gray-300 bg-white text-sm font-semibold text-gray-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-purple-200 focus:border-purple-300"
+                <SearchableSelect
                   aria-label="Filter by unit"
-                >
-                  <option value="all">All units</option>
-                  {unitOptions.map((u) => (
-                    <option key={u} value={u}>
-                      {u}
-                    </option>
-                  ))}
-                </select>
+                  value={unitFilter}
+                  onChange={setUnitFilter}
+                  options={[{ value: 'all', label: 'All units' }, ...unitOptions.map((u) => ({ value: u, label: u }))]}
+                  placeholder="Search units…"
+                  inputClassName="w-full px-3 py-2.5 rounded-xl border border-gray-300 bg-white text-sm font-semibold text-gray-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-purple-200 focus:border-purple-300"
+                />
               </div>
 
               <div className="w-56">
-                <select
-                  value={deptFilter}
-                  onChange={(e) => setDeptFilter(e.target.value)}
-                  className="w-full px-3 py-2.5 rounded-xl border border-gray-300 bg-white text-sm font-semibold text-gray-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-purple-200 focus:border-purple-300"
+                <SearchableSelect
                   aria-label="Filter by department"
-                >
-                  <option value="all">All departments</option>
-                  {departmentOptions.map((d) => (
-                    <option key={d} value={d}>
-                      {d}
-                    </option>
-                  ))}
-                </select>
+                  value={deptFilter}
+                  onChange={setDeptFilter}
+                  options={[
+                    { value: 'all', label: 'All departments' },
+                    ...departmentOptions.map((d) => ({ value: d, label: d })),
+                  ]}
+                  placeholder="Search departments…"
+                  inputClassName="w-full px-3 py-2.5 rounded-xl border border-gray-300 bg-white text-sm font-semibold text-gray-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-purple-200 focus:border-purple-300"
+                />
               </div>
 
               <div className="relative">

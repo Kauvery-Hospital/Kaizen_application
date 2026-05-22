@@ -39,7 +39,18 @@ export class UsersController {
 
   /** Named heads for UC routing: must match unit scopes configured in User Management. */
   @Get('unit-scoped-hods')
-  @RequireTokenRoles('UNIT_COORDINATOR', 'ADMIN', 'SUPER_ADMIN')
+  @RequireTokenRoles(
+    'UNIT_COORDINATOR',
+    'ADMIN',
+    'SUPER_ADMIN',
+    'IMPLEMENTER',
+    'BUSINESS_EXCELLENCE',
+    'BE_MEMBER',
+    'BE_HEAD',
+    'BUSINESS_EXCELLENCE_HEAD',
+    'SELECTION_COMMITTEE',
+    'EMPLOYEE',
+  )
   unitScopedHods(
     @Query('unitCode') unitCode: string,
     @Query('roleCode') roleCode: string,
@@ -49,7 +60,18 @@ export class UsersController {
 
   /** Unit-scoped portal users in HRMS department at unit — Level 1 departmental approver picker. */
   @Get('unit-department-members')
-  @RequireTokenRoles('UNIT_COORDINATOR', 'ADMIN', 'SUPER_ADMIN')
+  @RequireTokenRoles(
+    'UNIT_COORDINATOR',
+    'ADMIN',
+    'SUPER_ADMIN',
+    'IMPLEMENTER',
+    'BUSINESS_EXCELLENCE',
+    'BE_MEMBER',
+    'BE_HEAD',
+    'BUSINESS_EXCELLENCE_HEAD',
+    'SELECTION_COMMITTEE',
+    'EMPLOYEE',
+  )
   unitDepartmentMembers(
     @Query('unitCode') unitCode: string,
     @Query('department') department: string,

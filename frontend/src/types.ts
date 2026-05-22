@@ -77,8 +77,10 @@ export interface Suggestion {
   department: string; // Originator Dept
   dateSubmitted: string;
   employeeName: string; // Originator
-  /** Originator employee code when the API provides it (e.g. mobile sync). */
+  /** Originator employee code when present on API payloads (legacy / merged). */
   employeeCode?: string;
+  /** Submitter code persisted on the suggestion row (portal / mobile). */
+  originatorEmployeeCode?: string;
   description: string; // Basic idea description
   /** Idea phase may use booleans; Kaizen sheet may use primary / secondary highlights */
   expectedBenefits: {
@@ -172,12 +174,16 @@ export interface Suggestion {
   preparedBy?: string;
   validatedBy?: string;
   approvedBy?: string;
-  /** Sheet 2 signature block — user-entered (not auto-filled from directory) */
+  /** Sheet 2 signature block — employee ID + name (HRMS lookup on ID, like slide 1 team rows) */
+  templateSigPreparedByEmployeeId?: string;
   templateSigPreparedBy?: string;
   /** Optional line under Prepared By, e.g. reporting relationship */
   templateSigReportingTo?: string;
+  templateSigValidatedDeptHodEmployeeId?: string;
   templateSigValidatedDeptHod?: string;
+  templateSigValidatedFinanceEmployeeId?: string;
   templateSigValidatedFinance?: string;
+  templateSigApprovedOpsHeadEmployeeId?: string;
   templateSigApprovedOpsHead?: string;
   result1?: string;
   result2?: string;
@@ -259,7 +265,18 @@ export type ViewType =
   | 'hod-desk'
   | 'users'
   | 'role-list'
-  | 'template';
+  | 'template'
+  | 'suggestion-detail';
+
+export type UserUnitScopes = {
+  UNIT_COORDINATOR?: string[];
+  SELECTION_COMMITTEE?: string[];
+  HOD_FINANCE?: string[];
+  HOD_QUALITY?: string[];
+  HOD_HR?: string[];
+  HOD_OPS?: string[];
+  HOD_NURSING?: string[];
+};
 
 export interface User {
   id: string;
@@ -269,6 +286,8 @@ export interface User {
   roles?: Role[];
   /** Admin-assigned department HOD scopes shown in the role switcher. */
   departmentHodAssignments?: string[];
+  /** Admin-assigned unit scopes per role (from login / refresh-session). */
+  unitScopes?: UserUnitScopes;
   employeeCode?: string;
   accessToken?: string;
 }

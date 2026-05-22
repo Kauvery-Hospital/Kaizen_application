@@ -229,35 +229,35 @@ export const NotificationsButton: React.FC<{
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="relative inline-flex items-center justify-center w-10 h-10 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 shadow-sm"
+        className="relative inline-flex items-center justify-center w-10 h-10 rounded-lg border border-kauvery-purple/25 bg-white hover:bg-kauvery-purple/8 shadow-sm"
         title={count ? `Notifications (${count})` : 'Notifications'}
       >
-        <span className="material-icons-round text-[20px] text-gray-800">notifications</span>
+        <span className="material-icons-round text-[20px] text-kauvery-purple">notifications</span>
         {count > 0 && (
-          <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 rounded-full bg-kauvery-purple text-white text-[10px] font-extrabold flex items-center justify-center border border-purple-900">
+          <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 rounded-full bg-kauvery-purple text-white text-[10px] font-extrabold flex items-center justify-center border border-white">
             {count > 99 ? '99+' : count}
           </span>
         )}
       </button>
 
       {open && (
-        <div className="absolute right-0 mt-2 w-[420px] max-w-[80vw] bg-white border border-gray-200 rounded-2xl shadow-2xl shadow-slate-200/60 overflow-hidden z-50">
-          <div className="px-4 py-3 border-b border-gray-200 bg-gradient-to-r from-purple-50 to-white">
-            <div className="text-xs uppercase tracking-wide text-gray-500 font-extrabold">
+        <div className="absolute right-0 mt-2 w-[420px] max-w-[80vw] bg-white border border-kauvery-purple/20 rounded-2xl shadow-2xl shadow-kauvery-soft overflow-hidden z-50">
+          <div className="px-4 py-3 border-b border-kauvery-purple/15 bg-gradient-to-r from-kauvery-purple/8 via-kauvery-violet/5 to-transparent">
+            <div className="text-xs uppercase tracking-wide text-kauvery-purple/70 font-extrabold">
               Notifications
             </div>
-            <div className="text-sm font-black text-gray-900">
+            <div className="text-sm font-black text-slate-900">
               {count ? `You have ${count} item(s)` : 'No pending items'}
             </div>
           </div>
 
           <div className="max-h-[420px] overflow-y-auto">
             {items.length === 0 ? (
-              <div className="p-4 text-sm text-gray-600 font-medium">
-                Nothing to action right now for <span className="font-extrabold">{role}</span>.
+              <div className="p-4 text-sm text-slate-600 font-medium">
+                Nothing to action right now for <span className="font-extrabold text-kauvery-purple">{role}</span>.
               </div>
             ) : (
-              <div className="divide-y divide-gray-100">
+              <div className="divide-y divide-slate-200/80">
                 {items.map((it) => (
                   <button
                     key={it.id}
@@ -266,14 +266,14 @@ export const NotificationsButton: React.FC<{
                       setOpen(false);
                       onOpenSuggestion(it.suggestion);
                     }}
-                    className="w-full text-left px-4 py-3 hover:bg-gray-50 transition-colors"
+                    className="w-full text-left px-4 py-3 hover:bg-kauvery-purple/[0.06] transition-colors"
                   >
                     <div className="flex items-start gap-3">
                       <div
                         className={`mt-0.5 w-9 h-9 rounded-xl flex items-center justify-center border ${
                           it.kind === 'action'
-                            ? 'bg-kauvery-purple/10 border-purple-200 text-kauvery-purple'
-                            : 'bg-gray-100 border-gray-200 text-gray-700'
+                            ? 'bg-kauvery-purple/10 border-kauvery-purple/25 text-kauvery-purple'
+                            : 'bg-slate-50 border-slate-200 text-slate-500'
                         }`}
                       >
                         <span className="material-icons-round text-[18px]">
@@ -281,17 +281,17 @@ export const NotificationsButton: React.FC<{
                         </span>
                       </div>
                       <div className="min-w-0 flex-1">
-                        <div className="text-sm font-extrabold text-gray-900 truncate">
+                        <div className="text-sm font-extrabold text-slate-900 truncate">
                           {it.title}
                         </div>
-                        <div className="text-xs text-gray-600 font-semibold truncate">
+                        <div className="text-xs text-slate-600 font-semibold truncate">
                           {it.subtitle}
                         </div>
-                        <div className="mt-1 text-[11px] text-gray-500 font-mono">
+                        <div className="mt-1 text-[11px] text-slate-500 font-mono">
                           {suggestionLabel(it.suggestion)} • {it.suggestion.status}
                         </div>
                       </div>
-                      <span className="material-icons-round text-[18px] text-gray-400">
+                      <span className="material-icons-round text-[18px] text-slate-500">
                         chevron_right
                       </span>
                     </div>

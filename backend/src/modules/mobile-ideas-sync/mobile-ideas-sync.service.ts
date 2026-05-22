@@ -274,6 +274,7 @@ export class MobileIdeasSyncService {
           department: String(r.department || '').trim() || 'NA',
           dateSubmitted: String(r.date || '').trim() || toYmd(new Date()),
           employeeName: user.name,
+          originatorEmployeeCode: employeeCode,
           description: String(r.suggestion || '').trim(),
           expectedBenefits: {
             productivity: false,

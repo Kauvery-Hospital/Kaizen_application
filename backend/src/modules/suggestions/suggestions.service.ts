@@ -223,6 +223,69 @@ export class SuggestionsService {
     return false;
   }
 
+  /** Same normalized key when the shorter label is an unambiguous prefix of the directory name (e.g. "Johnson J" → "Johnson Joseph"). */
+  private nameKeyPrefixAligned(shorterKey: string, directoryKey: string): boolean {
+    if (!shorterKey || !directoryKey) return false;
+    if (directoryKey === shorterKey) return true;
+    if (directoryKey.startsWith(`${shorterKey} `)) return true;
+    return false;
+  }
+
+  private departmentsLooselyMatch(
+    a?: string | null,
+    b?: string | null,
+  ): boolean {
+    const x = this.lc(a);
+    const y = this.lc(b);
+    if (!x || !y) return false;
+    if (x === y) return true;
+    if (x.includes(y) || y.includes(x)) return true;
+    return false;
+  }
+
+  /**
+   * When `employee_name` is a shortened label (initial, nickname), exact directory key match fails.
+   * Use substring `namesLooselyMatch`, then narrow by suggestion department vs user/staging department.
+   */
+  private pickOriginatorCodeFromLooseDirectory(
+    rawSubmitterName: string,
+    suggestionDepartment: string | null | undefined,
+    directory: {
+      name: string;
+      employeeCode: string;
+      department?: string | null;
+    }[],
+  ): string | undefined {
+    const nk = this.personNameKey(rawSubmitterName);
+    if (!nk) return undefined;
+
+    let candidates = directory.filter((d) =>
+      this.namesLooselyMatch(rawSubmitterName, d.name),
+    );
+    if (candidates.length === 0) return undefined;
+    if (candidates.length === 1) return candidates[0].employeeCode;
+
+    const dept = this.norm(suggestionDepartment);
+    if (dept) {
+      const deptScoped = candidates.filter((d) =>
+        this.departmentsLooselyMatch(dept, d.department),
+      );
+      if (deptScoped.length === 1) return deptScoped[0].employeeCode;
+      if (deptScoped.length > 0) candidates = deptScoped;
+    }
+
+    const prefixed = candidates.filter((d) =>
+      this.nameKeyPrefixAligned(nk, this.personNameKey(d.name)),
+    );
+    if (prefixed.length === 1) return prefixed[0].employeeCode;
+    const pool = prefixed.length > 0 ? prefixed : candidates;
+
+    const codes = new Set(pool.map((c) => c.employeeCode));
+    if (codes.size === 1) return [...codes][0];
+
+    return undefined;
+  }
+
   private matchesPendingDepartmentApprovalSlot(
     row: any,
     userName?: string,
@@ -393,10 +456,14 @@ export class SuggestionsService {
       const seq = await this.nextSequence(IDEA_PREFIX, year);
       const code = `${IDEA_PREFIX}-${year}-${String(seq).padStart(4, '0')}`;
       const row = { ...baseRow, code };
+      const originCode = String(ctx.employeeCode ?? '').trim();
       try {
         return await this.prisma.suggestion.create({
           data: {
             ...row,
+            ...(originCode
+              ? { originatorEmployeeCode: this.sanitizeEmployeeCodeForPath(originCode) }
+              : {}),
             ideaAttachmentsFolder: ideaFolder ?? undefined,
             ideaAttachmentPaths: ideaPaths ?? undefined,
             currentStageRole: this.deriveCurrentStageRole(
@@ -452,6 +519,128 @@ export class SuggestionsService {
     return { ideaFolder: expected, ideaPaths: paths };
   }
 
+  /** Trailing `(CODE)` / `[CODE]` often used when syncing display labels from HRMS. */
+  private embeddedEmployeeCodeFromDisplayName(name: string): string {
+    const n = this.norm(name);
+    if (!n) return '';
+    const paren = n.match(/\(([A-Za-z0-9._-]{2,40})\)\s*$/);
+    if (paren?.[1]) return paren[1];
+    const bracket = n.match(/\[([A-Za-z0-9._-]{2,40})\]\s*$/);
+    if (bracket?.[1]) return bracket[1];
+    return '';
+  }
+
+  /**
+   * New portal/mobile rows persist `originatorEmployeeCode`. Legacy rows often only have `employeeName`.
+   * Resolve codes in-memory for API responses by matching directory / HRMS staging names (same key as reporting).
+   */
+  private async enrichSuggestionsOriginatorEmployeeCode<T>(
+    suggestions: T[],
+  ): Promise<T[]> {
+    if (!Array.isArray(suggestions) || suggestions.length === 0) {
+      return suggestions;
+    }
+    const needs = suggestions.filter(
+      (s) => !this.norm((s as { originatorEmployeeCode?: string | null }).originatorEmployeeCode),
+    );
+    if (needs.length === 0) {
+      return suggestions;
+    }
+
+    const codeByNameKey = new Map<string, string>();
+    /** Lowercased employee code → canonical code (for rows where `employee_name` holds a code, not a person name). */
+    const codeByEmployeeCodeLc = new Map<string, string>();
+    const [users, staging] = await Promise.all([
+      this.prisma.user.findMany({
+        select: { name: true, employeeCode: true, department: true },
+      }),
+      this.prisma.hrmsEmployeeStaging.findMany({
+        select: { name: true, employeeCode: true, department: true },
+      }),
+    ]);
+    const directory: {
+      name: string;
+      employeeCode: string;
+      department?: string | null;
+    }[] = [];
+    const seenEmpLc = new Set<string>();
+    for (const u of users) {
+      directory.push({
+        name: u.name,
+        employeeCode: u.employeeCode,
+        department: u.department,
+      });
+      seenEmpLc.add(this.lc(u.employeeCode));
+    }
+    for (const r of staging) {
+      if (seenEmpLc.has(this.lc(r.employeeCode))) continue;
+      directory.push({
+        name: r.name,
+        employeeCode: r.employeeCode,
+        department: r.department,
+      });
+      seenEmpLc.add(this.lc(r.employeeCode));
+    }
+
+    for (const u of users) {
+      const lc = this.lc(u.employeeCode);
+      if (lc && !codeByEmployeeCodeLc.has(lc)) {
+        codeByEmployeeCodeLc.set(lc, u.employeeCode);
+      }
+      const k = this.personNameKey(u.name);
+      if (k && !codeByNameKey.has(k)) {
+        codeByNameKey.set(k, u.employeeCode);
+      }
+    }
+    for (const r of staging) {
+      const lc = this.lc(r.employeeCode);
+      if (lc && !codeByEmployeeCodeLc.has(lc)) {
+        codeByEmployeeCodeLc.set(lc, r.employeeCode);
+      }
+      const k = this.personNameKey(r.name);
+      if (k && !codeByNameKey.has(k)) {
+        codeByNameKey.set(k, r.employeeCode);
+      }
+    }
+
+    return suggestions.map((s) => {
+      const row = s as {
+        originatorEmployeeCode?: string | null;
+        employeeName?: string | null;
+        department?: string | null;
+      };
+      if (this.norm(row.originatorEmployeeCode)) {
+        return s;
+      }
+      const rawName = String(row.employeeName ?? '');
+      const nk = this.personNameKey(rawName);
+      let code =
+        (nk ? codeByNameKey.get(nk) : undefined) ||
+        codeByEmployeeCodeLc.get(this.lc(rawName));
+      if (!code) {
+        const emb = this.embeddedEmployeeCodeFromDisplayName(rawName);
+        if (emb) {
+          code = codeByEmployeeCodeLc.get(this.lc(emb));
+        }
+      }
+      if (!code) {
+        code = this.pickOriginatorCodeFromLooseDirectory(
+          rawName,
+          row.department,
+          directory,
+        );
+      }
+      if (!code) {
+        return s;
+      }
+      return {
+        ...s,
+        originatorEmployeeCode: code,
+        employeeCode: code,
+      } as T;
+    });
+  }
+
   async list(
     role?: AppRole,
     currentUserName?: string,
@@ -459,7 +648,7 @@ export class SuggestionsService {
     currentUserEmployeeCode?: string,
   ) {
     if (!role) {
-      return await this.prisma.suggestion.findMany({
+      const rows = await this.prisma.suggestion.findMany({
         orderBy: { createdAt: 'desc' },
         include: {
           implementedKaizen: {
@@ -470,6 +659,7 @@ export class SuggestionsService {
           },
         },
       });
+      return this.enrichSuggestionsOriginatorEmployeeCode(rows);
     }
 
     const allowedUnits = await this.getAllowedUnitsForRole(userId, role);
@@ -486,7 +676,7 @@ export class SuggestionsService {
     // For unit-scoped roles, if there are no scopes configured, return empty list
     // (prevents “all-unit visibility” until admin assigns scopes).
     if (roleNeedsConfiguredUnitScopes && (!allowedUnits || allowedUnits.length === 0)) {
-      return [];
+      return this.enrichSuggestionsOriginatorEmployeeCode([]);
     }
 
     // Default: fetch within unit(s) first (keeps results bounded), then apply remaining role/status logic.
@@ -530,7 +720,7 @@ export class SuggestionsService {
 
     if (role === AppRole.UNIT_COORDINATOR && allowedUnits?.length) {
       const allowed = new Set(allowedUnits.map((u) => u.toLowerCase()));
-      return suggestions.filter((s: any) => {
+      const filtered = suggestions.filter((s: any) => {
         const unitForStage = this.coordinatorRoutingUnitForStatus(s);
         if (!unitForStage) return false;
         if (!allowed.has(unitForStage.toLowerCase())) return false;
@@ -541,6 +731,7 @@ export class SuggestionsService {
           currentUserEmployeeCode,
         );
       });
+      return this.enrichSuggestionsOriginatorEmployeeCode(filtered);
     }
 
     if (
@@ -552,7 +743,7 @@ export class SuggestionsService {
       allowedUnits?.length
     ) {
       const allowed = new Set(allowedUnits.map((u) => u.toLowerCase()));
-      return suggestions.filter((s: any) => {
+      const filtered = suggestions.filter((s: any) => {
         const unitForApproval = this.hodApprovalRoutingUnit(s);
         if (!unitForApproval) return false;
         if (!allowed.has(unitForApproval.toLowerCase())) return false;
@@ -563,9 +754,10 @@ export class SuggestionsService {
           currentUserEmployeeCode,
         );
       });
+      return this.enrichSuggestionsOriginatorEmployeeCode(filtered);
     }
 
-    return suggestions.filter((s) =>
+    const filtered = suggestions.filter((s) =>
       this.filterByRole(
         role,
         s as any,
@@ -573,6 +765,7 @@ export class SuggestionsService {
         currentUserEmployeeCode,
       ),
     );
+    return this.enrichSuggestionsOriginatorEmployeeCode(filtered);
   }
 
   private static readonly BE_REPORT_PRE_STATUSES: AppStatus[] = [
@@ -940,8 +1133,8 @@ export class SuggestionsService {
     return { items, total };
   }
 
-  findOne(id: string) {
-    return this.prisma.suggestion.findUnique({
+  async findOne(id: string) {
+    const row = await this.prisma.suggestion.findUnique({
       where: { id },
       include: {
         implementedKaizen: {
@@ -952,6 +1145,11 @@ export class SuggestionsService {
         },
       },
     });
+    if (!row) {
+      return null;
+    }
+    const [enriched] = await this.enrichSuggestionsOriginatorEmployeeCode([row]);
+    return enriched ?? row;
   }
 
   async updateStatus(
@@ -1764,6 +1962,15 @@ export class SuggestionsService {
         AppRole.HR_HEAD,
         AppRole.OPS_HEAD,
         AppRole.NURSING_HEAD,
+      ],
+      // Functional heads send back to UC/BE review during L2 (remarks + reset in `updateStatus`)
+      [`${AppStatus.VERIFIED_PENDING_APPROVAL}->${AppStatus.BE_REVIEW_DONE}`]: [
+        AppRole.FINANCE_HOD,
+        AppRole.QUALITY_HOD,
+        AppRole.HR_HEAD,
+        AppRole.OPS_HEAD,
+        AppRole.NURSING_HEAD,
+        AppRole.ADMIN,
       ],
       [`${AppStatus.BE_EVALUATION_PENDING}->${AppStatus.VERIFIED_PENDING_APPROVAL}`]:
         [AppRole.BUSINESS_EXCELLENCE_HEAD, AppRole.ADMIN],

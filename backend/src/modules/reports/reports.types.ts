@@ -2,7 +2,7 @@ import { AppRole, AppStatus } from '../suggestions/suggestions.types';
 
 export type ServiceCategory = 'CLINICAL' | 'SUPPORTIVE';
 
-export type ReportAudience = 'BE' | 'UNIT_COORDINATOR';
+export type ReportAudience = 'BE';
 
 export type ReportGroup =
   | 'overall'
@@ -51,7 +51,7 @@ export type ReportCatalogItem = {
   label: string;
   group: ReportGroup;
   kind: ReportKind;
-  /** Roles that may access this report at all (further restricted by unit scope for coordinators). */
+  /** Roles that may access this report (Business Excellence team only). */
   allowedRoles: AppRole[];
 };
 
@@ -61,42 +61,42 @@ export const REPORT_CATALOG: ReportCatalogItem[] = [
     label: 'Overall Kaizen register (all submissions)',
     group: 'overall',
     kind: 'table',
-    allowedRoles: [AppRole.BUSINESS_EXCELLENCE, AppRole.BUSINESS_EXCELLENCE_HEAD, AppRole.UNIT_COORDINATOR],
+    allowedRoles: [AppRole.BUSINESS_EXCELLENCE, AppRole.BUSINESS_EXCELLENCE_HEAD],
   },
   {
     id: 'kpiCounts',
     label: 'KPI counts (received/accepted/implemented/ongoing/pending/not feasible)',
     group: 'overall',
     kind: 'kpi',
-    allowedRoles: [AppRole.BUSINESS_EXCELLENCE, AppRole.BUSINESS_EXCELLENCE_HEAD, AppRole.UNIT_COORDINATOR],
+    allowedRoles: [AppRole.BUSINESS_EXCELLENCE, AppRole.BUSINESS_EXCELLENCE_HEAD],
   },
   {
     id: 'receivedSummary',
     label: 'Total Kaizen received (summary)',
     group: 'received',
     kind: 'kpi',
-    allowedRoles: [AppRole.BUSINESS_EXCELLENCE, AppRole.BUSINESS_EXCELLENCE_HEAD, AppRole.UNIT_COORDINATOR],
+    allowedRoles: [AppRole.BUSINESS_EXCELLENCE, AppRole.BUSINESS_EXCELLENCE_HEAD],
   },
   {
     id: 'receivedByUnit',
     label: 'Received Kaizen by Unit',
     group: 'received',
     kind: 'breakdown',
-    allowedRoles: [AppRole.BUSINESS_EXCELLENCE, AppRole.BUSINESS_EXCELLENCE_HEAD, AppRole.UNIT_COORDINATOR],
+    allowedRoles: [AppRole.BUSINESS_EXCELLENCE, AppRole.BUSINESS_EXCELLENCE_HEAD],
   },
   {
     id: 'receivedByDepartment',
     label: 'Received Kaizen by Department',
     group: 'received',
     kind: 'breakdown',
-    allowedRoles: [AppRole.BUSINESS_EXCELLENCE, AppRole.BUSINESS_EXCELLENCE_HEAD, AppRole.UNIT_COORDINATOR],
+    allowedRoles: [AppRole.BUSINESS_EXCELLENCE, AppRole.BUSINESS_EXCELLENCE_HEAD],
   },
   {
     id: 'receivedByServiceCategory',
     label: 'Received Kaizen by Clinical/Supportive',
     group: 'received',
     kind: 'breakdown',
-    allowedRoles: [AppRole.BUSINESS_EXCELLENCE, AppRole.BUSINESS_EXCELLENCE_HEAD, AppRole.UNIT_COORDINATOR],
+    allowedRoles: [AppRole.BUSINESS_EXCELLENCE, AppRole.BUSINESS_EXCELLENCE_HEAD],
   },
 
   {
@@ -104,7 +104,7 @@ export const REPORT_CATALOG: ReportCatalogItem[] = [
     label: 'Accepted Kaizens by Selection Committee',
     group: 'accepted',
     kind: 'table',
-    allowedRoles: [AppRole.BUSINESS_EXCELLENCE, AppRole.BUSINESS_EXCELLENCE_HEAD, AppRole.UNIT_COORDINATOR],
+    allowedRoles: [AppRole.BUSINESS_EXCELLENCE, AppRole.BUSINESS_EXCELLENCE_HEAD],
   },
   {
     id: 'acceptedTop10Group',
@@ -118,28 +118,28 @@ export const REPORT_CATALOG: ReportCatalogItem[] = [
     label: 'Top 10 Kaizens (Unit level)',
     group: 'top10',
     kind: 'table',
-    allowedRoles: [AppRole.BUSINESS_EXCELLENCE, AppRole.BUSINESS_EXCELLENCE_HEAD, AppRole.UNIT_COORDINATOR],
+    allowedRoles: [AppRole.BUSINESS_EXCELLENCE, AppRole.BUSINESS_EXCELLENCE_HEAD],
   },
   {
     id: 'acceptedByUnit',
     label: 'Accepted Kaizens by Unit',
     group: 'accepted',
     kind: 'breakdown',
-    allowedRoles: [AppRole.BUSINESS_EXCELLENCE, AppRole.BUSINESS_EXCELLENCE_HEAD, AppRole.UNIT_COORDINATOR],
+    allowedRoles: [AppRole.BUSINESS_EXCELLENCE, AppRole.BUSINESS_EXCELLENCE_HEAD],
   },
   {
     id: 'acceptedByDepartment',
     label: 'Accepted Kaizens by Department',
     group: 'accepted',
     kind: 'breakdown',
-    allowedRoles: [AppRole.BUSINESS_EXCELLENCE, AppRole.BUSINESS_EXCELLENCE_HEAD, AppRole.UNIT_COORDINATOR],
+    allowedRoles: [AppRole.BUSINESS_EXCELLENCE, AppRole.BUSINESS_EXCELLENCE_HEAD],
   },
   {
     id: 'acceptedByServiceCategory',
     label: 'Accepted Kaizens by Clinical/Supportive',
     group: 'accepted',
     kind: 'breakdown',
-    allowedRoles: [AppRole.BUSINESS_EXCELLENCE, AppRole.BUSINESS_EXCELLENCE_HEAD, AppRole.UNIT_COORDINATOR],
+    allowedRoles: [AppRole.BUSINESS_EXCELLENCE, AppRole.BUSINESS_EXCELLENCE_HEAD],
   },
 
   {
@@ -147,28 +147,28 @@ export const REPORT_CATALOG: ReportCatalogItem[] = [
     label: 'Not accepted Kaizens by Selection Committee',
     group: 'notAccepted',
     kind: 'table',
-    allowedRoles: [AppRole.BUSINESS_EXCELLENCE, AppRole.BUSINESS_EXCELLENCE_HEAD, AppRole.UNIT_COORDINATOR],
+    allowedRoles: [AppRole.BUSINESS_EXCELLENCE, AppRole.BUSINESS_EXCELLENCE_HEAD],
   },
   {
     id: 'notAcceptedByUnit',
     label: 'Not accepted Kaizens by Unit',
     group: 'notAccepted',
     kind: 'breakdown',
-    allowedRoles: [AppRole.BUSINESS_EXCELLENCE, AppRole.BUSINESS_EXCELLENCE_HEAD, AppRole.UNIT_COORDINATOR],
+    allowedRoles: [AppRole.BUSINESS_EXCELLENCE, AppRole.BUSINESS_EXCELLENCE_HEAD],
   },
   {
     id: 'notAcceptedByDepartment',
     label: 'Not accepted Kaizens by Department',
     group: 'notAccepted',
     kind: 'breakdown',
-    allowedRoles: [AppRole.BUSINESS_EXCELLENCE, AppRole.BUSINESS_EXCELLENCE_HEAD, AppRole.UNIT_COORDINATOR],
+    allowedRoles: [AppRole.BUSINESS_EXCELLENCE, AppRole.BUSINESS_EXCELLENCE_HEAD],
   },
   {
     id: 'notAcceptedByServiceCategory',
     label: 'Not accepted Kaizens by Clinical/Supportive',
     group: 'notAccepted',
     kind: 'breakdown',
-    allowedRoles: [AppRole.BUSINESS_EXCELLENCE, AppRole.BUSINESS_EXCELLENCE_HEAD, AppRole.UNIT_COORDINATOR],
+    allowedRoles: [AppRole.BUSINESS_EXCELLENCE, AppRole.BUSINESS_EXCELLENCE_HEAD],
   },
 
   {
@@ -176,14 +176,14 @@ export const REPORT_CATALOG: ReportCatalogItem[] = [
     label: 'Kaizen assignment status (table)',
     group: 'assignment',
     kind: 'table',
-    allowedRoles: [AppRole.BUSINESS_EXCELLENCE, AppRole.BUSINESS_EXCELLENCE_HEAD, AppRole.UNIT_COORDINATOR],
+    allowedRoles: [AppRole.BUSINESS_EXCELLENCE, AppRole.BUSINESS_EXCELLENCE_HEAD],
   },
   {
     id: 'waitingForAssignment',
     label: 'Waiting for assignment (count + table)',
     group: 'assignment',
     kind: 'table',
-    allowedRoles: [AppRole.BUSINESS_EXCELLENCE, AppRole.BUSINESS_EXCELLENCE_HEAD, AppRole.UNIT_COORDINATOR],
+    allowedRoles: [AppRole.BUSINESS_EXCELLENCE, AppRole.BUSINESS_EXCELLENCE_HEAD],
   },
 
   {
@@ -191,14 +191,14 @@ export const REPORT_CATALOG: ReportCatalogItem[] = [
     label: 'Approval status dashboard',
     group: 'approvals',
     kind: 'kpi',
-    allowedRoles: [AppRole.BUSINESS_EXCELLENCE, AppRole.BUSINESS_EXCELLENCE_HEAD, AppRole.UNIT_COORDINATOR],
+    allowedRoles: [AppRole.BUSINESS_EXCELLENCE, AppRole.BUSINESS_EXCELLENCE_HEAD],
   },
   {
     id: 'approvalStatusByRole',
     label: 'Approval status by approver role (HOD/Quality/Nursing/Ops/etc.)',
     group: 'approvals',
     kind: 'breakdown',
-    allowedRoles: [AppRole.BUSINESS_EXCELLENCE, AppRole.BUSINESS_EXCELLENCE_HEAD, AppRole.UNIT_COORDINATOR],
+    allowedRoles: [AppRole.BUSINESS_EXCELLENCE, AppRole.BUSINESS_EXCELLENCE_HEAD],
   },
 
   {
@@ -206,28 +206,28 @@ export const REPORT_CATALOG: ReportCatalogItem[] = [
     label: 'Total implementation status (table)',
     group: 'implementation',
     kind: 'table',
-    allowedRoles: [AppRole.BUSINESS_EXCELLENCE, AppRole.BUSINESS_EXCELLENCE_HEAD, AppRole.UNIT_COORDINATOR],
+    allowedRoles: [AppRole.BUSINESS_EXCELLENCE, AppRole.BUSINESS_EXCELLENCE_HEAD],
   },
   {
     id: 'implementationStatusOverallAndUnit',
     label: 'Implementation status (overall + by unit)',
     group: 'implementation',
     kind: 'breakdown',
-    allowedRoles: [AppRole.BUSINESS_EXCELLENCE, AppRole.BUSINESS_EXCELLENCE_HEAD, AppRole.UNIT_COORDINATOR],
+    allowedRoles: [AppRole.BUSINESS_EXCELLENCE, AppRole.BUSINESS_EXCELLENCE_HEAD],
   },
   {
     id: 'implementationStatusByServiceCategory',
     label: 'Implementation status by Clinical/Supportive',
     group: 'implementation',
     kind: 'breakdown',
-    allowedRoles: [AppRole.BUSINESS_EXCELLENCE, AppRole.BUSINESS_EXCELLENCE_HEAD, AppRole.UNIT_COORDINATOR],
+    allowedRoles: [AppRole.BUSINESS_EXCELLENCE, AppRole.BUSINESS_EXCELLENCE_HEAD],
   },
   {
     id: 'implementationStatusByDepartment',
     label: 'Implementation status by Department',
     group: 'implementation',
     kind: 'breakdown',
-    allowedRoles: [AppRole.BUSINESS_EXCELLENCE, AppRole.BUSINESS_EXCELLENCE_HEAD, AppRole.UNIT_COORDINATOR],
+    allowedRoles: [AppRole.BUSINESS_EXCELLENCE, AppRole.BUSINESS_EXCELLENCE_HEAD],
   },
 ];
 

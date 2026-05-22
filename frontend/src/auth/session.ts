@@ -1,4 +1,5 @@
 import type { User } from '../types';
+import { clearSessionActivity } from './idleSession';
 
 const STORAGE_KEY = 'kaizen.auth.session';
 
@@ -30,4 +31,5 @@ export function clearSession(): void {
   } catch {
     // ignore
   }
+  clearSessionActivity();
 }

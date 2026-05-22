@@ -1,8 +1,11 @@
 import React, { useMemo, useState } from 'react';
-import { Role, User } from '../types';
+import { Role, User, type UserUnitScopes } from '../types';
+import { KAUVERY_CARD_SURFACE, KAUVERY_PAGE_BG } from '../theme/kauverySurfaces';
 
 interface LoginPageProps {
   onLogin: (user: User) => void;
+  sessionExpired?: boolean;
+  onDismissSessionExpired?: () => void;
 }
 
 type BackendRole =
@@ -96,6 +99,7 @@ type LoginApiUser = {
   employeeCode?: string;
   roles?: BackendRole[];
   departmentHodAssignments?: string[];
+  unitScopes?: UserUnitScopes;
 };
 
 type LoginResponse = {
@@ -103,7 +107,11 @@ type LoginResponse = {
   user: LoginApiUser;
 };
 
-export const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
+export const LoginPage: React.FC<LoginPageProps> = ({
+  onLogin,
+  sessionExpired = false,
+  onDismissSessionExpired,
+}) => {
   const [employeeId, setEmployeeId] = useState('');
   const [password, setPassword] = useState('');
   const [selectedRole, setSelectedRole] = useState<Role>(Role.EMPLOYEE);
@@ -136,6 +144,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
       departmentHodAssignments: Array.isArray(user.departmentHodAssignments)
         ? user.departmentHodAssignments.filter(Boolean)
         : [],
+      unitScopes: user.unitScopes,
       employeeCode: user.employeeCode,
       accessToken,
     });
@@ -154,6 +163,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
       return;
     }
 
+    onDismissSessionExpired?.();
     setIsSubmitting(true);
     try {
       const res = await fetch(`${apiBase}/auth/login`, {
@@ -197,10 +207,10 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
   };
 
   return (
-    <div className="relative min-h-screen bg-gradient-to-b from-kauvery-pink/10 via-white to-purple-50 font-sans overflow-hidden">
+    <div className={`relative min-h-screen overflow-hidden font-sans text-slate-800 ${KAUVERY_PAGE_BG}`}>
       {/* Decorative brand pattern (subtle, on-brand) */}
       <div className="pointer-events-none absolute inset-0">
-        <div className="absolute inset-0 opacity-[0.2] [mask-image:radial-gradient(circle_at_50%_45%,black_0%,black_55%,transparent_88%)]">
+        <div className="absolute inset-0 opacity-[0.14] [mask-image:radial-gradient(circle_at_50%_45%,black_0%,black_55%,transparent_88%)]">
           {/* Smaller, repeated logos (keep subtle) */}
           <div className="absolute -top-6 -left-6 w-[220px] h-[220px] rotate-[-16deg] blur-[0.2px]">
             <BrandLogo className="w-full h-full object-contain" />
@@ -231,38 +241,51 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
           </div>
         </div>
         {/* soft glow accents */}
-        <div className="absolute -top-24 -left-24 w-96 h-96 rounded-full bg-kauvery-purple/10 blur-3xl" />
-        <div className="absolute -bottom-24 -right-24 w-[420px] h-[420px] rounded-full bg-kauvery-violet/10 blur-3xl" />
+        <div className="absolute -top-24 -left-24 w-96 h-96 rounded-full bg-kauvery-purple/25 blur-3xl" />
+        <div className="absolute -bottom-24 -right-24 w-[420px] h-[420px] rounded-full bg-kauvery-pink/20 blur-3xl" />
       </div>
 
       <div className="relative min-h-screen flex items-center justify-center px-4 py-10">
         <div className="w-full max-w-md">
-          <div className="relative overflow-hidden rounded-3xl border border-gray-200 bg-white shadow-2xl shadow-slate-200/50">
+          <div className={`relative overflow-hidden rounded-3xl border border-kauvery-purple/15 shadow-2xl shadow-kauvery-soft ${KAUVERY_CARD_SURFACE}`}>
             <div className="absolute inset-x-0 top-0 h-1.5 bg-gradient-to-r from-kauvery-purple via-kauvery-violet to-kauvery-pink" />
 
             <div className="p-8 sm:p-10">
+              {sessionExpired && (
+                <div
+                  role="alert"
+                  className="mb-6 rounded-xl border border-slate-200 bg-white px-4 py-3 text-center shadow-sm"
+                >
+                  <p className="text-sm font-semibold text-slate-800">
+                    Your session has expired
+                  </p>
+                  <p className="mt-1 text-xs font-medium text-slate-600">
+                    You were signed out. Please sign in again.
+                  </p>
+                </div>
+              )}
               <div className="flex flex-col items-center text-center">
-                <div className="w-16 h-16 rounded-2xl bg-purple-50 border border-purple-100 shadow-sm flex items-center justify-center overflow-hidden">
+                <div className="w-16 h-16 rounded-2xl bg-kauvery-purple/20 border border-kauvery-purple/40 shadow-sm flex items-center justify-center overflow-hidden">
                   <BrandLogo className="max-h-12 max-w-14 object-contain" />
                 </div>
-                <div className="mt-4 text-xs uppercase tracking-widest text-gray-500 font-extrabold">
+                <div className="mt-4 text-xs uppercase tracking-widest text-kauvery-peach/90 font-extrabold">
                   Kaizen Workflow
                 </div>
-                <h1 className="text-2xl sm:text-3xl font-black text-gray-900 mt-1">
+                <h1 className="text-2xl sm:text-3xl font-black text-slate-900 mt-1">
                   Sign in to continue
                 </h1>
-                <p className="text-sm text-gray-600 font-semibold mt-2">
+                <p className="text-sm text-slate-600 font-semibold mt-2">
                   Use your employee ID and HRMS password.
                 </p>
               </div>
 
               <form onSubmit={handleSubmitCredentials} className="mt-8 space-y-5">
                 <div>
-                  <label className="block text-xs font-extrabold text-gray-700 uppercase mb-1.5">
+                  <label className="block text-xs font-extrabold text-slate-400 uppercase mb-1.5">
                     Employee ID
                   </label>
                   <div className="relative">
-                    <span className="material-icons-round absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-lg">
+                    <span className="material-icons-round absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-lg">
                       badge
                     </span>
                     <input
@@ -270,17 +293,17 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
                       onChange={(e) => setEmployeeId(e.target.value)}
                       placeholder="Enter your employee ID"
                       autoComplete="username"
-                      className="w-full pl-11 pr-3 py-3 rounded-xl border border-gray-300 text-sm text-gray-900 font-semibold bg-white focus:ring-2 focus:ring-kauvery-purple outline-none"
+                      className="w-full pl-11 pr-3 py-3 rounded-xl border border-kauvery-purple/25 text-sm text-slate-800 font-semibold bg-white placeholder:text-slate-400 focus:ring-2 focus:ring-kauvery-purple/30 outline-none"
                     />
                   </div>
                 </div>
 
                 <div>
-                  <label className="block text-xs font-extrabold text-gray-700 uppercase mb-1.5">
+                  <label className="block text-xs font-extrabold text-slate-400 uppercase mb-1.5">
                     Password
                   </label>
                   <div className="relative">
-                    <span className="material-icons-round absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-lg">
+                    <span className="material-icons-round absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-lg">
                       lock
                     </span>
                     <input
@@ -289,13 +312,13 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
                       onChange={(e) => setPassword(e.target.value)}
                       placeholder="Enter password"
                       autoComplete="current-password"
-                      className="w-full pl-11 pr-3 py-3 rounded-xl border border-gray-300 text-sm text-gray-900 font-semibold bg-white focus:ring-2 focus:ring-kauvery-purple outline-none"
+                      className="w-full pl-11 pr-3 py-3 rounded-xl border border-kauvery-purple/25 text-sm text-slate-800 font-semibold bg-white placeholder:text-slate-400 focus:ring-2 focus:ring-kauvery-purple/30 outline-none"
                     />
                   </div>
                 </div>
 
                 {error && (
-                  <div className="text-xs text-red-800 font-extrabold bg-red-50 border border-red-200 rounded-xl p-3">
+                  <div className="text-xs text-red-700 font-extrabold bg-red-50 border border-red-200 rounded-xl p-3">
                     {error}
                   </div>
                 )}
@@ -303,19 +326,19 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
                 <button
                   type="submit"
                   disabled={isSubmitting}
-                  className="w-full py-3 rounded-xl bg-gradient-to-r from-kauvery-purple to-kauvery-violet text-white font-black shadow-lg shadow-purple-200/60 hover:opacity-95 disabled:opacity-60 disabled:cursor-not-allowed transition-opacity"
+                  className="w-full py-3 rounded-xl bg-gradient-to-r from-kauvery-purple to-kauvery-violet text-white font-black shadow-lg shadow-kauvery-glow hover:opacity-95 disabled:opacity-60 disabled:cursor-not-allowed transition-opacity"
                 >
                   {isSubmitting ? 'Signing in...' : 'Sign In'}
                 </button>
 
-                <div className="pt-2 text-[11px] text-gray-500 font-semibold leading-relaxed text-center">
+                <div className="pt-2 text-[11px] text-slate-500 font-semibold leading-relaxed text-center">
                   By continuing, you agree to follow your organization’s information security policies.
                 </div>
               </form>
             </div>
           </div>
 
-          <div className="mt-5 text-center text-[11px] text-gray-500 font-semibold">
+          <div className="mt-5 text-center text-[11px] text-slate-500 font-semibold">
             Secure access • Role-based workflow
           </div>
         </div>
