@@ -14,6 +14,7 @@ import { Reports } from './screens/Reports';
 import { RoleListView } from './screens/RoleListView';
 import { HodApprovalDesk } from './screens/HodApprovalDesk';
 import { KAUVERY_SHELL_MESH } from './theme/kauverySurfaces';
+import { PORTAL_NAME } from './constants';
 import { Role, Suggestion, Status, ViewType, User, type UserUnitScopes } from './types';
 import {
   consumeSessionExpiredFlag,
@@ -188,6 +189,16 @@ const HOD_DESK_ROLES: Role[] = [
   Role.NURSING_HEAD,
 ];
 
+const SIDEBAR_COLLAPSED_KEY = 'kaizen.sidebar.collapsed';
+
+function readSidebarCollapsed(): boolean {
+  try {
+    return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
 const App: React.FC = () => {
   const lastSessionSyncTokenRef = useRef<string | null>(null);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -198,9 +209,22 @@ const App: React.FC = () => {
   const [detailViewMode, setDetailViewMode] = useState<
     'default' | 'tracking' | 'hod-review'
   >('default');
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarCollapsed);
   const [unitOptions, setUnitOptions] = useState<
     { id: string; code: string; name: string }[]
   >([]);
+
+  const toggleSidebarCollapsed = useCallback(() => {
+    setSidebarCollapsed((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem(SIDEBAR_COLLAPSED_KEY, next ? '1' : '0');
+      } catch {
+        // ignore quota / private mode
+      }
+      return next;
+    });
+  }, []);
   const [departmentOptions, setDepartmentOptions] = useState<
     { id: string; name: string }[]
   >([]);
@@ -550,6 +574,12 @@ const App: React.FC = () => {
     }
   }, [currentView, canAccessKaizenReports]);
 
+  useLayoutEffect(() => {
+    if (currentView === 'create' && currentRole !== Role.EMPLOYEE) {
+      setCurrentView('dashboard');
+    }
+  }, [currentView, currentRole]);
+
   const renderContent = () => {
     if (currentView === 'suggestion-detail' && selectedSuggestion) {
       return (
@@ -592,7 +622,9 @@ const App: React.FC = () => {
               userName={currentUser?.name}
               assignedUnitCodes={dashboardAssignedUnitCodes}
               onNavigateToReports={canAccessKaizenReports ? () => setCurrentView('reports') : undefined}
-              onNewIdea={() => setCurrentView('create')}
+              onNewIdea={
+                currentRole === Role.EMPLOYEE ? () => setCurrentView('create') : undefined
+              }
             />
           </div>
         );
@@ -808,7 +840,9 @@ const App: React.FC = () => {
           userName={currentUser?.name}
           assignedUnitCodes={dashboardAssignedUnitCodes}
           onNavigateToReports={canAccessKaizenReports ? () => setCurrentView('reports') : undefined}
-          onNewIdea={() => setCurrentView('create')}
+          onNewIdea={
+            currentRole === Role.EMPLOYEE ? () => setCurrentView('create') : undefined
+          }
         />
       </div>
     );
@@ -838,9 +872,11 @@ const App: React.FC = () => {
         className="pointer-events-none fixed bottom-0 left-1/4 h-[320px] w-[480px] rounded-full bg-gradient-to-tr from-kauvery-purple/12 via-kauvery-orange/8 to-transparent blur-3xl"
         aria-hidden="true"
       />
-      <Sidebar 
-        currentView={currentView} 
-        onViewChange={handleViewChange} 
+      <Sidebar
+        collapsed={sidebarCollapsed}
+        onToggleCollapsed={toggleSidebarCollapsed}
+        currentView={currentView}
+        onViewChange={handleViewChange}
         currentRole={currentRole}
         availableRoles={currentUser.roles}
         departmentHodAssignments={currentUser.departmentHodAssignments}
@@ -855,12 +891,16 @@ const App: React.FC = () => {
         }}
       />
       
-      <div className="relative pl-64 flex flex-col min-h-screen">
+      <div
+        className={`relative flex min-h-screen flex-col transition-[padding-left] duration-300 ease-in-out ${
+          sidebarCollapsed ? 'pl-[4.5rem]' : 'pl-64'
+        }`}
+      >
         {/* Top Navigation */}
         <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-kauvery-purple/15 bg-white/85 px-8 shadow-kauvery-card backdrop-blur-md">
           <div className="min-w-0">
             <div className="text-[10px] uppercase tracking-[0.2em] text-kauvery-purple/80 font-extrabold">
-              Kaizen Management
+              {PORTAL_NAME}
             </div>
             <div className="text-sm sm:text-base font-black bg-gradient-to-r from-kauvery-purple via-kauvery-violet to-kauvery-pink bg-clip-text text-transparent truncate">
               {currentView === 'dashboard'
@@ -905,8 +945,9 @@ const App: React.FC = () => {
                 setCurrentView('suggestion-detail');
               }}
             />
-            {!HOD_DESK_ROLES.includes(currentRole) && (
+            {currentRole === Role.EMPLOYEE && (
               <button
+                type="button"
                 onClick={() => setCurrentView('create')}
                 className="bg-gradient-to-r from-kauvery-purple via-kauvery-violet to-kauvery-pink hover:opacity-95 text-white px-4 py-2.5 rounded-xl text-sm font-black shadow-lg shadow-kauvery-soft ring-1 ring-white/20 transition-all flex items-center gap-2"
               >

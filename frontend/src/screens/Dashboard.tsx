@@ -23,6 +23,7 @@ import {
 import { employeeStatusStep } from '../utils/kaizenStatusHelp';
 import { effectiveImplementationProgressDisplay } from '../utils/implementerTemplateProgress';
 import { DateRangePicker } from '../components/DateRangePicker';
+import { PORTAL_NAME_SHORT } from '../constants';
 import { SearchableSelect } from '../components/SearchableSelect';
 import { KAUVERY_MODAL_SURFACE, KAUVERY_PANEL_BG, KAUVERY_TABLE_HEAD_BG } from '../theme/kauverySurfaces';
 
@@ -1323,7 +1324,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
               <span className="material-icons-round text-[22px]">insights</span>
             </div>
             <div className="min-w-0">
-              <div className="text-xs font-extrabold uppercase tracking-[0.2em] text-kauvery-peach/90">Kaizen Flow</div>
+              <div className="text-xs font-extrabold uppercase tracking-[0.2em] text-kauvery-peach/90">{PORTAL_NAME_SHORT}</div>
               <h1 className="mt-0.5 text-2xl font-black tracking-tight text-slate-900 sm:text-3xl">{roleHeader}</h1>
               {isBeTeam && (
                 <p className="mt-1 max-w-3xl text-sm font-semibold text-slate-400">{dashboardHeroSubtitle}</p>
@@ -1428,7 +1429,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                     type="category"
                     dataKey="name"
                     width={108}
-                    tick={{ fill: '#e2e8f0', fontSize: 11, fontWeight: 600 }}
+                    tick={{ fill: '#475569', fontSize: 11, fontWeight: 700 }}
                     axisLine={false}
                     tickLine={false}
                   />
@@ -1479,9 +1480,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
             <div className="space-y-3.5">
               {unitDistribution.slice(0, 6).map((row) => (
                 <div key={row.name}>
-                  <div className="mb-1 flex items-center justify-between text-xs font-bold text-slate-300">
-                    <span className="truncate pr-2">{row.name}</span>
-                    <span className="tabular-nums text-slate-400">{row.value}</span>
+                  <div className="mb-1 flex items-center justify-between text-xs font-bold">
+                    <span className="truncate pr-2 text-slate-700">{row.name}</span>
+                    <span className="tabular-nums text-slate-600">{row.value}</span>
                   </div>
                   <div className="h-2 overflow-hidden rounded-full bg-kauvery-purple/25 ring-1 ring-kauvery-violet/20">
                     <div
@@ -1700,7 +1701,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
             <span className="material-icons-round text-[22px]">dashboard</span>
           </div>
           <div className="min-w-0">
-            <div className="text-xs font-extrabold uppercase tracking-[0.2em] text-kauvery-peach/90">Kaizen Flow</div>
+            <div className="text-xs font-extrabold uppercase tracking-[0.2em] text-kauvery-peach/90">{PORTAL_NAME_SHORT}</div>
             <h1 className="mt-0.5 text-2xl font-black tracking-tight text-slate-900 sm:text-3xl">{dashboardWelcomeTitle}</h1>
             <p className="mt-1 max-w-3xl text-sm font-semibold text-slate-400">{dashboardHeroSubtitle}</p>
             <p className="mt-2 text-[11px] font-semibold text-slate-500">
