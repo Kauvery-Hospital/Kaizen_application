@@ -1,5 +1,5 @@
 import { ForbiddenException, Injectable } from '@nestjs/common';
-import { Prisma, RoleCode } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
 import { mapTokenRolesToAppRoles } from '../auth/auth-role-mapping';
 import type { JwtAccessPayload } from '../auth/guards/jwt-auth.guard';
@@ -28,28 +28,24 @@ export class ReportsService {
     return this.norm(v).toLowerCase();
   }
 
-  private async getAllowedUnitsForCoordinator(userId: string | undefined): Promise<string[] | null> {
-    if (!userId) return null;
-    const rows = await (this.prisma as any).userRoleUnitScope.findMany({
-      where: { userId, roleCode: RoleCode.UNIT_COORDINATOR },
-      select: { unitCode: true },
-      take: 5000,
-    });
-    const units = (Array.isArray(rows) ? rows : [])
-      .map((r: any) => this.norm(r.unitCode))
-      .filter(Boolean);
-    return Array.from(new Set(units));
-  }
-
   private resolveActorRole(payload: JwtAccessPayload): AppRole {
     const allowed = mapTokenRolesToAppRoles(payload.roles ?? []);
-    // Prefer BE Head > BE Member > Unit Coordinator > first role
+    // Prefer BE Head > BE Member > other roles (assertReportAllowed still gates catalog access).
     if (allowed.includes(AppRole.BUSINESS_EXCELLENCE_HEAD))
       return AppRole.BUSINESS_EXCELLENCE_HEAD;
     if (allowed.includes(AppRole.BUSINESS_EXCELLENCE))
       return AppRole.BUSINESS_EXCELLENCE;
     if (allowed.includes(AppRole.UNIT_COORDINATOR)) return AppRole.UNIT_COORDINATOR;
     return allowed[0] ?? AppRole.EMPLOYEE;
+  }
+
+  private scopeWhereForRole(actorRole: AppRole): Prisma.SuggestionWhereInput {
+    if (actorRole === AppRole.BUSINESS_EXCELLENCE || actorRole === AppRole.BUSINESS_EXCELLENCE_HEAD) {
+      return {};
+    }
+    throw new ForbiddenException(
+      'Kaizen reports are only available for the Business Excellence team.',
+    );
   }
 
   private assertReportAllowed(report: string, role: AppRole) {
@@ -101,27 +97,6 @@ export class ReportsService {
     }
 
     return and.length ? { AND: and } : {};
-  }
-
-  private async scopeWhereForRole(payload: JwtAccessPayload, actorRole: AppRole): Promise<Prisma.SuggestionWhereInput> {
-    if (actorRole === AppRole.BUSINESS_EXCELLENCE || actorRole === AppRole.BUSINESS_EXCELLENCE_HEAD) {
-      return {};
-    }
-    if (actorRole === AppRole.UNIT_COORDINATOR) {
-      const allowedUnits = await this.getAllowedUnitsForCoordinator(payload.sub);
-      if (!allowedUnits || allowedUnits.length === 0) {
-        // No scopes configured => no visibility.
-        return { id: { equals: '__none__' } };
-      }
-      // Mirror suggestions.list coordinator broad unit filter (originator unit or assigned unit).
-      return {
-        OR: [
-          { unit: { in: allowedUnits } },
-          { assignedUnit: { in: allowedUnits } },
-        ],
-      };
-    }
-    throw new ForbiddenException('Reports are available only for BE and Unit Coordinator roles');
   }
 
   private async groupByCount(
@@ -246,7 +221,7 @@ export class ReportsService {
     const skip = dto.skip ?? 0;
     const take = dto.take ?? 50;
 
-    const scopeWhere = await this.scopeWhereForRole(payload, actorRole);
+    const scopeWhere = this.scopeWhereForRole(actorRole);
     const commonWhere = this.applyCommonFilters(dto);
     const baseWhere: Prisma.SuggestionWhereInput = { AND: [scopeWhere, commonWhere] };
 

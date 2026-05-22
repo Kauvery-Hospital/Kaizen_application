@@ -1,5 +1,5 @@
 
-import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { LoginPage } from './screens/LoginPage';
 import { Dashboard } from './screens/Dashboard';
@@ -13,7 +13,15 @@ import { BeOverview } from './screens/BeOverview';
 import { Reports } from './screens/Reports';
 import { RoleListView } from './screens/RoleListView';
 import { HodApprovalDesk } from './screens/HodApprovalDesk';
-import { Role, Suggestion, Status, ViewType, User } from './types';
+import { KAUVERY_SHELL_MESH } from './theme/kauverySurfaces';
+import { Role, Suggestion, Status, ViewType, User, type UserUnitScopes } from './types';
+import {
+  consumeSessionExpiredFlag,
+  isIdleSessionExpired,
+  markSessionExpired,
+  touchSessionActivity,
+} from './auth/idleSession';
+import { useIdleSessionTimeout } from './auth/useIdleSessionTimeout';
 import { clearSession, loadSession, saveSession } from './auth/session';
 import { resolveImplementationPatchActor } from './utils/implementationPatchActor';
 import {
@@ -42,6 +50,16 @@ const BACKEND_TO_UI_ROLE: Record<string, Role> = {
   ADMIN: Role.ADMIN,
   SUPER_ADMIN: Role.ADMIN,
 };
+
+function getAssignedUnitCodesForRole(
+  unitScopes: UserUnitScopes | undefined,
+  role: Role,
+): string[] {
+  if (!unitScopes) return [];
+  if (role === Role.UNIT_COORDINATOR) return unitScopes.UNIT_COORDINATOR ?? [];
+  if (role === Role.SELECTION_COMMITTEE) return unitScopes.SELECTION_COMMITTEE ?? [];
+  return [];
+}
 
 function mapBackendRolesToUiRoles(rawRoles: string[] | undefined): Role[] {
   const mapped = (Array.isArray(rawRoles) ? rawRoles : [])
@@ -176,7 +194,7 @@ const App: React.FC = () => {
   const [currentView, setCurrentView] = useState<ViewType>('dashboard');
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [selectedSuggestion, setSelectedSuggestion] = useState<Suggestion | null>(null);
-  const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
+  const [suggestionDetailReturnView, setSuggestionDetailReturnView] = useState<ViewType>('dashboard');
   const [detailViewMode, setDetailViewMode] = useState<
     'default' | 'tracking' | 'hod-review'
   >('default');
@@ -189,14 +207,36 @@ const App: React.FC = () => {
   const [meDefaults, setMeDefaults] = useState<{ unit?: string; department?: string }>(
     {},
   );
+  const [sessionExpired, setSessionExpired] = useState(() => consumeSessionExpiredFlag());
 
   useEffect(() => {
     const stored = loadSession();
-    if (stored) setCurrentUser(stored);
+    if (!stored) return;
+    if (isIdleSessionExpired()) {
+      clearSession();
+      markSessionExpired();
+      setSessionExpired(true);
+      return;
+    }
+    touchSessionActivity();
+    setCurrentUser(stored);
   }, []);
 
+  const handleSessionExpire = useCallback(() => {
+    clearSession();
+    markSessionExpired();
+    setSelectedSuggestion(null);
+    setCurrentView('dashboard');
+    setCurrentUser(null);
+    setSessionExpired(true);
+  }, []);
+
+  useIdleSessionTimeout(Boolean(currentUser), handleSessionExpire);
+
   const handleLogin = useCallback((user: User) => {
+    touchSessionActivity();
     saveSession(user);
+    setSessionExpired(false);
     setCurrentUser(user);
   }, []);
 
@@ -212,7 +252,6 @@ const App: React.FC = () => {
         return updated;
       });
       setSelectedSuggestion(null);
-      setIsDetailModalOpen(false);
       setCurrentView(HOD_DESK_ROLES.includes(nextRole) ? 'hod-desk' : 'dashboard');
     },
     [],
@@ -254,6 +293,7 @@ const App: React.FC = () => {
           employeeCode?: string;
           roles?: string[];
           departmentHodAssignments?: string[];
+          unitScopes?: UserUnitScopes;
         };
       };
       const nextToken = String(data?.accessToken || token);
@@ -279,6 +319,7 @@ const App: React.FC = () => {
           departmentHodAssignments: Array.isArray(data?.user?.departmentHodAssignments)
             ? data.user.departmentHodAssignments.filter(Boolean)
             : (prev.departmentHodAssignments ?? []),
+          unitScopes: data?.user?.unitScopes ?? prev.unitScopes,
         };
         saveSession(updated);
         return updated;
@@ -357,11 +398,17 @@ const App: React.FC = () => {
   }, [currentUser?.id]);
 
   const currentRole: Role = currentUser?.role || Role.EMPLOYEE;
+  const canAccessKaizenReports =
+    currentRole === Role.BUSINESS_EXCELLENCE || currentRole === Role.BUSINESS_EXCELLENCE_HEAD;
   const roleScopedSuggestions = getRoleScopedSuggestions(
     suggestions,
     currentRole,
     currentUser?.name,
     currentUser?.employeeCode,
+  );
+  const dashboardAssignedUnitCodes = getAssignedUnitCodesForRole(
+    currentUser?.unitScopes,
+    currentRole,
   );
 
   const refreshSuggestions = useCallback(async () => {
@@ -479,7 +526,62 @@ const App: React.FC = () => {
   [apiBase, authHeaders, currentUser],
 );
 
+  const handleViewChange = useCallback((view: ViewType) => {
+    if (view !== 'template' && view !== 'suggestion-detail') {
+      setSelectedSuggestion(null);
+    }
+    setCurrentView(view);
+  }, []);
+
+  const closeSuggestionDetail = useCallback(() => {
+    setCurrentView(suggestionDetailReturnView);
+    setSelectedSuggestion(null);
+  }, [suggestionDetailReturnView]);
+
+  useEffect(() => {
+    if (currentView === 'suggestion-detail' && !selectedSuggestion) {
+      setCurrentView('dashboard');
+    }
+  }, [currentView, selectedSuggestion]);
+
+  useLayoutEffect(() => {
+    if (currentView === 'reports' && !canAccessKaizenReports) {
+      setCurrentView('dashboard');
+    }
+  }, [currentView, canAccessKaizenReports]);
+
   const renderContent = () => {
+    if (currentView === 'suggestion-detail' && selectedSuggestion) {
+      return (
+        <div className="animate-fade-in w-full min-h-0 max-w-[1920px] mx-auto flex flex-col">
+          <SuggestionDetailModal
+            layout="page"
+            isOpen
+            suggestion={selectedSuggestion}
+            onClose={closeSuggestionDetail}
+            onOpenTemplatePage={(s) => {
+              setSelectedSuggestion(s);
+              setDetailViewMode('default');
+              setCurrentView('template');
+            }}
+            role={currentRole}
+            currentUserName={currentUser.name}
+            userRoles={currentUser.roles?.length ? currentUser.roles : [currentUser.role]}
+            implementationActorUser={currentUser}
+            onUpdateStatus={handleUpdateStatus}
+            onSuggestionRefreshed={(s) => {
+              setSuggestions((prev) => prev.map((x) => (x.id === s.id ? s : x)));
+              setSelectedSuggestion((prev) => (prev?.id === s.id ? s : prev));
+            }}
+            initialView={detailViewMode}
+            apiBase={apiBase}
+            accessToken={currentUser.accessToken}
+            unitOptions={unitOptions}
+            departmentOptions={departmentOptions}
+          />
+        </div>
+      );
+    }
     if (currentView === 'hod-desk') {
       if (!HOD_DESK_ROLES.includes(currentRole)) {
         return (
@@ -488,7 +590,8 @@ const App: React.FC = () => {
               suggestions={roleScopedSuggestions}
               role={currentRole}
               userName={currentUser?.name}
-              onNavigateToReports={() => setCurrentView('reports')}
+              assignedUnitCodes={dashboardAssignedUnitCodes}
+              onNavigateToReports={canAccessKaizenReports ? () => setCurrentView('reports') : undefined}
               onNewIdea={() => setCurrentView('create')}
             />
           </div>
@@ -499,9 +602,10 @@ const App: React.FC = () => {
           suggestions={roleScopedSuggestions}
           role={currentRole}
           onSelectIdea={(s) => {
+            setSuggestionDetailReturnView('hod-desk');
             setDetailViewMode('hod-review');
             setSelectedSuggestion(s);
-            setIsDetailModalOpen(true);
+            setCurrentView('suggestion-detail');
           }}
         />
       );
@@ -513,10 +617,12 @@ const App: React.FC = () => {
           role={currentRole}
           currentUserName={currentUser.name}
           currentUserEmployeeCode={currentUser.employeeCode}
+          assignedUnitCodes={dashboardAssignedUnitCodes}
           onSelect={(s) => {
+            setSuggestionDetailReturnView('pipeline');
             setDetailViewMode('default');
             setSelectedSuggestion(s);
-            setIsDetailModalOpen(true);
+            setCurrentView('suggestion-detail');
           }}
         />
       );
@@ -528,9 +634,10 @@ const App: React.FC = () => {
             apiBase={apiBase}
             accessToken={currentUser.accessToken}
             onOpenIdea={(s) => {
+              setSuggestionDetailReturnView('be-overview');
               setDetailViewMode('default');
               setSelectedSuggestion(s);
-              setIsDetailModalOpen(true);
+              setCurrentView('suggestion-detail');
             }}
           />
         </div>
@@ -552,8 +659,7 @@ const App: React.FC = () => {
     if (currentView === 'create') {
       return (
         <div className="max-w-4xl mx-auto animate-fade-in">
-             <div className="mb-6 flex items-center justify-between">
-                <h1 className="text-2xl font-bold text-gray-800">Submit New Kaizen Idea</h1>
+             <div className="mb-4 flex justify-end">
                 <button onClick={() => setCurrentView('dashboard')} className="text-gray-500 hover:text-gray-700">Cancel</button>
              </div>
              <SuggestionForm 
@@ -578,18 +684,15 @@ const App: React.FC = () => {
     if (currentView === 'list') {
         return (
              <div className="animate-fade-in">
-                 <div className="mb-6 flex items-center justify-between">
-                    <h1 className="text-2xl font-bold text-gray-800">All Suggestions</h1>
-                 </div>
                  <SuggestionList 
                     suggestions={suggestions} 
                     role={currentRole} 
                     currentUserName={currentUser.name}
-                    onQuickUpdate={handleUpdateStatus}
                     onSelect={(s) => {
+                      setSuggestionDetailReturnView('list');
                       setDetailViewMode('tracking');
                       setSelectedSuggestion(s);
-                      setIsDetailModalOpen(true);
+                      setCurrentView('suggestion-detail');
                     }}
                 />
             </div>
@@ -703,7 +806,8 @@ const App: React.FC = () => {
           suggestions={roleScopedSuggestions}
           role={currentRole}
           userName={currentUser?.name}
-          onNavigateToReports={() => setCurrentView('reports')}
+          assignedUnitCodes={dashboardAssignedUnitCodes}
+          onNavigateToReports={canAccessKaizenReports ? () => setCurrentView('reports') : undefined}
           onNewIdea={() => setCurrentView('create')}
         />
       </div>
@@ -711,26 +815,32 @@ const App: React.FC = () => {
   };
 
   if (!currentUser) {
-    return <LoginPage onLogin={handleLogin} />;
+    return (
+      <LoginPage
+        onLogin={handleLogin}
+        sessionExpired={sessionExpired}
+        onDismissSessionExpired={() => setSessionExpired(false)}
+      />
+    );
   }
 
   return (
-    <div className="relative min-h-screen font-sans overflow-x-hidden">
+    <div className="relative min-h-screen overflow-x-hidden font-sans text-slate-800">
       <div
-        className="pointer-events-none fixed inset-0 bg-kauvery-mesh opacity-90"
+        className={`pointer-events-none fixed inset-0 ${KAUVERY_SHELL_MESH} opacity-70`}
         aria-hidden="true"
       />
       <div
-        className="pointer-events-none fixed -top-32 right-0 h-[420px] w-[420px] rounded-full bg-gradient-to-br from-kauvery-pink/20 via-kauvery-violet/15 to-transparent blur-3xl"
+        className="pointer-events-none fixed -top-32 right-0 h-[420px] w-[420px] rounded-full bg-gradient-to-br from-kauvery-pink/15 via-kauvery-violet/12 to-transparent blur-3xl"
         aria-hidden="true"
       />
       <div
-        className="pointer-events-none fixed bottom-0 left-1/4 h-[320px] w-[480px] rounded-full bg-gradient-to-tr from-kauvery-purple/12 to-transparent blur-3xl"
+        className="pointer-events-none fixed bottom-0 left-1/4 h-[320px] w-[480px] rounded-full bg-gradient-to-tr from-kauvery-purple/12 via-kauvery-orange/8 to-transparent blur-3xl"
         aria-hidden="true"
       />
       <Sidebar 
         currentView={currentView} 
-        onViewChange={setCurrentView} 
+        onViewChange={handleViewChange} 
         currentRole={currentRole}
         availableRoles={currentUser.roles}
         departmentHodAssignments={currentUser.departmentHodAssignments}
@@ -738,8 +848,8 @@ const App: React.FC = () => {
         currentUserName={currentUser.name}
         onLogout={() => {
           clearSession();
+          setSessionExpired(false);
           setSelectedSuggestion(null);
-          setIsDetailModalOpen(false);
           setCurrentView('dashboard');
           setCurrentUser(null);
         }}
@@ -747,9 +857,9 @@ const App: React.FC = () => {
       
       <div className="relative pl-64 flex flex-col min-h-screen">
         {/* Top Navigation */}
-        <header className="h-16 bg-white/75 backdrop-blur-md border-b border-purple-200/40 px-8 flex items-center justify-between sticky top-0 z-30 shadow-kauvery-soft">
+        <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-kauvery-purple/15 bg-white/85 px-8 shadow-kauvery-card backdrop-blur-md">
           <div className="min-w-0">
-            <div className="text-[10px] uppercase tracking-[0.2em] text-kauvery-violet font-extrabold">
+            <div className="text-[10px] uppercase tracking-[0.2em] text-kauvery-purple/80 font-extrabold">
               Kaizen Management
             </div>
             <div className="text-sm sm:text-base font-black bg-gradient-to-r from-kauvery-purple via-kauvery-violet to-kauvery-pink bg-clip-text text-transparent truncate">
@@ -765,8 +875,12 @@ const App: React.FC = () => {
                     ? 'Business Excellence reports'
                   : currentView === 'hod-desk'
                     ? 'Head approval desk'
+                  : currentView === 'suggestion-detail'
+                    ? 'Kaizen detail'
                   : currentView === 'list'
                     ? 'All Suggestions'
+                    : currentView === 'reports'
+                      ? 'Kaizen Reports'
                     : currentView === 'role-list'
                       ? 'Role List'
                     : currentView === 'users'
@@ -783,11 +897,12 @@ const App: React.FC = () => {
               currentUserName={currentUser.name}
               currentUserEmployeeCode={currentUser.employeeCode}
               onOpenSuggestion={(s) => {
+                setSuggestionDetailReturnView(currentView);
                 setDetailViewMode(
                   HOD_DESK_ROLES.includes(currentRole) ? 'hod-review' : 'tracking',
                 );
                 setSelectedSuggestion(s);
-                setIsDetailModalOpen(true);
+                setCurrentView('suggestion-detail');
               }}
             />
             {!HOD_DESK_ROLES.includes(currentRole) && (
@@ -803,41 +918,17 @@ const App: React.FC = () => {
         </header>
 
         <main
-          className={`flex-1 overflow-y-auto bg-gradient-to-br from-white/40 via-purple-50/25 to-pink-50/20 ${
+          className={`flex-1 overflow-y-auto bg-gradient-to-br from-kauvery-purple/[0.04] via-white to-kauvery-pink/[0.03] ${
             currentView === 'template'
               ? 'p-4 [@media(orientation:landscape)]:p-2 [@media(orientation:landscape)]:lg:p-4'
-              : 'p-6'
+              : currentView === 'suggestion-detail'
+                ? 'p-3 sm:p-5 lg:p-6'
+                : 'p-6'
           }`}
         >
           {renderContent()}
         </main>
       </div>
-
-      <SuggestionDetailModal
-        isOpen={isDetailModalOpen && !!selectedSuggestion}
-        suggestion={selectedSuggestion}
-        onClose={() => setIsDetailModalOpen(false)}
-        onOpenTemplatePage={(s, opts) => {
-          setSelectedSuggestion(s);
-          setDetailViewMode('default');
-          setCurrentView('template');
-          setIsDetailModalOpen(false);
-        }}
-        role={currentRole}
-        currentUserName={currentUser.name}
-        userRoles={currentUser.roles?.length ? currentUser.roles : [currentUser.role]}
-        implementationActorUser={currentUser}
-        onUpdateStatus={handleUpdateStatus}
-        onSuggestionRefreshed={(s) => {
-          setSuggestions((prev) => prev.map((x) => (x.id === s.id ? s : x)));
-          setSelectedSuggestion((prev) => (prev?.id === s.id ? s : prev));
-        }}
-        initialView={detailViewMode}
-        apiBase={apiBase}
-        accessToken={currentUser.accessToken}
-        unitOptions={unitOptions}
-        departmentOptions={departmentOptions}
-      />
     </div>
   );
 };

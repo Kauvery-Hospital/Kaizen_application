@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Role, Status, type Suggestion } from '../types';
+import { SearchableSelect } from '../components/SearchableSelect';
 
 type ReportId =
   | 'overallRegister'
@@ -227,6 +228,8 @@ export const Reports: React.FC<{
   unitOptions?: { code: string; name?: string }[];
   departmentOptions?: { name: string }[];
 }> = ({ apiBase, accessToken, role, unitOptions, departmentOptions }) => {
+  const isBeReportUser =
+    role === Role.BUSINESS_EXCELLENCE || role === Role.BUSINESS_EXCELLENCE_HEAD;
   const [report, setReport] = useState<ReportId>('kpiCounts');
   const [q, setQ] = useState('');
   const [from, setFrom] = useState('');
@@ -289,7 +292,7 @@ export const Reports: React.FC<{
   }, [report, skip, q, from, to, unit, department, status, category]);
 
   useEffect(() => {
-    if (!accessToken) return;
+    if (!accessToken || !isBeReportUser) return;
     let cancelled = false;
     setLoading(true);
     setError(null);
@@ -318,9 +321,10 @@ export const Reports: React.FC<{
     return () => {
       cancelled = true;
     };
-  }, [accessToken, apiBase, authHeaders, queryParams]);
+  }, [accessToken, apiBase, authHeaders, queryParams, isBeReportUser]);
 
   const download = useCallback(async () => {
+    if (!isBeReportUser) return;
     const url = `${apiBase}/reports/export?${queryParams.toString()}`;
     const res = await fetch(url, { headers: authHeaders() });
     if (!res.ok) throw new Error(await res.text());
@@ -335,7 +339,7 @@ export const Reports: React.FC<{
     a.click();
     a.remove();
     URL.revokeObjectURL(a.href);
-  }, [apiBase, authHeaders, queryParams]);
+  }, [apiBase, authHeaders, queryParams, isBeReportUser]);
 
   const isTable = useMemo(
     () => Array.isArray(rows?.items) && typeof rows?.total === 'number',
@@ -419,6 +423,16 @@ export const Reports: React.FC<{
     </>
   );
 
+  if (!isBeReportUser) {
+    return (
+      <div className="animate-fade-in max-w-lg mx-auto mt-10 rounded-2xl border border-kauvery-purple/25 bg-white px-6 py-8 text-center shadow-kauvery-soft">
+        <p className="text-sm font-bold text-gray-800">
+          Kaizen reports are only available for the Business Excellence team.
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="animate-fade-in w-full max-w-[100vw] mx-auto flex flex-col min-h-[calc(100vh-5rem)] px-2 sm:px-4 pb-6">
       {/* Top bar: report types + title + download */}
@@ -436,19 +450,9 @@ export const Reports: React.FC<{
             </span>
             Report types
           </button>
-          <div className="min-w-0 pt-0.5">
-            <div className="text-xs uppercase tracking-wide text-kauvery-purple font-extrabold">
-              Kaizen reports
-            </div>
-            <h1 className="text-xl sm:text-2xl font-black text-gray-900 mt-0.5 leading-tight">
-              {role === Role.UNIT_COORDINATOR
-                ? 'Reports for your unit(s)'
-                : 'Reports for the whole organization'}
-            </h1>
-            <p className="text-xs sm:text-sm text-gray-600 font-semibold mt-1 max-w-3xl">
-              Open <span className="font-black text-gray-800">Report types</span> to switch views. Use
-              filters when you need to narrow dates or units. Tables use the full width below.
-            </p>
+          <div className="min-w-0 pt-0.5 text-xs sm:text-sm text-gray-600 font-semibold max-w-3xl">
+            Open <span className="font-black text-gray-800">Report types</span> to switch views. Use filters
+            when you need to narrow dates or units. Tables use the full width below.
           </div>
         </div>
 
@@ -557,74 +561,69 @@ export const Reports: React.FC<{
               </label>
               <label className="block">
                 <span className="text-xs font-extrabold text-gray-700">Unit</span>
-                <select
+                <SearchableSelect
+                  className="mt-1"
+                  aria-label="Unit filter"
                   value={unit}
-                  onChange={(e) => {
-                    setUnit(e.target.value);
+                  onChange={(v) => {
+                    setUnit(v);
                     setSkip(0);
                   }}
-                  className="mt-1 w-full px-3 py-2 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-purple-200 font-semibold text-sm bg-white"
-                >
-                  {unitOpts.map((u) => (
-                    <option key={u} value={u}>
-                      {u === 'all' ? 'All units' : u}
-                    </option>
-                  ))}
-                </select>
+                  options={unitOpts.map((u) => ({ value: u, label: u === 'all' ? 'All units' : u }))}
+                  placeholder="Search units…"
+                  inputClassName="w-full px-3 py-2 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-purple-200 font-semibold text-sm bg-white"
+                />
               </label>
               <label className="block">
                 <span className="text-xs font-extrabold text-gray-700">Department</span>
-                <select
+                <SearchableSelect
+                  className="mt-1"
+                  aria-label="Department filter"
                   value={department}
-                  onChange={(e) => {
-                    setDepartment(e.target.value);
+                  onChange={(v) => {
+                    setDepartment(v);
                     setSkip(0);
                   }}
-                  className="mt-1 w-full px-3 py-2 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-purple-200 font-semibold text-sm bg-white"
-                >
-                  {deptOpts.map((d) => (
-                    <option key={d} value={d}>
-                      {d === 'all' ? 'All departments' : d}
-                    </option>
-                  ))}
-                </select>
+                  options={deptOpts.map((d) => ({ value: d, label: d === 'all' ? 'All departments' : d }))}
+                  placeholder="Search departments…"
+                  inputClassName="w-full px-3 py-2 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-purple-200 font-semibold text-sm bg-white"
+                />
               </label>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mt-3 items-end">
               <label className="block">
                 <span className="text-xs font-extrabold text-gray-700">Idea status</span>
-                <select
+                <SearchableSelect
+                  className="mt-1"
+                  aria-label="Idea status filter"
                   value={status}
-                  onChange={(e) => {
-                    setStatus(e.target.value);
+                  onChange={(v) => {
+                    setStatus(v);
                     setSkip(0);
                   }}
-                  className="mt-1 w-full px-3 py-2 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-purple-200 font-semibold text-sm bg-white"
-                >
-                  {statusOptions.map((s) => (
-                    <option key={s} value={s}>
-                      {s === 'all' ? 'Any status' : s}
-                    </option>
-                  ))}
-                </select>
+                  options={statusOptions.map((s) => ({ value: s, label: s === 'all' ? 'Any status' : s }))}
+                  placeholder="Search status…"
+                  inputClassName="w-full px-3 py-2 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-purple-200 font-semibold text-sm bg-white"
+                />
               </label>
               <label className="block">
                 <span className="text-xs font-extrabold text-gray-700">Clinical / Supportive</span>
-                <select
+                <SearchableSelect
+                  className="mt-1"
+                  aria-label="Category filter"
                   value={category}
-                  onChange={(e) => {
-                    setCategory(e.target.value);
+                  onChange={(v) => {
+                    setCategory(v);
                     setSkip(0);
                   }}
-                  className="mt-1 w-full px-3 py-2 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-purple-200 font-semibold text-sm bg-white"
-                >
-                  {['all', 'Clinical', 'Supportive'].map((c) => (
-                    <option key={c} value={c}>
-                      {c === 'all' ? 'Both / not set' : c}
-                    </option>
-                  ))}
-                </select>
+                  options={['all', 'Clinical', 'Supportive'].map((c) => ({
+                    value: c,
+                    label: c === 'all' ? 'Both / not set' : c,
+                  }))}
+                  placeholder="Search category…"
+                  inputClassName="w-full px-3 py-2 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-purple-200 font-semibold text-sm bg-white"
+                />
               </label>
               <div className="sm:col-span-2 flex flex-wrap gap-2 justify-start sm:justify-end">
                 <button

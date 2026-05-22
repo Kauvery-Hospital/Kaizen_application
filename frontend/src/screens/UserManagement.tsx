@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { USER_ROLE_FILTER_OPTIONS } from '../constants/adminUserRoles';
+import { SearchableSelect } from '../components/SearchableSelect';
 
 type BackendRoleCode =
   | 'EMPLOYEE'
@@ -107,6 +108,42 @@ function getDepartmentNameFromDepartmentHodRoleCode(value: string): string {
   return isDepartmentHodRoleCode(value)
     ? value.slice(DEPARTMENT_HOD_PREFIX.length).trim()
     : '';
+}
+
+/**
+ * Finance / Ops / Nursing (and similar) use Level-2 functional roles + unit scopes
+ * (Head - Finance + Fin:SKG), not department HOD rows.
+ */
+function isFunctionalHeadDepartment(departmentName: string): boolean {
+  const d = String(departmentName || '').trim().toLowerCase();
+  if (!d) return false;
+  return (
+    d.includes('finance') ||
+    d.includes('operation') ||
+    d.includes('medical admin') ||
+    d.includes('nursing') ||
+    d.includes('quality') ||
+    d === 'hr' ||
+    d.includes('human resource')
+  );
+}
+
+function functionalHeadRoleHint(departmentName: string): string {
+  const d = String(departmentName || '').trim().toLowerCase();
+  if (d.includes('finance')) return 'Head - Finance';
+  if (d.includes('operation') || d.includes('medical admin')) return 'Head - Operations';
+  if (d.includes('nursing')) return 'Head - Nursing';
+  if (d.includes('quality')) return 'Head - Quality';
+  if (d === 'hr' || d.includes('human resource')) return 'Head - HR';
+  return 'the matching functional head role';
+}
+
+/** Map department HOD assignment → unit-scope chip (clinical departments only). */
+function departmentHodScopeChipLabel(departmentName: string, unitCode: string): string {
+  if (isFunctionalHeadDepartment(departmentName)) return '';
+  const dept = String(departmentName || '').trim();
+  const u = String(unitCode || '').trim();
+  return dept && u ? `DH:${dept}:${u}` : '';
 }
 
 function toneClasses(tone: 'purple' | 'slate' | 'amber' | 'emerald'): string {
@@ -576,6 +613,7 @@ export const UserManagement: React.FC<{
   const departmentHodRoleOptions = useMemo(
     () =>
       [...departments]
+        .filter((d) => !isFunctionalHeadDepartment(d))
         .sort((a, b) => a.localeCompare(b))
         .map((d) => ({
           code: makeDepartmentHodRoleCode(d),
@@ -584,12 +622,38 @@ export const UserManagement: React.FC<{
     [departments],
   );
 
+  const assignNewRoleSelectOptions = useMemo(
+    () => [
+      ...ROLE_OPTIONS.map((o) => ({ value: o.code, label: o.label })),
+      ...departmentHodRoleOptions.map((o) => ({ value: o.code, label: o.label })),
+    ],
+    [departmentHodRoleOptions],
+  );
+
   const activeUserDepartmentHodGroups = useMemo(() => {
     const map = new Map<string, string[]>();
     for (const row of activeUser?.departmentHodAssignments || []) {
       const dept = String(row.departmentName || '').trim();
       const unit = String(row.unitCode || '').trim();
-      if (!dept || !unit) continue;
+      if (!dept || !unit || isFunctionalHeadDepartment(dept)) continue;
+      const prev = map.get(dept) ?? [];
+      prev.push(unit);
+      map.set(dept, prev);
+    }
+    return [...map.entries()]
+      .map(([departmentName, unitCodes]) => ({
+        departmentName,
+        unitCodes: Array.from(new Set(unitCodes)).sort((a, b) => a.localeCompare(b)),
+      }))
+      .sort((a, b) => a.departmentName.localeCompare(b.departmentName));
+  }, [activeUser?.departmentHodAssignments]);
+
+  const legacyFunctionalDepartmentHodGroups = useMemo(() => {
+    const map = new Map<string, string[]>();
+    for (const row of activeUser?.departmentHodAssignments || []) {
+      const dept = String(row.departmentName || '').trim();
+      const unit = String(row.unitCode || '').trim();
+      if (!dept || !unit || !isFunctionalHeadDepartment(dept)) continue;
       const prev = map.get(dept) ?? [];
       prev.push(unit);
       map.set(dept, prev);
@@ -606,8 +670,7 @@ export const UserManagement: React.FC<{
     <div className="max-w-6xl mx-auto animate-fade-in">
       <div className="mb-6 flex items-start justify-between gap-4 flex-wrap">
         <div>
-          <h1 className="text-2xl font-black text-gray-900">User Management</h1>
-          <p className="text-xs text-gray-600 font-semibold mt-1">
+          <p className="text-xs text-gray-600 font-semibold">
             Server-side search and paging — built for large directories (10k+ users).
           </p>
           {summaryLine && (
@@ -620,54 +683,48 @@ export const UserManagement: React.FC<{
             <span className="material-icons-round absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-lg">
               toggle_on
             </span>
-            <select
-              value={activeFilter}
-              onChange={(e) =>
-                setActiveFilter(e.target.value as 'all' | 'active' | 'inactive')
-              }
-              className="w-full sm:w-[200px] pl-10 pr-3 py-2.5 rounded-xl border border-gray-300 bg-white text-sm font-semibold text-gray-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-purple-200 focus:border-purple-300"
+            <SearchableSelect
               aria-label="Active status"
-            >
-              <option value="all">All statuses</option>
-              <option value="active">Active only</option>
-              <option value="inactive">Inactive only</option>
-            </select>
+              value={activeFilter}
+              onChange={(v) => setActiveFilter(v as 'all' | 'active' | 'inactive')}
+              options={[
+                { value: 'all', label: 'All statuses' },
+                { value: 'active', label: 'Active only' },
+                { value: 'inactive', label: 'Inactive only' },
+              ]}
+              placeholder="Search…"
+              inputClassName="w-full sm:w-[200px] pl-10 pr-3 py-2.5 rounded-xl border border-gray-300 bg-white text-sm font-semibold text-gray-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-purple-200 focus:border-purple-300"
+            />
           </div>
           <div className="relative">
             <span className="material-icons-round absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-lg">
               filter_alt
             </span>
-            <select
-              value={roleHasFilter}
-              onChange={(e) => setRoleHasFilter(e.target.value)}
-              className="w-full sm:w-[260px] pl-10 pr-3 py-2.5 rounded-xl border border-gray-300 bg-white text-sm font-semibold text-gray-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-purple-200 focus:border-purple-300"
+            <SearchableSelect
               aria-label="Filter by assigned role"
-            >
-              <option value="all">Any role assignment</option>
-              {USER_ROLE_FILTER_OPTIONS.map((r) => (
-                <option key={r.code} value={r.code}>
-                  Has role: {r.label}
-                </option>
-              ))}
-            </select>
+              value={roleHasFilter}
+              onChange={setRoleHasFilter}
+              options={[
+                { value: 'all', label: 'Any role assignment' },
+                ...USER_ROLE_FILTER_OPTIONS.map((r) => ({ value: r.code, label: `Has role: ${r.label}` })),
+              ]}
+              placeholder="Search roles…"
+              inputClassName="w-full sm:w-[260px] pl-10 pr-3 py-2.5 rounded-xl border border-gray-300 bg-white text-sm font-semibold text-gray-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-purple-200 focus:border-purple-300"
+            />
           </div>
           <div className="relative">
             <span className="material-icons-round absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-lg">
               apartment
             </span>
-            <select
-              value={department}
-              onChange={(e) => setDepartment(e.target.value)}
-              className="w-full sm:w-[260px] max-w-[70vw] pl-10 pr-3 py-2.5 rounded-xl border border-gray-300 bg-white text-sm font-semibold text-gray-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-purple-200 focus:border-purple-300"
+            <SearchableSelect
               aria-label="Filter by department"
-            >
-              <option value="">All departments</option>
-              {departments.map((d) => (
-                <option key={d} value={d}>
-                  {d}
-                </option>
-              ))}
-            </select>
+              value={department}
+              onChange={setDepartment}
+              emptyOptionLabel="All departments"
+              options={departments.map((d) => ({ value: d, label: d }))}
+              placeholder="Search departments…"
+              inputClassName="w-full sm:w-[260px] max-w-[70vw] pl-10 pr-3 py-2.5 rounded-xl border border-gray-300 bg-white text-sm font-semibold text-gray-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-purple-200 focus:border-purple-300"
+            />
           </div>
           <div className="relative flex-1 min-w-[200px]">
             <span className="material-icons-round absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-lg">
@@ -682,17 +739,14 @@ export const UserManagement: React.FC<{
           </div>
           <div className="flex items-center gap-2">
             <label className="text-[11px] font-black text-gray-500 whitespace-nowrap">Rows</label>
-            <select
-              value={pageSize}
-              onChange={(e) => setPageSize(Number(e.target.value))}
-              className="pl-3 pr-2 py-2.5 rounded-xl border border-gray-300 bg-white text-sm font-semibold text-gray-900 shadow-sm"
-            >
-              {PAGE_SIZES.map((n) => (
-                <option key={n} value={n}>
-                  {n}
-                </option>
-              ))}
-            </select>
+            <SearchableSelect
+              aria-label="Rows per page"
+              value={String(pageSize)}
+              onChange={(v) => setPageSize(Number(v))}
+              options={PAGE_SIZES.map((n) => ({ value: String(n), label: String(n) }))}
+              placeholder="Search…"
+              inputClassName="pl-3 pr-2 py-2.5 rounded-xl border border-gray-300 bg-white text-sm font-semibold text-gray-900 shadow-sm"
+            />
           </div>
           <button
             type="button"
@@ -821,6 +875,16 @@ export const UserManagement: React.FC<{
                       hn.forEach((x) =>
                         chips.push({ k: `hn-${u.id}-${x}`, label: `Nur:${x}`, tone: 'amber' }),
                       );
+                      for (const row of u.departmentHodAssignments || []) {
+                        const label = departmentHodScopeChipLabel(
+                          row.departmentName,
+                          row.unitCode,
+                        );
+                        if (!label) continue;
+                        const k = `dh-${u.id}-${row.departmentName}-${row.unitCode}`;
+                        if (chips.some((c) => c.label === label)) continue;
+                        chips.push({ k, label, tone: 'amber' });
+                      }
                       if (!chips.length) return <span className="text-gray-500 font-bold">—</span>;
                       return (
                         <div className="flex flex-wrap gap-1.5">
@@ -964,30 +1028,18 @@ export const UserManagement: React.FC<{
                 <label className="block text-xs font-extrabold text-gray-700 uppercase mb-1">
                   Assign new role
                 </label>
-                <select
+                <SearchableSelect
+                  aria-label="Assign new role"
                   value={selectedRoleCode}
-                  onChange={(e) => setSelectedRoleCode(e.target.value)}
-                  className="w-full border border-gray-300 rounded-xl px-3 py-2.5 text-sm text-gray-900 font-semibold focus:outline-none focus:ring-2 focus:ring-purple-200 focus:border-purple-300"
-                >
-                  {ROLE_OPTIONS.map((o) => (
-                    <option key={o.code} value={o.code}>
-                      {o.label}
-                    </option>
-                  ))}
-                  {departmentHodRoleOptions.length > 0 && (
-                    <optgroup label="Department HOD assignments">
-                      {departmentHodRoleOptions.map((o) => (
-                        <option key={o.code} value={o.code}>
-                          {o.label}
-                        </option>
-                      ))}
-                    </optgroup>
-                  )}
-                </select>
+                  onChange={setSelectedRoleCode}
+                  options={assignNewRoleSelectOptions}
+                  placeholder="Search roles…"
+                  inputClassName="w-full border border-gray-300 rounded-xl px-3 py-2.5 text-sm text-gray-900 font-semibold focus:outline-none focus:ring-2 focus:ring-purple-200 focus:border-purple-300"
+                />
                 <div className="text-[11px] text-gray-500 font-semibold mt-2">
                   {isDepartmentHodRoleCode(selectedRoleCode)
-                    ? 'This assigns the selected department HOD for the chosen unit code(s).'
-                    : 'This adds an additional role (it does not remove existing roles).'}
+                    ? 'Department in-charge for clinical/support departments (e.g. Digital Strategy). Finance, Operations, and Nursing use Head - Finance / Head - Operations / Head - Nursing with unit scopes instead.'
+                    : 'This adds an additional role (it does not remove existing roles). For Finance or Ops, pick Head - Finance or Head - Operations, then set unit scopes (e.g. Fin:SKG).'}
                 </div>
               </div>
 
@@ -1144,6 +1196,31 @@ export const UserManagement: React.FC<{
                 ) : (
                   <div className="text-[11px] text-gray-500 font-semibold">
                     No department HOD assignments.
+                  </div>
+                )}
+                {legacyFunctionalDepartmentHodGroups.length > 0 && (
+                  <div className="mt-3 pt-3 border-t border-amber-200">
+                    <div className="text-[11px] font-bold text-amber-900 mb-2">
+                      Remove these — use functional head roles + unit scopes (Head - Finance, Head - Operations) instead:
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {legacyFunctionalDepartmentHodGroups.map((row) => (
+                        <span
+                          key={`legacy-dept-hod-${activeUser.id}-${row.departmentName}`}
+                          className="inline-flex items-center gap-1 px-2 py-1 rounded-full border bg-amber-50 text-[11px] font-extrabold text-amber-950 border-amber-300"
+                        >
+                          {`HOD - ${row.departmentName} (${row.unitCodes.join(', ')})`}
+                          <button
+                            type="button"
+                            onClick={() => void handleRemoveDepartmentHod(row.departmentName)}
+                            disabled={isSaving || isRemoving}
+                            className="ml-1 inline-flex items-center justify-center w-4 h-4 rounded-full border border-amber-300 text-amber-800 hover:bg-amber-100 disabled:opacity-50"
+                          >
+                            ×
+                          </button>
+                        </span>
+                      ))}
+                    </div>
                   </div>
                 )}
               </div>

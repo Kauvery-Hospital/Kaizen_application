@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { Role, ViewType } from '../types';
+import { KAUVERY_SIDEBAR_BG } from '../theme/kauverySurfaces';
 
 interface SidebarProps {
   currentView: ViewType;
@@ -125,8 +126,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           ? [{ id: 'be-overview', label: 'BE reports', icon: 'assessment' }]
           : []),
         ...(currentRole === Role.BUSINESS_EXCELLENCE ||
-        currentRole === Role.BUSINESS_EXCELLENCE_HEAD ||
-        currentRole === Role.UNIT_COORDINATOR
+        currentRole === Role.BUSINESS_EXCELLENCE_HEAD
           ? [{ id: 'reports', label: 'Reports', icon: 'table_view' }]
           : []),
         { id: 'list', label: 'All Suggestions', icon: 'format_list_bulleted' },
@@ -147,29 +147,29 @@ export const Sidebar: React.FC<SidebarProps> = ({
             onClick={() => setIsRoleSwitcherOpen(false)}
           />
           <div className="absolute inset-0 flex items-center justify-center p-4">
-            <div className="w-full max-w-3xl bg-white/95 backdrop-blur-xl border border-gray-200 rounded-2xl shadow-2xl shadow-slate-300/30 overflow-hidden">
-              <div className="px-6 py-5 border-b border-gray-200 flex items-start justify-between bg-gradient-to-r from-white via-white to-purple-50/50">
+            <div className="w-full max-w-3xl bg-white border border-kauvery-purple/20 rounded-2xl shadow-2xl shadow-kauvery-soft overflow-hidden">
+              <div className="px-6 py-5 border-b border-kauvery-purple/15 flex items-start justify-between bg-gradient-to-r from-kauvery-purple/8 via-kauvery-violet/5 to-transparent">
                 <div>
-                  <div className="text-xs uppercase tracking-wide text-kauvery-purple font-extrabold">
+                  <div className="text-xs uppercase tracking-wide text-kauvery-peach/90 font-extrabold">
                     Kaizen Flow
                   </div>
-                  <h2 className="text-2xl font-black text-gray-900 mt-1">
+                  <h2 className="text-2xl font-black text-slate-900 mt-1">
                     Who’s using Kaizen?
                   </h2>
-                  <p className="text-sm text-gray-600 font-semibold mt-1">
+                  <p className="text-sm text-slate-400 font-semibold mt-1">
                     Choose a role to continue.
                   </p>
                 </div>
                 <button
                   onClick={() => setIsRoleSwitcherOpen(false)}
-                  className="text-gray-500 hover:text-gray-900 p-2 rounded-full hover:bg-gray-100 transition-colors"
+                  className="text-slate-500 hover:text-kauvery-purple p-2 rounded-full hover:bg-kauvery-purple/10 transition-colors"
                   aria-label="Close role switcher"
                 >
                   <span className="material-icons-round">close</span>
                 </button>
               </div>
 
-              <div className="px-6 py-6 bg-slate-50/50">
+              <div className="px-6 py-6 bg-slate-50/90">
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
                   {roleOptions.map((r) => {
                     const meta = roleMeta[r] || {
@@ -220,18 +220,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 </div>
 
                 {departmentHodOptions.length > 0 && (
-                  <div className="mt-5 rounded-2xl border border-purple-100 bg-white px-4 py-4">
-                    <div className="text-xs uppercase tracking-wide text-kauvery-purple font-extrabold">
+                  <div className="mt-5 rounded-2xl border border-kauvery-purple/15 bg-kauvery-purple/5 px-4 py-4">
+                    <div className="text-xs uppercase tracking-wide text-kauvery-purple/80 font-extrabold">
                       Department HOD assignments
                     </div>
-                    <p className="mt-1 text-xs text-gray-600 font-semibold">
+                    <p className="mt-1 text-xs text-slate-600 font-semibold">
                       These assignments appear in your Employee workspace when Level 1 approval is routed to you.
                     </p>
                     <div className="mt-3 flex flex-wrap gap-2">
                       {departmentHodOptions.map((department) => (
                         <span
                           key={department}
-                          className="inline-flex items-center rounded-full border border-purple-200 bg-purple-50 px-3 py-1 text-xs font-black text-kauvery-purple"
+                          className="inline-flex items-center rounded-full border border-kauvery-purple/25 bg-kauvery-purple/10 px-3 py-1 text-xs font-black text-kauvery-purple"
                         >
                           {`HOD - ${department}`}
                         </span>
@@ -254,18 +254,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
       )}
 
-      <aside className="w-64 bg-gradient-to-b from-[#fffafd] via-white to-purple-100/35 backdrop-blur-xl border-r border-purple-200/35 h-screen flex flex-col fixed left-0 top-0 z-40 shadow-[16px_0_40px_-8px_rgba(150,32,103,0.12)]">
+      <aside className={`fixed left-0 top-0 z-40 flex h-screen w-64 flex-col border-r border-kauvery-purple/15 ${KAUVERY_SIDEBAR_BG} shadow-[8px_0_32px_-8px_rgba(150,32,103,0.12)]`}>
         {/* Brand */}
-        <div className="relative h-[4.25rem] flex items-center px-5 border-b border-purple-100/80 bg-gradient-to-r from-white/90 via-purple-50/40 to-pink-50/30 overflow-hidden">
-          <div className="pointer-events-none absolute inset-0 bg-gradient-to-r from-kauvery-purple/[0.04] via-transparent to-kauvery-pink/[0.06]" />
-          <div className="relative w-10 h-10 bg-gradient-to-br from-kauvery-purple via-kauvery-violet to-kauvery-pink rounded-2xl flex items-center justify-center text-white text-sm font-black mr-3 shadow-lg shadow-kauvery-soft ring-2 ring-white/50">
+        <div className="relative h-[4.25rem] flex items-center px-5 border-b border-kauvery-purple/15 bg-gradient-to-r from-kauvery-purple/8 via-transparent to-kauvery-pink/8 overflow-hidden">
+          <div className="pointer-events-none absolute inset-0 bg-gradient-to-r from-kauvery-purple/[0.12] via-transparent to-kauvery-pink/[0.08]" />
+          <div className="relative w-10 h-10 bg-gradient-to-br from-kauvery-purple via-kauvery-violet to-kauvery-pink rounded-2xl flex items-center justify-center text-white text-sm font-black mr-3 shadow-lg shadow-kauvery-soft ring-2 ring-white/20">
             K
           </div>
           <div className="relative min-w-0">
-            <div className="font-black bg-gradient-to-r from-kauvery-purple to-kauvery-violet bg-clip-text text-transparent leading-tight truncate">
+            <div className="truncate font-black leading-tight text-slate-900">
               Kaizen Flow
             </div>
-            <div className="text-[10px] text-kauvery-violet/90 font-bold uppercase tracking-[0.12em] truncate">
+            <div className="truncate text-[10px] font-bold uppercase tracking-[0.12em] text-kauvery-purple/70">
               Kauvery · Workflow
             </div>
           </div>
@@ -273,7 +273,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
         {/* Nav */}
         <div className="px-4 py-4">
-          <div className="text-[10px] font-black text-kauvery-purple/80 uppercase tracking-[0.18em] px-2 mb-2">
+          <div className="mb-2 px-2 text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">
             Main menu
           </div>
           <nav className="space-y-1.5">
@@ -283,10 +283,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 <button
                   key={item.id}
                   onClick={() => onViewChange(item.id as ViewType)}
-                  className={`group relative w-full flex items-center gap-3 px-3.5 py-2.5 text-sm font-extrabold rounded-xl transition-all ${
+                  className={`group relative flex w-full items-center gap-3 rounded-xl px-3.5 py-2.5 text-sm font-extrabold transition-all ${
                     active
-                      ? 'text-kauvery-purple bg-gradient-to-r from-purple-100/90 via-white to-pink-50/50 border border-purple-300/50 shadow-kauvery-card'
-                      : 'text-gray-800 border border-transparent hover:border-purple-200/50 hover:bg-gradient-to-r hover:from-purple-50/60 hover:to-rose-50/40 hover:shadow-sm'
+                      ? 'border border-kauvery-purple/30 bg-gradient-to-r from-kauvery-purple to-kauvery-violet text-white shadow-kauvery-card'
+                      : 'border border-transparent text-slate-600 hover:border-kauvery-purple/25 hover:bg-kauvery-purple/8 hover:text-kauvery-purple'
                   }`}
                 >
                   {active && (
@@ -295,8 +295,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   <span
                     className={`material-icons-round text-[18px] ${
                       active
-                        ? 'text-kauvery-purple'
-                        : 'text-gray-500 group-hover:text-kauvery-violet'
+                        ? 'text-kauvery-peach'
+                        : 'text-slate-500 group-hover:text-kauvery-peach'
                     }`}
                   >
                     {item.icon}
@@ -309,23 +309,23 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
 
         {/* Footer / Profile */}
-        <div className="p-4 mt-auto border-t border-purple-100/80 bg-gradient-to-t from-purple-50/30 to-transparent">
-          <div className="bg-gradient-to-br from-white via-purple-50/30 to-pink-50/40 border border-purple-200/40 rounded-2xl p-4 shadow-kauvery-card">
+        <div className="mt-auto border-t border-kauvery-purple/20 bg-gradient-to-t from-kauvery-purple/10 to-transparent p-4">
+          <div className="rounded-2xl border border-kauvery-purple/15 bg-white p-4 shadow-kauvery-card">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-kauvery-purple to-kauvery-violet flex items-center justify-center text-white text-sm font-black border border-white/30 shadow-md shadow-purple-300/40">
+              <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-kauvery-purple to-kauvery-violet flex items-center justify-center text-white text-sm font-black border border-white/25 shadow-md shadow-purple-900/40">
                 {currentRole.charAt(0)}
               </div>
               <div className="min-w-0 flex-1">
-                <div className="text-[11px] text-gray-500 font-extrabold uppercase tracking-wide">
+                <div className="text-[11px] font-extrabold uppercase tracking-wide text-slate-400">
                   Logged in as
                 </div>
                 <div
-                  className="text-sm font-black text-gray-900 truncate"
+                  className="truncate text-sm font-black text-slate-900"
                   title={currentUserName || currentRole}
                 >
                   {currentUserName || currentRole}
                 </div>
-                <div className="text-[10px] text-gray-600 font-semibold truncate">
+                <div className="text-[10px] text-slate-400 font-semibold truncate">
                   {currentRole}
                 </div>
               </div>
@@ -334,15 +334,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
             {canSwitchRole && (
               <button
                 onClick={() => setIsRoleSwitcherOpen(true)}
-                className="mt-3 w-full px-3 py-2.5 rounded-xl bg-white border border-gray-200 text-gray-900 hover:bg-gray-50 font-extrabold text-xs flex items-center justify-between shadow-sm hover:shadow-md hover:shadow-slate-200/60 transition-shadow"
+                className="mt-3 flex w-full items-center justify-between rounded-xl border border-kauvery-purple/25 bg-kauvery-purple/10 px-3 py-2.5 text-xs font-extrabold text-kauvery-purple shadow-sm transition-colors hover:bg-kauvery-purple/15"
               >
                 <span className="flex items-center gap-2">
-                  <span className="material-icons-round text-base text-gray-700">
+                  <span className="material-icons-round text-base text-kauvery-peach">
                     switch_account
                   </span>
                   Switch role
                 </span>
-                <span className="text-[10px] text-gray-600 font-black truncate max-w-[88px]">
+                <span className="text-[10px] text-slate-300 font-black truncate max-w-[88px]">
                   {currentRole}
                 </span>
               </button>
@@ -351,7 +351,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             {onLogout && (
               <button
                 onClick={onLogout}
-                className="mt-2 w-full px-3 py-2.5 rounded-xl border border-gray-200 bg-white text-gray-700 hover:text-red-700 hover:border-red-200 hover:bg-red-50 font-extrabold text-xs flex items-center justify-center gap-2"
+                className="mt-2 flex w-full items-center justify-center gap-2 rounded-xl border border-kauvery-purple/20 bg-transparent px-3 py-2.5 text-xs font-extrabold text-slate-600 transition-colors hover:border-red-300 hover:bg-red-50 hover:text-red-600"
               >
                 <span className="material-icons-round text-base">logout</span>
                 Logout

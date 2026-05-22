@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { USER_ROLE_FILTER_OPTIONS } from '../constants/adminUserRoles';
+import { SearchableSelect } from '../components/SearchableSelect';
 
 type UsersApiRow = {
   id: string;
@@ -168,8 +169,7 @@ export const RoleListView: React.FC<{
     <div className="max-w-7xl mx-auto animate-fade-in">
       <div className="mb-6 flex items-start justify-between gap-4 flex-wrap">
         <div>
-          <h1 className="text-2xl font-black text-gray-900">Role List</h1>
-          <p className="text-xs text-gray-600 font-semibold mt-1">
+          <p className="text-xs text-gray-600 font-semibold">
             Directory-wide view with server-side paging — suitable for very large user bases (10k+).
           </p>
           {summaryLine && (
@@ -182,37 +182,34 @@ export const RoleListView: React.FC<{
             <span className="material-icons-round absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-lg">
               toggle_on
             </span>
-            <select
-              value={activeFilter}
-              onChange={(e) =>
-                setActiveFilter(e.target.value as 'all' | 'active' | 'inactive')
-              }
-              className="w-[200px] max-w-[70vw] pl-10 pr-3 py-2.5 rounded-xl border border-gray-300 bg-white text-sm font-semibold text-gray-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-purple-200 focus:border-purple-300"
+            <SearchableSelect
               aria-label="Active status"
-            >
-              <option value="all">All statuses</option>
-              <option value="active">Active only</option>
-              <option value="inactive">Inactive only</option>
-            </select>
+              value={activeFilter}
+              onChange={(v) => setActiveFilter(v as 'all' | 'active' | 'inactive')}
+              options={[
+                { value: 'all', label: 'All statuses' },
+                { value: 'active', label: 'Active only' },
+                { value: 'inactive', label: 'Inactive only' },
+              ]}
+              placeholder="Search…"
+              inputClassName="w-[200px] max-w-[70vw] pl-10 pr-3 py-2.5 rounded-xl border border-gray-300 bg-white text-sm font-semibold text-gray-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-purple-200 focus:border-purple-300"
+            />
           </div>
           <div className="relative">
             <span className="material-icons-round absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-lg">
               filter_alt
             </span>
-            <select
-              value={roleFilter}
-              onChange={(e) => setRoleFilter(e.target.value)}
-              className="w-[240px] max-w-[70vw] pl-10 pr-3 py-2.5 rounded-xl border border-gray-300 bg-white text-sm font-semibold text-gray-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-purple-200 focus:border-purple-300"
+            <SearchableSelect
               aria-label="Filter by role"
-              title="Filter by role"
-            >
-              <option value="all">Has any role (no filter)</option>
-              {USER_ROLE_FILTER_OPTIONS.map((r) => (
-                <option key={r.code} value={r.code}>
-                  Has role: {r.label}
-                </option>
-              ))}
-            </select>
+              value={roleFilter}
+              onChange={setRoleFilter}
+              options={[
+                { value: 'all', label: 'Has any role (no filter)' },
+                ...USER_ROLE_FILTER_OPTIONS.map((r) => ({ value: r.code, label: `Has role: ${r.label}` })),
+              ]}
+              placeholder="Search roles…"
+              inputClassName="w-[240px] max-w-[70vw] pl-10 pr-3 py-2.5 rounded-xl border border-gray-300 bg-white text-sm font-semibold text-gray-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-purple-200 focus:border-purple-300"
+            />
           </div>
           <div className="relative flex-1 min-w-[200px]">
             <span className="material-icons-round absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-lg">
@@ -227,17 +224,14 @@ export const RoleListView: React.FC<{
           </div>
           <div className="flex items-center gap-2">
             <label className="text-[11px] font-black text-gray-500 whitespace-nowrap">Rows</label>
-            <select
-              value={pageSize}
-              onChange={(e) => setPageSize(Number(e.target.value))}
-              className="pl-3 pr-2 py-2.5 rounded-xl border border-gray-300 bg-white text-sm font-semibold text-gray-900 shadow-sm"
-            >
-              {PAGE_SIZES.map((n) => (
-                <option key={n} value={n}>
-                  {n}
-                </option>
-              ))}
-            </select>
+            <SearchableSelect
+              aria-label="Rows per page"
+              value={String(pageSize)}
+              onChange={(v) => setPageSize(Number(v))}
+              options={PAGE_SIZES.map((n) => ({ value: String(n), label: String(n) }))}
+              placeholder="Search…"
+              inputClassName="pl-3 pr-2 py-2.5 rounded-xl border border-gray-300 bg-white text-sm font-semibold text-gray-900 shadow-sm"
+            />
           </div>
           <button
             type="button"

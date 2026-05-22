@@ -27,6 +27,7 @@ import {
 import { analyzeSuggestion } from '../services/geminiService';
 import { RewardEvaluationForm } from './RewardEvaluationForm';
 import { SuggestionForm, type SuggestionFormHandle } from './SuggestionForm';
+import { SearchableSelect } from './SearchableSelect';
 
 /** Implementer deadline picker: only dates from assignment through assignment + this many calendar days. */
 const MAX_DEADLINE_EXTENSION_DAYS = 10;
@@ -44,6 +45,8 @@ function addCalendarDaysToIsoDate(ymd: string, days: number): string | null {
 interface ModalProps {
   suggestion: Suggestion | null;
   isOpen: boolean;
+  /** When `page`, renders in normal document flow (full main area) instead of a fixed overlay. */
+  layout?: 'modal' | 'page';
   onClose: () => void;
   onOpenTemplatePage?: (suggestion: Suggestion, opts?: { edit?: boolean }) => void;
   role: Role;
@@ -70,6 +73,7 @@ interface ModalProps {
 export const SuggestionDetailModal: React.FC<ModalProps> = ({
   suggestion,
   isOpen,
+  layout = 'modal',
   onClose,
   onOpenTemplatePage,
   role,
@@ -84,6 +88,7 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
   departmentOptions,
   implementationActorUser,
 }) => {
+  const isPageLayout = layout === 'page';
   const [toast, setToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const toastTimer = useRef<number | null>(null);
   const templateFormRef = useRef<SuggestionFormHandle | null>(null);
@@ -461,7 +466,8 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
     suggestion?.unit,
   ]);
 
-  if (!isOpen || !suggestion) return null;
+  if (!suggestion) return null;
+  if (!isPageLayout && !isOpen) return null;
 
   const level1DepartmentChoices =
     l1DepartmentPickerOptions.length > 0
@@ -1331,6 +1337,8 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
       icon: 'fast_forward',
     },
   };
+
+
   const approvalRouteSummary = (() => {
     if (!approvalsRequired) {
       return 'No approval routing was selected. The idea moves directly to BE Head evaluation after coordinator routing.';
@@ -1366,6 +1374,202 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
     approverName: String(suggestion.hodApproverNames?.[approvalRole] ?? '').trim(),
     approved: Boolean(suggestion.approvals?.[approvalRole]),
   }));
+  const renderActionStatusSummaryPanel = () => (
+    <div className="space-y-4">
+      <div className="rounded-xl border border-slate-200/90 bg-white p-4 shadow-sm">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+              Stage summary
+            </div>
+            <div className="mt-1.5 text-base font-bold leading-tight text-slate-900">
+              {trackingStageTitle}
+            </div>
+            <div className="mt-1 text-sm font-medium text-slate-600">{trackingStageHint}</div>
+          </div>
+          <span className="inline-flex shrink-0 items-center rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-slate-700">
+            {suggestion.status}
+          </span>
+        </div>
+        <div className="mt-4">
+          <div className="flex items-center justify-between text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+            <span>Overall progress</span>
+            <span className="tabular-nums text-slate-800">{workflowProgressPercent}%</span>
+          </div>
+          <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-slate-200">
+            <div
+              className="h-full rounded-full bg-gradient-to-r from-kauvery-purple to-kauvery-violet"
+              style={{ width: `${workflowProgressPercent}%` }}
+            />
+          </div>
+        </div>
+        <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div className="rounded-lg border border-slate-200/80 bg-slate-50/80 p-3">
+            <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+              Current owner
+            </div>
+            <div className="mt-1 text-sm font-semibold text-slate-900">
+              {String(getCurrentOwner() || '—')}
+            </div>
+          </div>
+          <div className="rounded-lg border border-slate-200/80 bg-slate-50/80 p-3">
+            <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+              Action required
+            </div>
+            <div className="mt-1 text-sm font-semibold leading-snug text-slate-900">
+              {getActionRequired()}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="rounded-xl border border-slate-200/90 bg-white p-4 shadow-sm">
+        <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+          Workflow steps
+        </div>
+        <div className="mt-3 space-y-2 max-h-64 overflow-y-auto pr-1">
+          {workflowSteps.map((step, index) => {
+            const stateMeta = workflowStepStateMeta[step.state];
+            return (
+              <div
+                key={step.id}
+                className={`rounded-lg border p-3 ${
+                  step.state === 'current'
+                    ? 'border-blue-200 bg-blue-50/80'
+                    : step.state === 'done'
+                      ? 'border-emerald-200 bg-emerald-50/70'
+                      : 'border-slate-200 bg-slate-50/70'
+                }`}
+              >
+                <div className="flex items-start gap-2">
+                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-[10px] font-bold text-slate-600">
+                    {index + 1}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-sm font-semibold text-slate-900">{step.title}</span>
+                      <span
+                        className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-black uppercase ${stateMeta.badgeClass}`}
+                      >
+                        {stateMeta.label}
+                      </span>
+                    </div>
+                    <div className="mt-0.5 text-[10px] font-semibold text-slate-500">
+                      Owner: {step.owner}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="rounded-xl border border-slate-200/90 bg-white p-4 shadow-sm">
+        <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+          Approval route
+        </div>
+        <div className="mt-2 text-sm font-medium text-slate-800">{approvalRouteSummary}</div>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold text-slate-700">
+            {activeApprovalStageLabel}
+          </span>
+          {level1Approvals.length > 0 && (
+            <span className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[11px] font-black text-amber-900">
+              L1: {level1Approved.length}/{level1Approvals.length}
+            </span>
+          )}
+          {level2Approvals.length > 0 && (
+            <span className="inline-flex items-center rounded-full border border-cyan-200 bg-cyan-50 px-2.5 py-1 text-[11px] font-black text-cyan-900">
+              L2: {level2Approved.length}/{level2Approvals.length}
+            </span>
+          )}
+        </div>
+      </div>
+
+      <div className="rounded-xl border border-slate-200/90 bg-white p-4 shadow-sm">
+        <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+          Approval details
+        </div>
+        {!approvalsRequired ? (
+          <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50/80 p-3 text-sm font-medium text-slate-600">
+            No Level 1 or Level 2 approvals were configured for this idea.
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {level1Approvals.length > 0 && (
+              <div className="space-y-2">
+                <div className="text-xs font-black uppercase tracking-wide text-amber-900">
+                  Level 1 department sign-offs ({level1Approved.length}/{level1Approvals.length})
+                </div>
+                {level1Approvals.map((row) => {
+                  const signed = Boolean(String(row?.approvedAt ?? '').trim());
+                  return (
+                    <div
+                      key={row.id}
+                      className={`rounded-lg border p-3 text-sm ${
+                        signed
+                          ? 'border-emerald-200 bg-emerald-50/70'
+                          : 'border-amber-200 bg-amber-50/70'
+                      }`}
+                    >
+                      <div className="font-semibold text-slate-900">{row.department}</div>
+                      <div className="text-xs text-slate-700 mt-1">
+                        {row.approverName || 'Not assigned'}
+                        {row.approverEmployeeCode ? ` (${row.approverEmployeeCode})` : ''}
+                        {' — '}
+                        {signed ? 'Signed off' : 'Pending'}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            {level2Approvals.length > 0 && (
+              <div className="space-y-2">
+                <div className="text-xs font-black uppercase tracking-wide text-cyan-900">
+                  Level 2 functional approvals ({level2Approved.length}/{level2Approvals.length})
+                </div>
+                {level2ApprovalDetails.map((item) => (
+                  <div
+                    key={item.role}
+                    className={`rounded-lg border p-3 text-sm ${
+                      item.approved
+                        ? 'border-emerald-200 bg-emerald-50/70'
+                        : 'border-cyan-200 bg-cyan-50/70'
+                    }`}
+                  >
+                    <div className="font-semibold text-slate-900">{item.role}</div>
+                    <div className="text-xs text-slate-700 mt-1">
+                      {item.approverName || 'Not specified'} — {item.approved ? 'Approved' : 'Pending'}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      <div className="rounded-xl border border-slate-200/90 bg-white p-4 shadow-sm">
+        <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+          Implementation
+        </div>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 text-sm">
+          <div>
+            <div className="text-[10px] font-semibold uppercase text-slate-500">Implementer</div>
+            <div className="font-semibold text-slate-900">
+              {suggestion.assignedImplementer || 'Not assigned'}
+            </div>
+          </div>
+          <div>
+            <div className="text-[10px] font-semibold uppercase text-slate-500">Progress</div>
+            <div className="font-semibold text-slate-900">{progressFloorEffective}%</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
   const getRoleActionState = () => {
     if (role === Role.EMPLOYEE) return { canAct: false, message: 'Employee can only view tracking status and remarks.' };
     if (role === Role.UNIT_COORDINATOR && suggestion.status === Status.IDEA_SUBMITTED) return { canAct: true, message: 'Approve or reject this submitted idea.' };
@@ -1547,22 +1751,23 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
   // --- RENDERERS ---
 
   const Tabs = () => (
-      <div className="flex border-b border-gray-200 px-6 overflow-x-auto bg-white">
-          <button onClick={() => setActiveTab('overview')} className={`px-4 py-3 text-sm font-bold border-b-2 transition-colors whitespace-nowrap ${activeTab === 'overview' ? 'border-kauvery-purple text-kauvery-purple' : 'border-transparent text-gray-600 hover:text-gray-900'}`}>Overview</button>
+      <div className="flex gap-0 overflow-x-auto border-b border-slate-200/90 bg-slate-50/50 px-4 sm:px-6 lg:px-8">
+          <button type="button" onClick={() => setActiveTab('overview')} className={`px-4 py-3.5 text-sm font-semibold transition-colors whitespace-nowrap border-b-2 -mb-px ${activeTab === 'overview' ? 'border-kauvery-purple text-kauvery-purple' : 'border-transparent text-slate-500 hover:text-slate-800'}`}>Overview</button>
           {suggestion.problem && (
-             <button onClick={() => setActiveTab('analysis')} className={`px-4 py-3 text-sm font-bold border-b-2 transition-colors whitespace-nowrap ${activeTab === 'analysis' ? 'border-kauvery-purple text-kauvery-purple' : 'border-transparent text-gray-600 hover:text-gray-900'}`}>Full Analysis (5W1H)</button>
+             <button type="button" onClick={() => setActiveTab('analysis')} className={`px-4 py-3.5 text-sm font-semibold transition-colors whitespace-nowrap border-b-2 -mb-px ${activeTab === 'analysis' ? 'border-kauvery-purple text-kauvery-purple' : 'border-transparent text-slate-500 hover:text-slate-800'}`}>Full Analysis (5W1H)</button>
           )}
-          <button onClick={() => setActiveTab('review')} className={`px-4 py-3 text-sm font-bold border-b-2 transition-colors whitespace-nowrap ${activeTab === 'review' ? 'border-kauvery-purple text-kauvery-purple' : 'border-transparent text-gray-600 hover:text-gray-900'}`}>Action & Status</button>
+          <button type="button" onClick={() => setActiveTab('review')} className={`px-4 py-3.5 text-sm font-semibold transition-colors whitespace-nowrap border-b-2 -mb-px ${activeTab === 'review' ? 'border-kauvery-purple text-kauvery-purple' : 'border-transparent text-slate-500 hover:text-slate-800'}`}>Action & Status</button>
           {canViewSubmittedTemplateTab && (
             <button
+              type="button"
               onClick={() => hasSubmittedTemplate && setActiveTab('template')}
               disabled={!hasSubmittedTemplate}
-              className={`px-4 py-3 text-sm font-bold border-b-2 transition-colors whitespace-nowrap ${
+              className={`px-4 py-3.5 text-sm font-semibold transition-colors whitespace-nowrap border-b-2 -mb-px ${
                 activeTab === 'template'
                   ? 'border-kauvery-purple text-kauvery-purple'
                   : hasSubmittedTemplate
-                    ? 'border-transparent text-gray-600 hover:text-gray-900'
-                    : 'border-transparent text-gray-300 cursor-not-allowed'
+                    ? 'border-transparent text-slate-500 hover:text-slate-800'
+                    : 'border-transparent text-slate-300 cursor-not-allowed'
               }`}
               title={hasSubmittedTemplate ? 'View submitted template' : 'Template not submitted yet'}
             >
@@ -1578,11 +1783,16 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
     if (onOpenTemplatePage) {
       onOpenTemplatePage(suggestion, { edit: true });
       setIsImplementationMode(false);
-      onClose();
       return null;
     }
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900 bg-opacity-70 backdrop-blur-md p-4 [@media(orientation:landscape)]:p-2 overflow-y-auto">
+      <div
+        className={
+          isPageLayout
+            ? 'w-full max-w-5xl mx-auto py-2 min-h-0 flex justify-center [@media(orientation:landscape)]:py-1'
+            : 'fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-md p-4 [@media(orientation:landscape)]:p-2 overflow-y-auto'
+        }
+      >
         <div className="w-full max-w-5xl my-8 [@media(orientation:landscape)]:max-w-none [@media(orientation:landscape)]:my-2 [@media(orientation:landscape)]:min-h-0">
           <SuggestionForm
             mode="implement"
@@ -1602,7 +1812,13 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
   if (isTemplatePreviewMode || templateAssetPreview) {
     const previewLabel = templateAssetPreview ? templateAssetPreview.toUpperCase() : 'TEMPLATE';
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900 bg-opacity-70 backdrop-blur-md p-4 [@media(orientation:landscape)]:p-2 overflow-y-auto">
+      <div
+        className={
+          isPageLayout
+            ? 'w-full max-w-6xl mx-auto py-2 min-h-0 flex justify-center [@media(orientation:landscape)]:py-1'
+            : 'fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-md p-4 [@media(orientation:landscape)]:p-2 overflow-y-auto'
+        }
+      >
         {toast && (
           <div className="fixed top-5 right-5 z-[60]">
             <div
@@ -1617,8 +1833,8 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
             </div>
           </div>
         )}
-        <div className="w-full max-w-6xl my-8 [@media(orientation:landscape)]:max-w-none [@media(orientation:landscape)]:my-2 bg-white rounded-2xl border border-gray-200 shadow-2xl overflow-hidden min-w-0">
-          <div className="px-6 py-4 border-b border-gray-200 bg-white flex justify-between items-start">
+        <div className="w-full max-w-6xl my-8 [@media(orientation:landscape)]:max-w-none [@media(orientation:landscape)]:my-2 bg-gradient-to-br from-white via-purple-50/30 to-pink-50/20 rounded-2xl border border-purple-200/50 shadow-kauvery-card ring-1 ring-purple-100/70 overflow-hidden min-w-0">
+          <div className="px-6 py-4 border-b border-purple-200/50 bg-gradient-to-r from-white via-purple-50/40 to-pink-50/30 flex justify-between items-start">
             <div>
               <div className="text-xs font-mono text-gray-600 font-bold">
                 {suggestion.code || suggestion.id}
@@ -1635,13 +1851,13 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
                 setTemplateAssetPreview(null);
                 setIsTemplatePreviewMode(false);
               }}
-              className="text-gray-500 hover:text-gray-800 p-2 hover:bg-gray-100 rounded-full transition-colors"
+              className="text-kauvery-purple/70 hover:text-kauvery-violet p-2 hover:bg-purple-100/80 rounded-full transition-colors border border-transparent hover:border-purple-200"
             >
               <span className="material-icons-round">close</span>
             </button>
           </div>
 
-          <div className="px-6 py-3 border-b border-gray-200 bg-white flex flex-wrap items-center justify-between gap-3">
+          <div className="px-6 py-3 border-b border-purple-200/50 bg-white/80 flex flex-wrap items-center justify-between gap-3">
             <div>
               <div className="text-sm font-extrabold text-gray-900">Generated template files</div>
               <div className="text-xs text-gray-500 font-semibold mt-0.5">
@@ -1691,14 +1907,14 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
                     showToast('error', e?.message ? `PDF failed: ${e.message}` : 'Failed to generate PDF');
                   }
                 }}
-                className="px-3 py-2 rounded-lg bg-gray-900 text-white text-xs font-bold hover:bg-gray-800"
+                className="px-3 py-2 rounded-lg bg-kauvery-violet text-white text-xs font-bold hover:bg-kauvery-purple border border-purple-800/30"
               >
                 {finalPdfPathResolved ? 'Download PDF' : 'Generate & Download PDF'}
               </button>
             </div>
           </div>
 
-          <div className="p-6 bg-slate-50 max-h-[74vh] overflow-y-auto">
+          <div className="p-6 bg-gradient-to-b from-purple-50/40 via-[#faf8fc] to-pink-50/30 max-h-[74vh] overflow-y-auto">
             <SuggestionForm
               ref={templateFormRef}
               mode="implement"
@@ -1716,7 +1932,7 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
             />
           </div>
 
-          <div className="px-6 py-4 border-t border-gray-200 bg-white flex justify-end gap-2">
+          <div className="px-6 py-4 border-t border-purple-200/50 bg-gradient-to-r from-white to-purple-50/30 flex justify-end gap-2">
             <button
               onClick={() => {
                 setTemplateAssetPreview(null);
@@ -1774,9 +1990,20 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      {/* Backdrop */}
-      <div className="absolute inset-0 bg-gray-900 bg-opacity-60 backdrop-blur-sm transition-opacity" onClick={onClose}></div>
+    <div
+      className={
+        isPageLayout
+          ? 'w-full max-w-none min-h-0 flex flex-col'
+          : 'fixed inset-0 z-50 flex items-center justify-center p-4'
+      }
+    >
+      {!isPageLayout && (
+        <div
+          className="absolute inset-0 bg-gradient-to-br from-kauvery-purple/25 via-slate-900/35 to-kauvery-pink/20 backdrop-blur-sm transition-opacity"
+          onClick={onClose}
+          aria-hidden
+        />
+      )}
 
       {toast && (
         <div className="fixed top-5 right-5 z-[60]">
@@ -1792,36 +2019,63 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
           </div>
         </div>
       )}
-      
-      {/* Centered Panel */}
-      <div className="relative w-full max-w-6xl bg-white shadow-[0_18px_48px_rgba(15,23,42,0.18)] rounded-2xl border border-gray-200 h-[88vh] flex flex-col animate-fade-in overflow-hidden">
+
+      {/* Main shell — neutral surface, clinical / enterprise tone */}
+      <div
+        className={`relative w-full flex flex-col animate-fade-in overflow-hidden rounded-2xl border border-slate-200/90 bg-white shadow-[0_4px_24px_-4px_rgba(15,23,42,0.08),0_0_0_1px_rgba(15,23,42,0.04)] ${
+          isPageLayout
+            ? 'max-w-none min-h-0 h-[calc(100dvh-9rem)] max-h-[calc(100dvh-9rem)] sm:h-[calc(100dvh-8.5rem)] sm:max-h-[calc(100dvh-8.5rem)] rounded-xl sm:rounded-2xl'
+            : 'max-w-6xl h-[88vh]'
+        }`}
+      >
         
         {/* Header */}
-        <div className="px-6 py-4 border-b border-gray-200 bg-white flex justify-between items-start">
-            <div>
-                <div className="flex items-center gap-2 mb-1">
-                    <span className="text-xs font-mono text-gray-700 bg-white border border-gray-400 px-1.5 rounded font-bold">
+        <div
+          className={`flex shrink-0 items-start justify-between gap-4 border-b border-slate-200/90 bg-white ${
+            isPageLayout ? 'px-4 py-4 sm:px-6 sm:py-5 lg:px-10' : 'px-6 py-5'
+          }`}
+        >
+            <div className="min-w-0 flex-1 pr-2">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">
+                  Kaizen record
+                </p>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <span className="inline-flex items-center rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-mono font-semibold text-slate-800 tabular-nums">
                       {suggestion.code || suggestion.id}
                     </span>
-                    <span className={`text-xs px-2 py-0.5 rounded-full font-bold ${STATUS_COLORS[suggestion.status]}`}>{suggestion.status}</span>
+                    <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] font-semibold ${STATUS_COLORS[suggestion.status]}`}>{suggestion.status}</span>
                 </div>
-                <h2 className="text-xl font-extrabold text-gray-900 leading-tight mt-2">{displayHeading}</h2>
-                <p className="text-sm text-gray-700 mt-1 font-medium">Submitted by <span className="font-extrabold text-gray-900">{suggestion.employeeName}</span> ({suggestion.department})</p>
+                <h2 className="mt-3 text-xl font-bold tracking-tight text-slate-900 sm:text-2xl leading-snug break-words">
+                  {displayHeading}
+                </h2>
+                <p className="mt-2 text-sm text-slate-600">
+                  <span className="text-slate-500">Originator</span>{' '}
+                  <span className="font-semibold text-slate-900">{suggestion.employeeName}</span>
+                  <span className="text-slate-300"> · </span>
+                  <span className="text-slate-600">{suggestion.department}</span>
+                </p>
             </div>
-            <button onClick={onClose} className="text-gray-500 hover:text-gray-800 p-2 hover:bg-gray-100 rounded-full transition-colors border border-transparent hover:border-gray-200">
-                <span className="material-icons-round font-bold">close</span>
+            <button
+              type="button"
+              onClick={onClose}
+              className="shrink-0 rounded-lg border border-slate-200 bg-white p-2.5 text-slate-500 transition-colors hover:border-kauvery-purple/35 hover:bg-purple-50/60 hover:text-kauvery-purple"
+              aria-label={isPageLayout ? 'Back' : 'Close'}
+            >
+              <span className="material-icons-round text-[22px] leading-none">
+                {isPageLayout ? 'arrow_back' : 'close'}
+              </span>
             </button>
         </div>
 
         {initialView !== 'tracking' && (
           <>
             {initialView === 'hod-review' && (
-              <div className="px-6 py-3 bg-gradient-to-r from-indigo-50 via-white to-purple-50 border-b border-indigo-100/80 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <div className="flex flex-col gap-3 border-b border-slate-200/90 bg-slate-50/70 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6 lg:px-8">
                 <div>
-                  <div className="text-[11px] font-black uppercase tracking-wide text-indigo-900/90">
+                  <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">
                     Head review
                   </div>
-                  <p className="text-sm text-gray-800 font-semibold mt-0.5">
+                  <p className="mt-1 text-sm font-medium leading-relaxed text-slate-700">
                     Read the summary and submitted Kaizen template, then record your decision under Action
                     &amp; Status.
                   </p>
@@ -1830,10 +2084,10 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
                   <button
                     type="button"
                     onClick={() => setActiveTab('overview')}
-                    className={`px-3 py-2 rounded-lg text-xs font-black border transition-colors ${
+                    className={`rounded-lg px-3 py-2 text-xs font-semibold border transition-colors ${
                       activeTab === 'overview'
-                        ? 'bg-kauvery-purple text-white border-kauvery-purple'
-                        : 'bg-white text-gray-800 border-gray-300 hover:bg-gray-50'
+                        ? 'border-kauvery-purple bg-kauvery-purple text-white shadow-sm'
+                        : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50'
                     }`}
                   >
                     Summary
@@ -1842,12 +2096,12 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
                     type="button"
                     onClick={() => hasSubmittedTemplate && setActiveTab('template')}
                     disabled={!hasSubmittedTemplate}
-                    className={`px-3 py-2 rounded-lg text-xs font-black border transition-colors ${
+                    className={`rounded-lg px-3 py-2 text-xs font-semibold border transition-colors ${
                       !hasSubmittedTemplate
-                        ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed'
+                        ? 'cursor-not-allowed border-slate-100 bg-slate-50 text-slate-300'
                         : activeTab === 'template'
-                          ? 'bg-kauvery-purple text-white border-kauvery-purple'
-                          : 'bg-white text-gray-800 border-gray-300 hover:bg-gray-50'
+                          ? 'border-kauvery-purple bg-kauvery-purple text-white shadow-sm'
+                          : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50'
                     }`}
                   >
                     Submitted template
@@ -1855,10 +2109,10 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
                   <button
                     type="button"
                     onClick={() => setActiveTab('review')}
-                    className={`px-3 py-2 rounded-lg text-xs font-black border transition-colors ${
+                    className={`rounded-lg px-3 py-2 text-xs font-semibold border transition-colors ${
                       activeTab === 'review'
-                        ? 'bg-kauvery-purple text-white border-kauvery-purple'
-                        : 'bg-white text-gray-800 border-gray-300 hover:bg-gray-50'
+                        ? 'border-kauvery-purple bg-kauvery-purple text-white shadow-sm'
+                        : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50'
                     }`}
                   >
                     Decision
@@ -1871,103 +2125,107 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
         )}
 
         {/* Content */}
-        <div className="flex-1 overflow-y-auto p-6 bg-slate-50 text-gray-900">
+        <div
+          className={`flex-1 min-h-0 overflow-y-auto bg-slate-50/80 text-slate-900 ${
+            isPageLayout ? 'px-4 py-5 sm:px-6 sm:py-6 lg:px-10 lg:py-8' : 'p-6'
+          }`}
+        >
             
             {/* OVERVIEW TAB */}
             {initialView !== 'tracking' && activeTab === 'overview' && (
                 <div className="space-y-6">
                   {/* Summary cards */}
-                  <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                    <div className="bg-white border border-gray-200 rounded-2xl p-4 shadow-sm">
-                      <div className="text-[11px] font-extrabold uppercase text-gray-500">Kaizen No</div>
-                      <div className="mt-1 text-sm font-black text-gray-900 truncate">
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+                    <div className="rounded-xl border border-slate-200/90 bg-white p-5 shadow-sm">
+                      <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Kaizen No</div>
+                      <div className="mt-2 text-sm font-bold text-slate-900 tabular-nums">
                         {suggestion.code || suggestion.id}
                       </div>
-                      <div className="mt-2 inline-flex items-center gap-2">
-                        <span className={`text-[11px] px-2 py-0.5 rounded-full font-black ${STATUS_COLORS[suggestion.status]}`}>
+                      <div className="mt-3">
+                        <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold ${STATUS_COLORS[suggestion.status]}`}>
                           {suggestion.status}
                         </span>
                       </div>
                     </div>
-                    <div className="bg-white border border-gray-200 rounded-2xl p-4 shadow-sm">
-                      <div className="text-[11px] font-extrabold uppercase text-gray-500">Current Owner</div>
-                      <div className="mt-1 text-sm font-black text-gray-900 truncate">
+                    <div className="rounded-xl border border-slate-200/90 bg-white p-5 shadow-sm">
+                      <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Current owner</div>
+                      <div className="mt-2 text-sm font-bold text-slate-900">
                         {String(getCurrentOwner() || '—')}
                       </div>
-                      <div className="mt-2 text-[11px] text-gray-600 font-semibold">
+                      <div className="mt-2 text-xs font-medium text-slate-500">
                         {suggestion.assignedImplementer ? `Implementer: ${suggestion.assignedImplementer}` : 'Implementer not assigned'}
                       </div>
                     </div>
-                    <div className="bg-white border border-gray-200 rounded-2xl p-4 shadow-sm">
-                      <div className="text-[11px] font-extrabold uppercase text-gray-500">Next Action</div>
-                      <div className="mt-1 text-sm font-black text-gray-900 leading-snug">
+                    <div className="rounded-xl border border-slate-200/90 bg-white p-5 shadow-sm">
+                      <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Next action</div>
+                      <div className="mt-2 text-sm font-bold leading-snug text-slate-900">
                         {getActionRequired()}
                       </div>
-                      <div className="mt-2 text-[11px] text-gray-600 font-semibold">
+                      <div className="mt-2 text-xs font-medium text-slate-500">
                         Submitted: {suggestion.dateSubmitted || '—'}
                       </div>
                     </div>
-                    <div className="bg-white border border-gray-200 rounded-2xl p-4 shadow-sm">
-                      <div className="text-[11px] font-extrabold uppercase text-gray-500">Progress</div>
-                      <div className="mt-1 text-sm font-black text-gray-900">
+                    <div className="rounded-xl border border-slate-200/90 bg-white p-5 shadow-sm">
+                      <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Progress</div>
+                      <div className="mt-2 text-sm font-bold tabular-nums text-slate-900">
                         {progressFloorEffective}%
                       </div>
-                      <div className="mt-2 w-full h-2 bg-gray-200 rounded overflow-hidden">
+                      <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-slate-200">
                         <div
-                          className="h-full bg-kauvery-purple"
+                          className="h-full rounded-full bg-gradient-to-r from-kauvery-purple to-kauvery-violet"
                           style={{ width: `${progressFloorEffective}%` }}
                         />
                       </div>
-                      <div className="mt-2 text-[11px] text-gray-600 font-semibold">
+                      <div className="mt-2 text-xs font-medium text-slate-500">
                         {suggestion.implementationStage || 'Started'}
-                        {suggestion.implementationDeadline ? ` • Due ${suggestion.implementationDeadline}` : ''}
+                        {suggestion.implementationDeadline ? ` · Due ${suggestion.implementationDeadline}` : ''}
                       </div>
                     </div>
                   </div>
 
                   {/* Key details (useful, data-driven) */}
-                  <div className="bg-white border border-gray-200 rounded-2xl p-6 shadow-sm">
-                    <div className="flex items-center justify-between gap-3">
+                  <div className="rounded-xl border border-slate-200/90 bg-white p-6 shadow-sm">
+                    <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-4">
                       <div>
-                        <div className="text-xs uppercase tracking-wide text-gray-500 font-extrabold">
+                        <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
                           Key details
                         </div>
-                        <div className="text-sm text-gray-700 font-semibold mt-1">
+                        <div className="mt-1 text-sm font-medium text-slate-600">
                           Quick context from the submitted idea.
                         </div>
                       </div>
-                      <div className="w-10 h-10 rounded-2xl bg-purple-50 border border-purple-100 flex items-center justify-center text-kauvery-purple shadow-sm">
-                        <span className="material-icons-round">info</span>
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-slate-50 text-kauvery-purple">
+                        <span className="material-icons-round text-xl">info</span>
                       </div>
                     </div>
 
-                    <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                      <div className="rounded-xl border border-gray-200 bg-slate-50 p-3">
-                        <div className="text-[11px] font-extrabold uppercase text-gray-500">Unit</div>
-                        <div className="text-sm font-black text-gray-900 mt-1 truncate">
+                    <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                      <div className="rounded-lg border border-slate-200/80 bg-slate-50/80 p-3.5">
+                        <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Unit</div>
+                        <div className="mt-1.5 truncate text-sm font-semibold text-slate-900">
                           {suggestion.assignedUnit || suggestion.unit || '—'}
                         </div>
                       </div>
-                      <div className="rounded-xl border border-gray-200 bg-slate-50 p-3">
-                        <div className="text-[11px] font-extrabold uppercase text-gray-500">Department</div>
-                        <div className="text-sm font-black text-gray-900 mt-1 truncate">
+                      <div className="rounded-lg border border-slate-200/80 bg-slate-50/80 p-3.5">
+                        <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Department</div>
+                        <div className="mt-1.5 truncate text-sm font-semibold text-slate-900">
                           {suggestion.assignedDepartment || suggestion.department || '—'}
                         </div>
                       </div>
-                      <div className="rounded-xl border border-gray-200 bg-slate-50 p-3">
-                        <div className="text-[11px] font-extrabold uppercase text-gray-500">Area</div>
-                        <div className="text-sm font-black text-gray-900 mt-1 truncate">
+                      <div className="rounded-lg border border-slate-200/80 bg-slate-50/80 p-3.5">
+                        <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Area</div>
+                        <div className="mt-1.5 truncate text-sm font-semibold text-slate-900">
                           {suggestion.area || '—'}
                         </div>
                       </div>
-                      <div className="rounded-xl border border-gray-200 bg-slate-50 p-3">
-                        <div className="text-[11px] font-extrabold uppercase text-gray-500">Attachments</div>
-                        <div className="text-sm font-black text-gray-900 mt-1">
+                      <div className="rounded-lg border border-slate-200/80 bg-slate-50/80 p-3.5">
+                        <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Attachments</div>
+                        <div className="mt-1.5 text-sm font-semibold text-slate-900">
                           {(Array.isArray(suggestion.ideaAttachmentPaths) ? suggestion.ideaAttachmentPaths.length : 0) +
                             (Array.isArray(suggestion.templateAttachmentPaths) ? suggestion.templateAttachmentPaths.length : 0)}
                         </div>
-                        <div className="text-[11px] text-gray-600 font-semibold mt-1">
-                          Idea: {Array.isArray(suggestion.ideaAttachmentPaths) ? suggestion.ideaAttachmentPaths.length : 0} • Template: {Array.isArray(suggestion.templateAttachmentPaths) ? suggestion.templateAttachmentPaths.length : 0}
+                        <div className="mt-1 text-xs font-medium text-slate-500">
+                          Idea: {Array.isArray(suggestion.ideaAttachmentPaths) ? suggestion.ideaAttachmentPaths.length : 0} · Template: {Array.isArray(suggestion.templateAttachmentPaths) ? suggestion.templateAttachmentPaths.length : 0}
                         </div>
                       </div>
                     </div>
@@ -2034,7 +2292,7 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
                         </div>
                       </div>
                     </div>
-                    <div className="bg-slate-50 border border-slate-200 rounded-xl p-4">
+                    <div className="bg-purple-50/45 border border-purple-200/70 rounded-xl p-4">
                       <div className="text-[11px] font-extrabold uppercase text-gray-600 mb-2">
                         Initial description
                       </div>
@@ -2180,66 +2438,155 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
             {(initialView === 'tracking' || activeTab === 'review') && (
               <div className="space-y-6 animate-fade-in">
                 {initialView === 'tracking' ? (
-                  <div className="bg-gradient-to-br from-white to-slate-50 border border-gray-200 rounded-2xl overflow-hidden shadow-sm">
-                    <div className="grid grid-cols-1 lg:grid-cols-12 min-h-[500px]">
-                      <div className="lg:col-span-8 p-6 border-r border-gray-200">
-                        <div className="mb-4 space-y-3">
-                          <div className="flex items-center gap-2">
-                            <h3 className="text-2xl font-black text-slate-900 leading-tight">
-                              Workflow Tracking
+                  <div className="overflow-x-hidden rounded-xl border border-slate-200/90 bg-white shadow-sm">
+                    <div
+                      className={`grid min-h-0 ${
+                        isPageLayout
+                          ? 'grid-cols-1 lg:grid-cols-3 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.1fr)_minmax(16rem,22rem)] 2xl:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)_24rem] lg:min-h-[min(480px,calc(100dvh-14rem))] xl:min-h-[min(520px,calc(100dvh-16rem))]'
+                          : 'grid-cols-1 lg:grid-cols-12 min-h-[500px]'
+                      }`}
+                    >
+                      {/* Column 1 — workflow status + tracking flow */}
+                      <div
+                        className={`space-y-4 ${
+                          isPageLayout
+                            ? 'min-h-0 border-b border-slate-200/80 bg-slate-50/40 p-4 sm:p-6 lg:p-8 lg:border-b-0 lg:border-r'
+                            : 'lg:col-span-4 border-r border-slate-200/80 bg-slate-50/40 p-6'
+                        }`}
+                      >
+                        <div className="space-y-4">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <h3 className="text-lg font-bold tracking-tight text-slate-900 xl:text-xl">
+                              Workflow tracking
                             </h3>
-                            <span className="text-[10px] font-mono text-kauvery-purple bg-purple-50 border border-purple-200 px-1.5 py-0.5 rounded-md font-bold">
+                            <span className="rounded-md border border-slate-200 bg-white px-2 py-0.5 font-mono text-[10px] font-semibold text-slate-600 tabular-nums">
                               {suggestion.code || suggestion.id}
                             </span>
                           </div>
-                          <div className="rounded-2xl border border-indigo-200 bg-gradient-to-r from-indigo-50 via-white to-purple-50 p-4 shadow-sm">
-                            <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                          <div className="rounded-xl border border-slate-200/90 bg-white p-4 shadow-sm ring-1 ring-slate-900/[0.03]">
+                            <div className="flex flex-col gap-4">
                               <div>
-                                <div className="text-[11px] font-extrabold uppercase tracking-wide text-indigo-900/80">
+                                <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
                                   Current stage
                                 </div>
-                                <div className="mt-1 text-xl font-black text-slate-900">
+                                <div className="mt-1.5 text-base font-bold leading-snug text-slate-900 xl:text-lg">
                                   {trackingStageTitle}
                                 </div>
-                                <div className="mt-1 text-sm font-semibold text-slate-700">
+                                <div className="mt-1.5 text-sm font-medium text-slate-600">
                                   {trackingStageHint}
                                 </div>
                               </div>
-                              <div className="flex flex-wrap gap-2">
-                                <span className="inline-flex items-center rounded-full border border-indigo-300 bg-white px-3 py-1 text-[11px] font-black text-indigo-900">
-                                  Status: {suggestion.status}
+                              <div className="flex flex-wrap gap-2 border-t border-slate-100 pt-3">
+                                <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[11px] font-semibold text-slate-700">
+                                  {suggestion.status}
                                 </span>
-                                <span className="inline-flex items-center rounded-full border border-purple-300 bg-white px-3 py-1 text-[11px] font-black text-kauvery-purple">
+                                <span className="inline-flex items-center rounded-full border border-kauvery-purple/20 bg-purple-50/80 px-3 py-1 text-[11px] font-semibold text-kauvery-purple">
                                   Owner: {String(getCurrentOwner() || '—')}
                                 </span>
                               </div>
                             </div>
                           </div>
-                        </div>
 
-                        <div className="bg-white border border-gray-200 rounded-xl p-4 mb-4 shadow-sm">
-                          <div className="text-xs font-black text-gray-700 uppercase mb-3">Suggestion Summary</div>
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-                            <div>
-                              <div className="text-[11px] text-gray-500 uppercase font-extrabold">Originator</div>
-                              <div className="font-bold text-gray-900">{suggestion.employeeName}</div>
+                          <div className="rounded-xl border border-slate-200/90 bg-white p-4 shadow-sm ring-1 ring-slate-900/[0.03]">
+                            <div className="mb-3 flex items-start justify-between gap-3">
+                              <div>
+                                <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                                  Tracking flow
+                                </div>
+                                <div className="mt-1 text-sm font-medium text-slate-600">
+                                  Every stage, owner, and next step in one place.
+                                </div>
+                              </div>
                             </div>
-                            <div>
-                              <div className="text-[11px] text-gray-500 uppercase font-extrabold">Department</div>
-                              <div className="font-bold text-gray-900">{suggestion.department}</div>
-                            </div>
-                            <div>
-                              <div className="text-[11px] text-gray-500 uppercase font-extrabold">Area</div>
-                              <div className="font-bold text-gray-900">{suggestion.area}</div>
-                            </div>
-                            <div>
-                              <div className="text-[11px] text-gray-500 uppercase font-extrabold">Submitted</div>
-                              <div className="font-bold text-gray-900">{suggestion.dateSubmitted}</div>
+                            <div className="max-h-[min(45vh,26rem)] space-y-3 overflow-y-auto pr-1 lg:max-h-[min(50vh,28rem)]">
+                              {workflowSteps.map((step, index) => {
+                                const stateMeta = workflowStepStateMeta[step.state];
+                                return (
+                                  <div
+                                    key={step.id}
+                                    className={`rounded-lg border p-3 ${
+                                      step.state === 'current'
+                                        ? 'border-blue-200 bg-blue-50/80'
+                                        : step.state === 'done'
+                                        ? 'border-emerald-200 bg-emerald-50/70'
+                                        : step.state === 'skipped'
+                                        ? 'border-amber-200 bg-amber-50/70'
+                                        : 'border-slate-200 bg-slate-50/70'
+                                    }`}
+                                  >
+                                    <div className="flex items-start gap-3">
+                                      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-[11px] font-bold text-slate-600">
+                                        {index + 1}
+                                      </div>
+                                      <div className="min-w-0 flex-1">
+                                        <div className="flex flex-wrap items-center gap-2">
+                                          <div className="text-sm font-semibold text-slate-900">
+                                            {step.title}
+                                          </div>
+                                          <span
+                                            className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-black uppercase tracking-wide ${stateMeta.badgeClass}`}
+                                          >
+                                            <span className="material-icons-round text-[12px]">
+                                              {stateMeta.icon}
+                                            </span>
+                                            {stateMeta.label}
+                                          </span>
+                                        </div>
+                                        <div className="mt-1 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                                          Owner: {step.owner}
+                                        </div>
+                                        <div className="mt-1 text-xs font-medium leading-relaxed text-slate-600">
+                                          {step.detail}
+                                        </div>
+                                      </div>
+                                    </div>
+                                  </div>
+                                );
+                              })}
                             </div>
                           </div>
-                          <div className="mt-4">
-                            <div className="text-[11px] text-gray-500 uppercase font-extrabold mb-1">Description</div>
-                            <p className="text-sm text-gray-800 font-medium">{suggestion.description}</p>
+                        </div>
+                      </div>
+
+                      {/* Column 2 — idea summary, remarks, thread, comments */}
+                      <div
+                        className={`min-h-0 space-y-4 ${
+                          isPageLayout
+                            ? 'border-b border-slate-200/80 bg-white p-4 sm:p-6 lg:p-8 lg:border-b-0 lg:border-r'
+                            : 'lg:col-span-4 border-r border-slate-200/80 bg-white p-6'
+                        }`}
+                      >
+                        <div className="mb-4 rounded-xl border border-slate-200/90 bg-white p-4 shadow-sm sm:p-5">
+                          <div className="border-b border-slate-100 pb-3 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                            Suggestion summary
+                          </div>
+                          <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                            {[
+                              { label: 'Originator', value: suggestion.employeeName },
+                              { label: 'Department', value: suggestion.department },
+                              { label: 'Area', value: suggestion.area },
+                              { label: 'Submitted', value: suggestion.dateSubmitted },
+                            ].map((row) => (
+                              <div
+                                key={row.label}
+                                className="flex min-h-[4rem] flex-col justify-center rounded-lg border border-slate-200/80 bg-slate-50/60 px-3 py-3 sm:px-4"
+                              >
+                                <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                                  {row.label}
+                                </div>
+                                <div className="mt-1 break-words text-sm font-semibold leading-snug text-slate-900">
+                                  {row.value || '—'}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                          <div className="mt-4 rounded-lg border border-slate-200/80 bg-slate-50/50 px-3 py-3 sm:px-4 sm:py-3.5">
+                            <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                              Description
+                            </div>
+                            <p className="mt-2 text-sm font-medium leading-relaxed text-slate-700 whitespace-pre-wrap">
+                              {suggestion.description || '—'}
+                            </p>
                           </div>
                         </div>
 
@@ -2263,24 +2610,28 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
                           </div>
                         )}
 
-                        <div className="mb-4 border border-gray-200 rounded-xl bg-white overflow-hidden shadow-sm">
-                          <div className="px-4 py-3 border-b border-gray-200 text-xs font-black uppercase text-gray-700 bg-slate-50">
-                            Workflow Thread
+                        <div className="mb-4 overflow-hidden rounded-xl border border-slate-200/90 bg-white shadow-sm">
+                          <div className="border-b border-slate-200/80 bg-slate-50/80 px-4 py-3 text-[10px] font-semibold uppercase tracking-wider text-slate-600 sm:px-5">
+                            Workflow thread
                           </div>
-                          <div className="max-h-56 overflow-y-auto p-4 space-y-4">
+                          <div
+                            className={`space-y-4 overflow-y-auto p-4 sm:p-5 ${
+                              isPageLayout ? 'max-h-[min(42vh,22rem)] xl:max-h-[min(50vh,28rem)]' : 'max-h-56'
+                            }`}
+                          >
                             {workflowThread.length === 0 ? (
-                              <div className="text-xs text-gray-500 font-medium">No workflow updates yet.</div>
+                              <div className="text-xs font-medium text-slate-500">No workflow updates yet.</div>
                             ) : (
                               workflowThread.map(item => (
-                                <div key={item.id} className="flex gap-3 relative">
-                                  <div className="absolute left-[11px] top-7 bottom-[-14px] w-px bg-purple-100" />
-                                  <div className="w-6 h-6 rounded-full bg-gradient-to-br from-purple-100 to-fuchsia-100 text-kauvery-purple flex items-center justify-center text-[10px] font-black border border-purple-200 z-10">
+                                <div key={item.id} className="relative flex gap-3">
+                                  <div className="absolute bottom-[-12px] left-[11px] top-7 w-px bg-slate-200" />
+                                  <div className="z-10 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-[10px] font-bold text-kauvery-purple">
                                     {String(item.actor || 'S').trim().charAt(0).toUpperCase()}
                                   </div>
-                                  <div className="flex-1 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
-                                    <div className="text-xs text-gray-900 font-semibold leading-relaxed">{item.text}</div>
-                                    <div className="text-[10px] text-gray-500 mt-1">
-                                      {item.actor} ({item.role}) • {new Date(item.date).toLocaleString()}
+                                  <div className="min-w-0 flex-1 rounded-lg border border-slate-200/80 bg-slate-50/50 px-3 py-2">
+                                    <div className="text-xs font-medium leading-relaxed text-slate-800">{item.text}</div>
+                                    <div className="mt-1 text-[10px] text-slate-500">
+                                      {item.actor} ({item.role}) · {new Date(item.date).toLocaleString()}
                                     </div>
                                   </div>
                                 </div>
@@ -2289,9 +2640,9 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
                           </div>
                         </div>
 
-                        <div className="border-t border-gray-200 pt-4">
+                        <div className="border-t border-slate-200/80 pt-4">
                           <div className="flex items-start gap-3">
-                            <div className="w-7 h-7 rounded-full bg-slate-200 flex items-center justify-center text-xs font-black text-gray-700">
+                            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-slate-100 text-xs font-bold text-slate-600">
                               {role.charAt(0)}
                             </div>
                             <textarea
@@ -2299,7 +2650,7 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
                               value={commentDraft}
                               onChange={e => setCommentDraft(e.target.value)}
                               placeholder="Add a comment or update..."
-                              className="w-full border border-gray-300 rounded-xl p-3 text-sm text-gray-900 font-medium outline-none focus:ring-2 focus:ring-kauvery-purple bg-white"
+                              className="w-full rounded-lg border border-slate-200 bg-white p-3 text-sm font-medium text-slate-900 outline-none ring-kauvery-purple/30 transition-shadow focus:border-kauvery-purple/40 focus:ring-2"
                             />
                           </div>
                           <div className="mt-3 flex items-center gap-2">
@@ -2307,40 +2658,49 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
                               type="button"
                               onClick={handleAddNote}
                               disabled={!commentDraft.trim()}
-                              className={`bg-gradient-to-r from-kauvery-purple to-kauvery-violet text-white text-xs font-bold px-4 py-2 rounded-lg shadow-sm ${
-                                commentDraft.trim() ? 'hover:opacity-95' : 'opacity-60 cursor-not-allowed'
+                              className={`rounded-lg px-4 py-2 text-xs font-semibold text-white shadow-sm transition-opacity ${
+                                commentDraft.trim()
+                                  ? 'bg-gradient-to-r from-kauvery-purple to-kauvery-violet hover:opacity-95'
+                                  : 'cursor-not-allowed bg-slate-300 opacity-70'
                               }`}
                             >
-                              Add Note
+                              Add note
                             </button>
                           </div>
                         </div>
                       </div>
 
-                      <div className="lg:col-span-4 p-5 bg-slate-50/80 space-y-4 border-l border-gray-200">
-                        <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+                      {/* Column 3 — progress, approvals, implementation */}
+                      <div
+                        className={`space-y-4 ${
+                          isPageLayout
+                            ? 'min-h-0 border-t border-slate-200/80 bg-slate-50/50 p-4 sm:p-5 lg:p-6 lg:sticky lg:top-0 lg:max-h-[calc(100dvh-14rem)] lg:self-start lg:overflow-y-auto lg:border-t-0 xl:max-h-[calc(100dvh-16rem)]'
+                            : 'lg:col-span-4 space-y-4 border-l border-slate-200/80 bg-slate-50/50 p-5'
+                        }`}
+                      >
+                        <div className="rounded-xl border border-slate-200/90 bg-white p-4 shadow-sm">
                           <div className="flex items-start justify-between gap-3">
-                            <div>
-                              <div className="text-[11px] text-gray-500 font-bold uppercase mb-1">
+                            <div className="min-w-0">
+                              <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
                                 Stage summary
                               </div>
-                              <div className="text-lg font-black text-gray-900 leading-tight">
+                              <div className="mt-1.5 text-base font-bold leading-tight text-slate-900">
                                 {trackingStageTitle}
                               </div>
-                              <div className="mt-1 text-sm font-semibold text-gray-700">
+                              <div className="mt-1 text-sm font-medium text-slate-600">
                                 {trackingStageHint}
                               </div>
                             </div>
-                            <span className="inline-flex items-center rounded-full border border-indigo-300 bg-indigo-50 px-2.5 py-1 text-[10px] font-black uppercase tracking-wide text-indigo-900">
+                            <span className="inline-flex shrink-0 items-center rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-slate-700">
                               {suggestion.status}
                             </span>
                           </div>
                           <div className="mt-4">
-                            <div className="flex items-center justify-between text-[11px] font-extrabold uppercase text-gray-500">
-                              <span>Overall workflow progress</span>
-                              <span>{workflowProgressPercent}%</span>
+                            <div className="flex items-center justify-between text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                              <span>Overall progress</span>
+                              <span className="tabular-nums text-slate-800">{workflowProgressPercent}%</span>
                             </div>
-                            <div className="mt-2 h-2.5 w-full overflow-hidden rounded-full bg-gray-200">
+                            <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-slate-200">
                               <div
                                 className="h-full rounded-full bg-gradient-to-r from-kauvery-purple to-kauvery-violet"
                                 style={{ width: `${workflowProgressPercent}%` }}
@@ -2348,34 +2708,34 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
                             </div>
                           </div>
                           <div className="mt-4 grid grid-cols-1 gap-3">
-                            <div className="rounded-xl border border-gray-200 bg-slate-50 p-3">
-                              <div className="text-[11px] font-extrabold uppercase text-gray-500">
+                            <div className="rounded-lg border border-slate-200/80 bg-slate-50/80 p-3">
+                              <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
                                 Current owner
                               </div>
-                              <div className="mt-1 text-sm font-black text-gray-900">
+                              <div className="mt-1 text-sm font-semibold text-slate-900">
                                 {String(getCurrentOwner() || '—')}
                               </div>
                             </div>
-                            <div className="rounded-xl border border-gray-200 bg-slate-50 p-3">
-                              <div className="text-[11px] font-extrabold uppercase text-gray-500">
+                            <div className="rounded-lg border border-slate-200/80 bg-slate-50/80 p-3">
+                              <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
                                 Action required
                               </div>
-                              <div className="mt-1 text-sm font-black text-gray-900 leading-snug">
+                              <div className="mt-1 text-sm font-semibold leading-snug text-slate-900">
                                 {getActionRequired()}
                               </div>
                             </div>
                           </div>
                         </div>
 
-                        <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
-                          <div className="text-[11px] text-gray-500 font-bold uppercase mb-2">
+                        <div className="rounded-xl border border-slate-200/90 bg-white p-4 shadow-sm">
+                          <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
                             Approval route
                           </div>
-                          <div className="text-sm font-semibold text-gray-800">
+                          <div className="mt-2 text-sm font-medium text-slate-800">
                             {approvalRouteSummary}
                           </div>
                           <div className="mt-3 flex flex-wrap gap-2">
-                            <span className="inline-flex items-center rounded-full border border-purple-200 bg-purple-50 px-2.5 py-1 text-[11px] font-black text-kauvery-purple">
+                            <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold text-slate-700">
                               {activeApprovalStageLabel}
                             </span>
                             {level1Approvals.length > 0 && (
@@ -2391,71 +2751,12 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
                           </div>
                         </div>
 
-                        <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
-                          <div className="flex items-center justify-between gap-3 mb-3">
-                            <div>
-                              <div className="text-[11px] text-gray-500 font-bold uppercase">
-                                Tracking flow
-                              </div>
-                              <div className="text-sm font-semibold text-gray-700 mt-1">
-                                Every stage, owner, and next step in one place.
-                              </div>
-                            </div>
-                          </div>
-                          <div className="space-y-3 max-h-[28rem] overflow-y-auto pr-1">
-                            {workflowSteps.map((step, index) => {
-                              const stateMeta = workflowStepStateMeta[step.state];
-                              return (
-                                <div
-                                  key={step.id}
-                                  className={`rounded-2xl border p-3 ${
-                                    step.state === 'current'
-                                      ? 'border-blue-300 bg-blue-50/70'
-                                      : step.state === 'done'
-                                      ? 'border-emerald-200 bg-emerald-50/60'
-                                      : step.state === 'skipped'
-                                      ? 'border-amber-200 bg-amber-50/60'
-                                      : 'border-gray-200 bg-slate-50'
-                                  }`}
-                                >
-                                  <div className="flex items-start gap-3">
-                                    <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white border border-gray-200 text-[11px] font-black text-gray-700">
-                                      {index + 1}
-                                    </div>
-                                    <div className="min-w-0 flex-1">
-                                      <div className="flex flex-wrap items-center gap-2">
-                                        <div className="text-sm font-black text-gray-900">
-                                          {step.title}
-                                        </div>
-                                        <span
-                                          className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-black uppercase tracking-wide ${stateMeta.badgeClass}`}
-                                        >
-                                          <span className="material-icons-round text-[12px]">
-                                            {stateMeta.icon}
-                                          </span>
-                                          {stateMeta.label}
-                                        </span>
-                                      </div>
-                                      <div className="mt-1 text-[11px] font-extrabold uppercase tracking-wide text-gray-500">
-                                        Owner: {step.owner}
-                                      </div>
-                                      <div className="mt-1 text-xs font-semibold leading-relaxed text-gray-700">
-                                        {step.detail}
-                                      </div>
-                                    </div>
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </div>
-
-                        <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
-                          <div className="text-[11px] text-gray-500 font-bold uppercase mb-2">
+                        <div className="rounded-xl border border-slate-200/90 bg-white p-4 shadow-sm">
+                          <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
                             Approval details
                           </div>
                           {!approvalsRequired ? (
-                            <div className="rounded-xl border border-dashed border-gray-300 bg-slate-50 p-3 text-sm font-semibold text-gray-700">
+                            <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50/80 p-3 text-sm font-medium text-slate-600">
                               No Level 1 or Level 2 approvals were configured for this idea.
                             </div>
                           ) : (
@@ -2561,63 +2862,63 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
                           )}
                         </div>
 
-                        <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
-                          <div className="text-[11px] text-gray-500 font-bold uppercase mb-2">
+                        <div className="rounded-xl border border-slate-200/90 bg-white p-4 shadow-sm">
+                          <div className="mb-3 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
                             Implementation context
                           </div>
                           <div className="grid grid-cols-1 gap-3">
-                            <div className="rounded-xl border border-gray-200 bg-slate-50 p-3">
-                              <div className="text-[11px] font-extrabold uppercase text-gray-500">
+                            <div className="rounded-lg border border-slate-200/80 bg-slate-50/80 p-3">
+                              <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
                                 Assigned to
                               </div>
-                              <div className="mt-1 text-sm font-black text-gray-900">
+                              <div className="mt-1 text-sm font-semibold text-slate-900">
                                 {suggestion.assignedImplementer || 'Not assigned'}
                               </div>
                             </div>
-                            <div className="rounded-xl border border-gray-200 bg-slate-50 p-3">
-                              <div className="text-[11px] font-extrabold uppercase text-gray-500">
+                            <div className="rounded-lg border border-slate-200/80 bg-slate-50/80 p-3">
+                              <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
                                 Reporting to
                               </div>
-                              <div className="mt-1 text-sm font-black text-gray-900">
+                              <div className="mt-1 text-sm font-semibold text-slate-900">
                                 {reportingTo || '—'}
                               </div>
-                              <div className="mt-1 text-[10px] font-semibold text-gray-500">
+                              <div className="mt-1 text-[10px] font-medium text-slate-500">
                                 Based on implementer manager from HRMS.
                               </div>
                             </div>
-                            <div className="rounded-xl border border-gray-200 bg-slate-50 p-3">
+                            <div className="rounded-lg border border-slate-200/80 bg-slate-50/80 p-3">
                               <div className="flex items-center justify-between gap-3">
                                 <div>
-                                  <div className="text-[11px] font-extrabold uppercase text-gray-500">
+                                  <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
                                     Progress
                                   </div>
-                                  <div className="mt-1 text-sm font-black text-gray-900">
+                                  <div className="mt-1 text-sm font-semibold tabular-nums text-slate-900">
                                     {progressFloorEffective}%
                                   </div>
                                 </div>
-                                <div className="text-[11px] font-semibold text-gray-600">
+                                <div className="text-[11px] font-medium text-slate-600">
                                   {suggestion.implementationStage || 'Started'}
                                 </div>
                               </div>
-                              <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-gray-200">
+                              <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-slate-200">
                                 <div
-                                  className="h-full rounded-full bg-kauvery-purple"
+                                  className="h-full rounded-full bg-gradient-to-r from-kauvery-purple to-kauvery-violet"
                                   style={{ width: `${progressFloorEffective}%` }}
                                 />
                               </div>
-                              <div className="mt-2 text-[11px] font-semibold text-gray-600">
+                              <div className="mt-2 text-[11px] font-medium text-slate-500">
                                 Last update: {suggestion.implementationUpdateDate || 'NA'}
                               </div>
                             </div>
-                            <div className="rounded-xl border border-gray-200 bg-slate-50 p-3">
-                              <div className="text-[11px] font-extrabold uppercase text-gray-500">
+                            <div className="rounded-lg border border-slate-200/80 bg-slate-50/80 p-3">
+                              <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
                                 Deadline
                               </div>
-                              <div className="mt-1 text-sm font-black text-gray-900">
+                              <div className="mt-1 text-sm font-semibold text-slate-900">
                                 {suggestion.implementationDeadline || '—'}
                               </div>
                               {suggestion.deadlineChangeRemark && (
-                                <div className="mt-1 text-[11px] font-semibold text-gray-600">
+                                <div className="mt-1 text-[11px] font-medium text-slate-600">
                                   Remark: {suggestion.deadlineChangeRemark}
                                 </div>
                               )}
@@ -2627,7 +2928,7 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
                       </div>
                     </div>
                   </div>
-                ) : null}
+                ) : renderActionStatusSummaryPanel()}
 
                 {/* 1. UNIT COORDINATOR: Approve Initial Idea */}
                 {role === Role.UNIT_COORDINATOR && suggestion.status === Status.IDEA_SUBMITTED && (
@@ -2700,69 +3001,62 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                       <div>
                         <label className="text-xs font-extrabold text-gray-700 block mb-1">Unit</label>
-                        <select
+                        <SearchableSelect
+                          aria-label="Assign unit"
                           value={assignUnit}
-                          onChange={e => {
-                            setAssignUnit(e.target.value);
+                          onChange={(v) => {
+                            setAssignUnit(v);
                             setImplementerDept('');
                             setImplementerName('');
                             setImplementerEmployeeCode('');
                           }}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 font-medium"
-                        >
-                          <option value="">Select unit...</option>
-                          {unitOptions.map(u => (
-                            <option key={u.id} value={u.code}>
-                              {u.name}
-                            </option>
-                          ))}
-                        </select>
+                          emptyOptionLabel="Select unit..."
+                          options={unitOptions.map((u) => ({ value: u.code, label: u.name }))}
+                          placeholder="Search units…"
+                          inputClassName="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 font-medium bg-white"
+                        />
                       </div>
                       <div>
                         <label className="text-xs font-extrabold text-gray-700 block mb-1">Department</label>
-                        <select
+                        <SearchableSelect
+                          aria-label="Assign department"
                           value={implementerDept}
-                          onChange={e => {
-                            setImplementerDept(e.target.value);
+                          onChange={(v) => {
+                            setImplementerDept(v);
                             setImplementerName('');
                             setImplementerEmployeeCode('');
                           }}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 font-medium"
-                        >
-                          <option value="">Select department...</option>
-                          {departmentOptions.map(d => (
-                            <option key={d.id} value={d.name}>
-                              {d.name}
-                            </option>
-                          ))}
-                        </select>
+                          emptyOptionLabel="Select department..."
+                          options={departmentOptions.map((d) => ({ value: d.name, label: d.name }))}
+                          placeholder="Search departments…"
+                          inputClassName="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 font-medium bg-white"
+                        />
                       </div>
                       <div className="md:col-span-2">
                         <label className="text-xs font-extrabold text-gray-700 block mb-1">Implementer Name</label>
-                        <select
+                        <SearchableSelect
+                          aria-label="Implementer"
                           value={implementerEmployeeCode}
-                          onChange={e => {
-                            const code = e.target.value;
+                          onChange={(code) => {
                             setImplementerEmployeeCode(code);
-                            const picked = implementerOptions.find(x => x.employeeCode === code);
+                            const picked = implementerOptions.find((x) => x.employeeCode === code);
                             setImplementerName(picked?.name || '');
                           }}
                           disabled={!assignUnit || !implementerDept || implementerOptions.length === 0}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 font-medium disabled:bg-gray-100 disabled:text-gray-500"
-                        >
-                          <option value="">
-                            {!assignUnit || !implementerDept
+                          emptyOptionLabel={
+                            !assignUnit || !implementerDept
                               ? 'Select unit and department first'
                               : implementerOptions.length === 0
                                 ? 'No users listed for this combination'
-                                : 'Select implementer...'}
-                          </option>
-                          {implementerOptions.map((u) => (
-                            <option key={u.employeeCode} value={u.employeeCode}>
-                              {u.name} ({u.employeeCode})
-                            </option>
-                          ))}
-                        </select>
+                                : 'Select implementer...'
+                          }
+                          options={implementerOptions.map((u) => ({
+                            value: u.employeeCode,
+                            label: `${u.name} (${u.employeeCode})`,
+                          }))}
+                          placeholder="Search implementers…"
+                          inputClassName="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 font-medium bg-white disabled:bg-gray-100 disabled:text-gray-500"
+                        />
                       </div>
                       <div className="md:col-span-2">
                         <label className="text-xs font-extrabold text-gray-700 block mb-1">Implementation Deadline</label>
@@ -2805,15 +3099,20 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                       <div>
                         <label className="text-xs font-extrabold text-gray-700 block mb-1">Current Status</label>
-                        <select
+                        <SearchableSelect
+                          aria-label="Implementation stage"
                           value={implementationStage}
-                          onChange={e => setImplementationStage(e.target.value as 'Started' | 'In Progress' | 'Completed')}
-                          className="w-full border border-gray-300 bg-white rounded-lg px-3 py-2 text-sm text-gray-900 font-medium"
-                        >
-                          <option value="Started">Started</option>
-                          <option value="In Progress">In Progress</option>
-                          <option value="Completed">Completed</option>
-                        </select>
+                          onChange={(v) =>
+                            setImplementationStage(v as 'Started' | 'In Progress' | 'Completed')
+                          }
+                          options={[
+                            { value: 'Started', label: 'Started' },
+                            { value: 'In Progress', label: 'In Progress' },
+                            { value: 'Completed', label: 'Completed' },
+                          ]}
+                          placeholder="Search status…"
+                          inputClassName="w-full border border-gray-300 bg-white rounded-lg px-3 py-2 text-sm text-gray-900 font-medium"
+                        />
                       </div>
                       <div>
                         <label className="text-xs font-extrabold text-gray-700 block mb-1">Progress (automatic)</label>
@@ -2915,7 +3214,6 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
                         onClick={() => {
                           if (onOpenTemplatePage) {
                             onOpenTemplatePage(suggestion, { edit: true });
-                            onClose();
                             return;
                           }
                           setIsImplementationMode(true);
@@ -2987,7 +3285,6 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
                           setIsBeTemplateEditMode(true);
                           if (onOpenTemplatePage) {
                             onOpenTemplatePage(suggestion, { edit: true });
-                            onClose();
                             return;
                           }
                           setIsImplementationMode(true);
@@ -3053,38 +3350,33 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
                         {l1DeptCatalogLoading ? ' · Loading catalog…' : ''}
                       </p>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-2">
-                        <select
+                        <SearchableSelect
+                          aria-label="Level 1 department"
                           value={selectedMasterDeptL1}
-                          onChange={(e) => {
-                            setSelectedMasterDeptL1(e.target.value);
+                          onChange={(v) => {
+                            setSelectedMasterDeptL1(v);
                             setSelectedHodEmpCodeL1('');
                           }}
-                          className="w-full border border-amber-300 rounded-lg px-2 py-2 text-xs font-medium text-gray-900 bg-white"
-                        >
-                          <option value="">Department…</option>
-                          {[...level1DepartmentChoices]
+                          emptyOptionLabel="Department…"
+                          options={[...level1DepartmentChoices]
                             .sort((a, b) => a.name.localeCompare(b.name))
-                            .map((d) => (
-                              <option key={d.id} value={d.name}>
-                                {d.name}
-                              </option>
-                            ))}
-                        </select>
-                        <select
+                            .map((d) => ({ value: d.name, label: d.name }))}
+                          placeholder="Search departments…"
+                          inputClassName="w-full border border-amber-300 rounded-lg px-2 py-2 text-xs font-medium text-gray-900 bg-white"
+                        />
+                        <SearchableSelect
+                          aria-label="Level 1 named approver"
                           value={selectedHodEmpCodeL1}
-                          onChange={(e) => setSelectedHodEmpCodeL1(e.target.value)}
+                          onChange={setSelectedHodEmpCodeL1}
                           disabled={!selectedMasterDeptL1 || hodLoadingL1}
-                          className="w-full border border-amber-300 rounded-lg px-2 py-2 text-xs font-medium text-gray-900 bg-white disabled:bg-amber-100/80"
-                        >
-                          <option value="">
-                            {hodLoadingL1 ? 'Loading staff in department…' : 'Named approver…'}
-                          </option>
-                          {hodOptionsL1.map((u) => (
-                            <option key={u.employeeCode} value={u.employeeCode}>
-                              {u.name} ({u.employeeCode})
-                            </option>
-                          ))}
-                        </select>
+                          emptyOptionLabel={hodLoadingL1 ? 'Loading staff in department…' : 'Named approver…'}
+                          options={hodOptionsL1.map((u) => ({
+                            value: u.employeeCode,
+                            label: `${u.name} (${u.employeeCode})`,
+                          }))}
+                          placeholder="Search approvers…"
+                          inputClassName="w-full border border-amber-300 rounded-lg px-2 py-2 text-xs font-medium text-gray-900 bg-white disabled:bg-amber-100/80"
+                        />
                       </div>
                       {selectedMasterDeptL1 && !hodLoadingL1 && hodOptionsL1.length === 0 && (
                         <p className="text-[11px] text-amber-950 mb-2 font-semibold">
@@ -3124,7 +3416,7 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
                     </div>
 
                     {/* Level 2 — Finance / Ops / Nursing routes only */}
-                    <div className="mb-4 rounded-xl border-2 border-slate-200 bg-slate-50/60 p-4">
+                    <div className="mb-4 rounded-xl border-2 border-purple-200/60 bg-purple-50/60 p-4">
                       <label className="text-xs font-extrabold text-gray-900 block mb-1">
                         Level 2 — Functional heads <span className="text-gray-600 font-semibold">(optional)</span>
                       </label>
@@ -3140,37 +3432,31 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
                         .
                       </p>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-2">
-                        <select
+                        <SearchableSelect
+                          aria-label="Level 2 route"
                           value={selectedLevel2Role}
-                          onChange={(e) => {
-                            const v = e.target.value as Role | '';
-                            setSelectedLevel2Role(v || '');
+                          onChange={(v) => {
+                            setSelectedLevel2Role((v || '') as Role | '');
                             setSelectedHodEmpCodeL2('');
                           }}
-                          className="w-full border border-gray-300 rounded-lg px-2 py-2 text-xs font-medium text-gray-900 bg-white"
-                        >
-                          <option value="">Route…</option>
-                          {LEVEL_2_APPROVAL_ROUTES.map((r) => (
-                            <option key={r.role} value={r.role}>
-                              {r.label}
-                            </option>
-                          ))}
-                        </select>
-                        <select
+                          emptyOptionLabel="Route…"
+                          options={LEVEL_2_APPROVAL_ROUTES.map((r) => ({ value: r.role, label: r.label }))}
+                          placeholder="Search routes…"
+                          inputClassName="w-full border border-gray-300 rounded-lg px-2 py-2 text-xs font-medium text-gray-900 bg-white"
+                        />
+                        <SearchableSelect
+                          aria-label="Level 2 named head"
                           value={selectedHodEmpCodeL2}
-                          onChange={(e) => setSelectedHodEmpCodeL2(e.target.value)}
+                          onChange={setSelectedHodEmpCodeL2}
                           disabled={!selectedLevel2Role || hodLoadingL2}
-                          className="w-full border border-gray-300 rounded-lg px-2 py-2 text-xs font-medium text-gray-900 bg-white disabled:bg-gray-100"
-                        >
-                          <option value="">
-                            {hodLoadingL2 ? 'Loading unit-scoped heads…' : 'Named head…'}
-                          </option>
-                          {hodOptionsL2.map((u) => (
-                            <option key={u.employeeCode} value={u.employeeCode}>
-                              {u.name} ({u.employeeCode})
-                            </option>
-                          ))}
-                        </select>
+                          emptyOptionLabel={hodLoadingL2 ? 'Loading unit-scoped heads…' : 'Named head…'}
+                          options={hodOptionsL2.map((u) => ({
+                            value: u.employeeCode,
+                            label: `${u.name} (${u.employeeCode})`,
+                          }))}
+                          placeholder="Search heads…"
+                          inputClassName="w-full border border-gray-300 rounded-lg px-2 py-2 text-xs font-medium text-gray-900 bg-white disabled:bg-gray-100"
+                        />
                       </div>
                       {selectedLevel2Role && !hodLoadingL2 && hodOptionsL2.length === 0 && (
                         <p className="text-[11px] text-gray-700 mb-2 font-semibold">
@@ -3190,7 +3476,7 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
                           {functionalApprovalSlots.map((s) => (
                             <li
                               key={s.id}
-                              className="flex items-center justify-between gap-2 rounded-md bg-white border border-slate-200 px-2 py-1.5"
+                              className="flex items-center justify-between gap-2 rounded-md bg-white border border-purple-200/60 px-2 py-1.5"
                             >
                               <span>
                                 <span className="font-black text-kauvery-purple">L2</span> · {s.department} —{' '}
@@ -3221,7 +3507,7 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
                       />
                     </div>
 
-                    <div className="mb-4 bg-slate-50 p-3 rounded-lg border border-gray-200">
+                    <div className="mb-4 bg-purple-50/45 p-3 rounded-lg border border-gray-200">
                       <div className="text-xs font-extrabold text-gray-800 mb-2 uppercase">Template Actions</div>
                       <div className="flex items-center gap-2">
                         <button
@@ -3249,7 +3535,6 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
                           onClick={() => {
                             if (onOpenTemplatePage) {
                               onOpenTemplatePage(suggestion, { edit: true });
-                              onClose();
                               return;
                             }
                             setIsImplementationMode(true);
@@ -3517,7 +3802,7 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
                   </div>
 
                   <div className="mt-5 grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="rounded-xl border border-gray-200 bg-slate-50 p-4">
+                    <div className="rounded-xl border border-gray-200 bg-purple-50/45 p-4">
                       <div className="text-xs font-extrabold uppercase text-gray-600">Final PPT</div>
                       <div className="text-[11px] font-mono text-gray-600 mt-1 truncate">
                         {finalPptPath ? finalPptPath.split('/').pop() : 'Not uploaded'}
@@ -3552,7 +3837,7 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
                       </div>
                     </div>
 
-                    <div className="rounded-xl border border-gray-200 bg-slate-50 p-4">
+                    <div className="rounded-xl border border-gray-200 bg-purple-50/45 p-4">
                       <div className="text-xs font-extrabold uppercase text-gray-600">Final PDF</div>
                       <div className="text-[11px] font-mono text-gray-600 mt-1 truncate">
                         {finalPdfPath ? finalPdfPath.split('/').pop() : 'Not uploaded'}
@@ -3575,7 +3860,7 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
                           download
                           className={`px-3 py-2 rounded-lg text-xs font-black ${
                             finalPdfPath
-                              ? 'bg-gray-900 text-white hover:bg-gray-800'
+                              ? 'bg-kauvery-violet text-white hover:bg-kauvery-purple border border-purple-800/30'
                               : 'bg-gray-200 text-gray-500 pointer-events-none'
                           }`}
                         >

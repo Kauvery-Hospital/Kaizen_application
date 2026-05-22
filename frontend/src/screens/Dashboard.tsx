@@ -1,13 +1,37 @@
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Suggestion, Status, Role } from '../types';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell, AreaChart, Area } from 'recharts';
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ResponsiveContainer,
+  PieChart,
+  Pie,
+  Cell,
+  AreaChart,
+  Area,
+  LineChart,
+  Line,
+  ComposedChart,
+  LabelList,
+} from 'recharts';
 import { employeeStatusStep } from '../utils/kaizenStatusHelp';
 import { effectiveImplementationProgressDisplay } from '../utils/implementerTemplateProgress';
+import { DateRangePicker } from '../components/DateRangePicker';
+import { SearchableSelect } from '../components/SearchableSelect';
+import { KAUVERY_MODAL_SURFACE, KAUVERY_PANEL_BG, KAUVERY_TABLE_HEAD_BG } from '../theme/kauverySurfaces';
 
 interface DashboardProps {
   suggestions: Suggestion[];
   role: Role;
   userName?: string;
+  /** Unit codes assigned to the active role (UC / SC); used for multi-unit scope filter. */
+  assignedUnitCodes?: string[];
   /** Opens the Kaizen Reports screen (sidebar-aligned workflow). */
   onNavigateToReports?: () => void;
   /** Employee dashboard: primary CTA to open submit flow */
@@ -18,7 +42,128 @@ function normalizeText(v?: string | null): string {
   return String(v ?? '').trim();
 }
 
+function firstNonEmpty(...vals: unknown[]): string {
+  for (const v of vals) {
+    const t = normalizeText(v == null ? '' : String(v));
+    if (t) return t;
+  }
+  return '';
+}
+
+/** Trailing `(CODE)` / `[CODE]` on synced display names. */
+function embeddedCodeFromEmployeeName(name: string): string {
+  const n = normalizeText(name);
+  if (!n) return '';
+  const paren = n.match(/\(([A-Za-z0-9._-]{2,40})\)\s*$/);
+  if (paren?.[1]) return normalizeText(paren[1]);
+  const bracket = n.match(/\[([A-Za-z0-9._-]{2,40})\]\s*$/);
+  if (bracket?.[1]) return normalizeText(bracket[1]);
+  return '';
+}
+
+/**
+ * Originators are stored by name on the suggestion row; `employeeCode` is often absent in list payloads.
+ * When attachments use `kaizen/{employeeCode}/…`, or the template has `empNo`, surface that as Employee_id.
+ */
+function resolveOriginatorEmployeeCode(s: Suggestion): string {
+  const raw = s as unknown as Record<string, unknown>;
+  const direct = firstNonEmpty(
+    s.employeeCode,
+    s.originatorEmployeeCode,
+    raw.employee_code,
+    raw.originator_employee_code,
+  );
+  if (direct) return direct;
+
+  const fromKaizenPath = (raw: string) => {
+    const norm = raw.replace(/\\/g, '/').trim();
+    const m = norm.match(/^kaizen\/([^/]+)\/(?:kaizen_idea|kaizen_template)(?:\/|$)/i);
+    return m ? normalizeText(m[1]) : '';
+  };
+
+  const fromFolder =
+    fromKaizenPath(String(s.ideaAttachmentsFolder || '')) ||
+    fromKaizenPath(String(s.templateAttachmentsFolder || ''));
+  if (fromFolder) return fromFolder;
+
+  const paths = s.ideaAttachmentPaths;
+  if (Array.isArray(paths) && paths.length > 0) {
+    const first = String(paths[0] || '').replace(/\\/g, '/');
+    const m = first.match(/^kaizen\/([^/]+)\//i);
+    if (m) return normalizeText(m[1]);
+  }
+
+  const empNo = normalizeText(s.empNo);
+  if (empNo) return empNo;
+
+  const fromNameLabel = embeddedCodeFromEmployeeName(s.employeeName || '');
+  if (fromNameLabel) return fromNameLabel;
+
+  return '';
+}
+
+/** Closure series (KH-KZ-…) when rewarded; else template Kaizen number if present. */
+function resolveKaizenSeriesNumber(s: Suggestion): string {
+  return firstNonEmpty(
+    s.implementedKaizen?.implementedCode,
+    s.kaizenNumber,
+  );
+}
+
+/** Keys used for admin PQCDSEM chart (idea submission + template). */
+const ADMIN_PQCDSEM_DIM_KEYS = [
+  'productivity',
+  'quality',
+  'cost',
+  'delivery',
+  'safety',
+  'morale',
+  'environment',
+  'energy',
+] as const;
+
+/** True when a PQCDSEM cell is active (matches Kaizen form `readPqcdsemLevel` !== 'none'). */
+function isPqcdsemBenefitSelected(v: unknown): boolean {
+  return v === true || v === 'primary' || v === 'secondary';
+}
+
+/** API / DB may return JSON object or (rarely) a JSON string. */
+function normalizeExpectedBenefits(raw: unknown): Record<string, unknown> | null {
+  if (raw == null) return null;
+  if (typeof raw === 'object' && !Array.isArray(raw)) return raw as Record<string, unknown>;
+  if (typeof raw === 'string') {
+    const t = raw.trim();
+    if (!t) return null;
+    try {
+      const p = JSON.parse(t) as unknown;
+      if (p && typeof p === 'object' && !Array.isArray(p)) return p as Record<string, unknown>;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+function readExpectedBenefitKey(eb: Record<string, unknown> | null, key: string): unknown {
+  if (!eb) return undefined;
+  if (Object.prototype.hasOwnProperty.call(eb, key)) return eb[key];
+  const lower = key.toLowerCase();
+  for (const [k, v] of Object.entries(eb)) {
+    if (k.toLowerCase() === lower) return v;
+  }
+  return undefined;
+}
+
+function suggestionHasAnyPqcdsemTag(s: Suggestion): boolean {
+  const eb = normalizeExpectedBenefits(s.expectedBenefits);
+  for (const key of ADMIN_PQCDSEM_DIM_KEYS) {
+    if (isPqcdsemBenefitSelected(readExpectedBenefitKey(eb, key))) return true;
+  }
+  return false;
+}
+
 function statusPillClass(status: Status): string {
+  if (status === Status.IDEA_REJECTED) return 'bg-rose-50 text-rose-900 border-rose-200';
   if (status === Status.IDEA_SUBMITTED) return 'bg-slate-50 text-slate-800 border-slate-200';
   if (status === Status.APPROVED_FOR_ASSIGNMENT) return 'bg-blue-50 text-blue-800 border-blue-200';
   if (status === Status.ASSIGNED_FOR_IMPLEMENTATION) return 'bg-indigo-50 text-indigo-800 border-indigo-200';
@@ -31,15 +176,61 @@ function statusPillClass(status: Status): string {
   return 'bg-gray-50 text-gray-800 border-gray-200';
 }
 
+/** Tooltip + glass chart shells aligned with Kaizen Admin Panel charts. */
+const DASHBOARD_CHART_TOOLTIP = {
+  borderRadius: 12,
+  background: 'rgba(255, 255, 255, 0.98)',
+  border: '1px solid rgba(150, 32, 103, 0.22)',
+  color: '#1e293b',
+  fontWeight: 700 as const,
+  boxShadow: '0 8px 24px -8px rgba(150, 32, 103, 0.2)',
+};
+
+const DASHBOARD_GLASS_CHART_CARD =
+  'rounded-2xl border border-kauvery-purple/15 bg-white/90 p-5 shadow-kauvery-card';
+
+const ACTIVITY_TREND_RANGE_PRESETS = [
+  { label: '7 days', shortLabel: '7d', days: 7 as const },
+  { label: '14 days', shortLabel: '14d', days: 14 as const },
+  { label: '30 days', shortLabel: '30d', days: 30 as const },
+  { label: '90 days', shortLabel: '90d', days: 90 as const },
+];
+
+function formatLocalYmd(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function getActivityTrendPresetRange(days: number): { from: string; to: string } {
+  const end = new Date();
+  end.setHours(0, 0, 0, 0);
+  const start = new Date(end);
+  start.setDate(end.getDate() - (days - 1));
+  return { from: formatLocalYmd(start), to: formatLocalYmd(end) };
+}
+
+/** Statuses counted as “approved (flow)” on summary cards — keep in sync with `dashboardSummary`. */
+const ADMIN_APPROVED_FLOW_STATUSES: Status[] = [
+  Status.APPROVED_FOR_ASSIGNMENT,
+  Status.ASSIGNED_FOR_IMPLEMENTATION,
+  Status.IMPLEMENTATION_DONE,
+  Status.VERIFIED_PENDING_APPROVAL,
+  Status.BE_EVALUATION_PENDING,
+  Status.REWARD_PENDING,
+  Status.REWARDED,
+];
+
 export const Dashboard: React.FC<DashboardProps> = ({
   suggestions: allSuggestions,
   role,
   userName,
+  assignedUnitCodes = [],
   onNavigateToReports,
   onNewIdea,
 }) => {
   const [showAllParticipants, setShowAllParticipants] = useState(false);
-  const [showFilterMenu, setShowFilterMenu] = useState(false);
   const [filterMode, setFilterMode] = useState<'all' | 'date' | 'unit' | 'department'>('all');
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
@@ -55,11 +246,65 @@ export const Dashboard: React.FC<DashboardProps> = ({
   >('templateReview');
   const [trendFrom, setTrendFrom] = useState('');
   const [trendTo, setTrendTo] = useState('');
+  const [adminTrendDays, setAdminTrendDays] = useState<7 | 30 | 90 | 365>(30);
+  const [summaryReportKind, setSummaryReportKind] = useState<
+    'total' | 'approved' | 'inProcess' | 'completed' | 'rejected' | null
+  >(null);
 
-  const unitOptions = useMemo(
-    () => Array.from(new Set(allSuggestions.map(s => s.unit).filter(Boolean))).sort(),
-    [allSuggestions]
+  const activityTrendActivePresetDays = useMemo(() => {
+    if (!trendFrom && !trendTo) return 14;
+    for (const { days } of ACTIVITY_TREND_RANGE_PRESETS) {
+      const r = getActivityTrendPresetRange(days);
+      if (trendFrom === r.from && trendTo === r.to) return days;
+    }
+    return null;
+  }, [trendFrom, trendTo]);
+
+  const setActivityTrendPreset = useCallback((days: 7 | 14 | 30 | 90) => {
+    const r = getActivityTrendPresetRange(days);
+    setTrendFrom(r.from);
+    setTrendTo(r.to);
+  }, []);
+
+  const useAdminDashboardLayout =
+    role === Role.ADMIN ||
+    role === Role.BUSINESS_EXCELLENCE ||
+    role === Role.BUSINESS_EXCELLENCE_HEAD;
+
+  const showMultiUnitScopeFilter = useMemo(
+    () =>
+      (role === Role.UNIT_COORDINATOR || role === Role.SELECTION_COMMITTEE) &&
+      assignedUnitCodes.length > 1,
+    [role, assignedUnitCodes],
   );
+
+  const showScopeFilters = useAdminDashboardLayout || showMultiUnitScopeFilter;
+
+  const scopeFilterChipItems = useMemo(() => {
+    if (useAdminDashboardLayout) {
+      return [
+        { id: 'all' as const, label: 'All' },
+        { id: 'date' as const, label: 'Date' },
+        { id: 'unit' as const, label: 'Unit' },
+        { id: 'department' as const, label: 'Dept' },
+      ];
+    }
+    if (showMultiUnitScopeFilter) {
+      return [
+        { id: 'all' as const, label: 'All' },
+        { id: 'date' as const, label: 'Date' },
+        { id: 'unit' as const, label: 'Unit' },
+      ];
+    }
+    return [];
+  }, [useAdminDashboardLayout, showMultiUnitScopeFilter]);
+
+  const unitOptions = useMemo(() => {
+    const fromData = Array.from(new Set(allSuggestions.map((s) => s.unit).filter(Boolean))).sort();
+    if (!showMultiUnitScopeFilter || assignedUnitCodes.length === 0) return fromData;
+    const allowed = new Set(assignedUnitCodes.map((c) => c.trim().toLowerCase()));
+    return fromData.filter((u) => allowed.has(String(u).trim().toLowerCase()));
+  }, [allSuggestions, showMultiUnitScopeFilter, assignedUnitCodes]);
   const departmentOptions = useMemo(
     () => Array.from(new Set(allSuggestions.map(s => s.department).filter(Boolean))).sort(),
     [allSuggestions]
@@ -288,25 +533,414 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
   const COLORS = ['#962067', '#F26522', '#FDB913', '#EE2D67', '#A23293'];
   const implementationRate = stats.total > 0 ? Math.round((stats.implemented / stats.total) * 100) : 0;
-  const approvedLikeStatuses = [
-    Status.APPROVED_FOR_ASSIGNMENT,
-    Status.ASSIGNED_FOR_IMPLEMENTATION,
-    Status.IMPLEMENTATION_DONE,
-    Status.VERIFIED_PENDING_APPROVAL,
-    Status.BE_EVALUATION_PENDING,
-    Status.REWARD_PENDING,
-    Status.REWARDED,
-  ];
+  const summaryReportLabel = useMemo(() => {
+    if (role === Role.ADMIN) return 'Admin report';
+    if (role === Role.EMPLOYEE) return 'My ideas report';
+    if (role === Role.UNIT_COORDINATOR) return 'Unit coordinator report';
+    if (role === Role.SELECTION_COMMITTEE) return 'Selection committee report';
+    if (role === Role.IMPLEMENTER) return 'Assigned ideas report';
+    if (role === Role.BUSINESS_EXCELLENCE || role === Role.BUSINESS_EXCELLENCE_HEAD) {
+      return 'Executive report';
+    }
+    return 'Dashboard report';
+  }, [role]);
 
-  const pendingLikeStatuses = [
-    Status.IDEA_SUBMITTED,
-    Status.APPROVED_FOR_ASSIGNMENT,
-    Status.ASSIGNED_FOR_IMPLEMENTATION,
-    Status.IMPLEMENTATION_DONE,
-    Status.VERIFIED_PENDING_APPROVAL,
-    Status.BE_EVALUATION_PENDING,
-    Status.REWARD_PENDING,
-  ];
+  const fyLabel = useMemo(() => {
+    const now = new Date();
+    const m = now.getMonth();
+    const y = now.getFullYear();
+    const fyStart = m >= 3 ? y : y - 1;
+    return `FY ${fyStart}–${String(fyStart + 1).slice(-2)}`;
+  }, []);
+
+  const adminSubmittedByDay = useMemo(() => {
+    const toYmd = (d: Date) => d.toISOString().slice(0, 10);
+    const today = new Date();
+    const end = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    const start = new Date(end);
+    start.setDate(end.getDate() - (adminTrendDays - 1));
+    const startStr = toYmd(start);
+    const endStr = toYmd(end);
+    const counts = new Map<string, number>();
+    for (const s of suggestions) {
+      const key = String(s.dateSubmitted || '').slice(0, 10);
+      if (!key) continue;
+      if (key >= startStr && key <= endStr) {
+        counts.set(key, (counts.get(key) || 0) + 1);
+      }
+    }
+    const series: { day: string; count: number }[] = [];
+    for (let i = 0; i < adminTrendDays; i++) {
+      const d = new Date(start);
+      d.setDate(start.getDate() + i);
+      const key = toYmd(d);
+      series.push({ day: key.slice(5), count: counts.get(key) || 0 });
+    }
+    return series;
+  }, [suggestions, adminTrendDays]);
+
+  const dashboardSummary = useMemo(() => {
+    const total = suggestions.length;
+    const now = new Date();
+    const monthPrefix = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const thisMonth = suggestions.filter((s) => String(s.dateSubmitted || '').startsWith(monthPrefix)).length;
+
+    const approvedLike = ADMIN_APPROVED_FLOW_STATUSES;
+    const approved = suggestions.filter((s) => approvedLike.includes(s.status)).length;
+    const approvalPct = total > 0 ? Math.round((approved / total) * 1000) / 10 : 0;
+
+    const rejected = suggestions.filter((s) => s.status === Status.IDEA_REJECTED).length;
+    const rejectPct = total > 0 ? Math.round((rejected / total) * 1000) / 10 : 0;
+
+    const inProcess = suggestions.filter(
+      (s) => s.status !== Status.REWARDED && s.status !== Status.IDEA_REJECTED,
+    ).length;
+    const inProcessPct = total > 0 ? Math.round((inProcess / total) * 1000) / 10 : 0;
+
+    const completed = suggestions.filter((s) => s.status === Status.REWARDED).length;
+    const completedPct = total > 0 ? Math.round((completed / total) * 1000) / 10 : 0;
+
+    return {
+      total,
+      thisMonth,
+      approved,
+      approvalPct,
+      rejected,
+      rejectPct,
+      inProcess,
+      inProcessPct,
+      completed,
+      completedPct,
+    };
+  }, [suggestions]);
+
+  const summaryReportModalRows = useMemo(() => {
+    if (!summaryReportKind) return [];
+    switch (summaryReportKind) {
+      case 'total':
+        return suggestions;
+      case 'approved':
+        return suggestions.filter((s) => ADMIN_APPROVED_FLOW_STATUSES.includes(s.status));
+      case 'inProcess':
+        return suggestions.filter(
+          (s) => s.status !== Status.REWARDED && s.status !== Status.IDEA_REJECTED,
+        );
+      case 'completed':
+        return suggestions.filter((s) => s.status === Status.REWARDED);
+      case 'rejected':
+        return suggestions.filter((s) => s.status === Status.IDEA_REJECTED);
+      default:
+        return [];
+    }
+  }, [summaryReportKind, suggestions]);
+
+  useEffect(() => {
+    if (!summaryReportKind) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setSummaryReportKind(null);
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [summaryReportKind]);
+
+  const summaryStatusCards = (
+    <div className="relative grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+      {(
+        [
+          {
+            kind: 'total' as const,
+            label: 'Total submitted',
+            value: dashboardSummary.total,
+            sub:
+              dashboardSummary.thisMonth > 0
+                ? `+${dashboardSummary.thisMonth} this month`
+                : 'No submissions this month',
+            subClass: 'text-emerald-600',
+          },
+          {
+            kind: 'approved' as const,
+            label: 'Approved (flow)',
+            value: dashboardSummary.approved,
+            sub: `${dashboardSummary.approvalPct}% of total`,
+            subClass: 'text-violet-600',
+          },
+          {
+            kind: 'inProcess' as const,
+            label: 'In process',
+            value: dashboardSummary.inProcess,
+            sub: `${dashboardSummary.inProcessPct}% of total`,
+            subClass: 'text-slate-400',
+          },
+          {
+            kind: 'completed' as const,
+            label: 'Completed',
+            value: dashboardSummary.completed,
+            sub: `${dashboardSummary.completedPct}% of total`,
+            subClass: 'text-emerald-600',
+          },
+          {
+            kind: 'rejected' as const,
+            label: 'Rejected',
+            value: dashboardSummary.rejected,
+            sub: `${dashboardSummary.rejectPct}% reject rate`,
+            subClass: 'text-rose-600',
+          },
+        ] as const
+      ).map((card) => (
+        <button
+          key={card.kind}
+          type="button"
+          onClick={() => setSummaryReportKind(card.kind)}
+          className="relative w-full overflow-hidden rounded-2xl border border-kauvery-purple/15 bg-white p-5 text-left shadow-kauvery-card transition hover:border-kauvery-purple/30 hover:shadow-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-kauvery-purple/40"
+          aria-label={`Open report: ${card.label}`}
+        >
+          <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-kauvery-orange/10 via-transparent to-kauvery-pink/10" />
+          <div className="relative">
+            <p className="text-[11px] font-black uppercase tracking-wide text-slate-400">{card.label}</p>
+            <p className="mt-2 text-3xl font-black tabular-nums text-slate-900">{card.value}</p>
+            <p className={`mt-1 text-xs font-bold ${card.subClass}`}>{card.sub}</p>
+            <p className="mt-2 text-[10px] font-bold uppercase tracking-wide text-slate-500">
+              Click for table report
+            </p>
+          </div>
+        </button>
+      ))}
+    </div>
+  );
+
+  const summaryReportModal =
+    summaryReportKind &&
+    createPortal(
+      <div
+        className="fixed inset-0 z-[100] flex min-h-[100dvh] items-center justify-center overflow-y-auto overscroll-contain p-3 sm:p-6"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="summary-report-title"
+      >
+        <button
+          type="button"
+          className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm"
+          aria-label="Close report"
+          onClick={() => setSummaryReportKind(null)}
+        />
+        <div className="relative z-[1] my-auto flex max-h-[min(92vh,900px)] w-full max-w-6xl flex-col overflow-hidden rounded-2xl border border-kauvery-purple/20 bg-white shadow-2xl shadow-kauvery-soft">
+          <div className="flex shrink-0 items-start justify-between gap-3 border-b border-kauvery-purple/15 bg-gradient-to-r from-kauvery-purple/8 via-kauvery-violet/5 to-transparent px-4 py-4 sm:px-6">
+            <div className="min-w-0">
+              <p className="text-[10px] font-black uppercase tracking-[0.2em] text-kauvery-peach/90">
+                {summaryReportLabel}
+              </p>
+              <h2 id="summary-report-title" className="mt-1 text-lg font-black text-slate-900 sm:text-xl">
+                {summaryReportKind === 'total' && 'Total submitted'}
+                {summaryReportKind === 'approved' && 'Approved (flow)'}
+                {summaryReportKind === 'inProcess' && 'In process'}
+                {summaryReportKind === 'completed' && 'Completed'}
+                {summaryReportKind === 'rejected' && 'Rejected'}
+              </h2>
+              <p className="mt-1 text-xs font-semibold text-slate-400">
+                {summaryReportModalRows.length} row{summaryReportModalRows.length === 1 ? '' : 's'} · ideas in
+                your access scope
+                {filterMode !== 'all' ? ' · dashboard filters apply' : ''}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setSummaryReportKind(null)}
+              className="shrink-0 rounded-xl border border-kauvery-purple/20 bg-slate-50 p-2 text-slate-600 transition hover:bg-kauvery-purple/10 hover:text-kauvery-purple"
+              aria-label="Close"
+            >
+              <span className="material-icons-round text-[22px]">close</span>
+            </button>
+          </div>
+          <div className="min-h-0 flex-1 overflow-auto p-3 sm:p-5">
+            <div className="overflow-x-auto rounded-xl border border-kauvery-purple/15 bg-slate-50/80">
+              <table
+                className={`w-full border-collapse text-left text-xs sm:text-sm ${
+                  summaryReportKind === 'completed' ? 'min-w-[920px]' : 'min-w-[760px]'
+                }`}
+              >
+                <thead className={`sticky top-0 z-[1] ${KAUVERY_TABLE_HEAD_BG} shadow-sm`}>
+                  <tr className="border-b border-kauvery-purple/40">
+                    <th className="whitespace-nowrap px-3 py-3 font-black uppercase tracking-wide text-kauvery-purple sm:px-4">
+                      Employee_id
+                    </th>
+                    <th className="whitespace-nowrap px-3 py-3 font-black uppercase tracking-wide text-kauvery-purple sm:px-4">
+                      Name
+                    </th>
+                    <th className="whitespace-nowrap px-3 py-3 font-black uppercase tracking-wide text-kauvery-purple sm:px-4">
+                      unit
+                    </th>
+                    <th className="whitespace-nowrap px-3 py-3 font-black uppercase tracking-wide text-kauvery-purple sm:px-4">
+                      department
+                    </th>
+                    <th className="whitespace-nowrap px-3 py-3 font-black uppercase tracking-wide text-kauvery-purple sm:px-4">
+                      idea number
+                    </th>
+                    {summaryReportKind === 'completed' && (
+                      <th
+                        className="whitespace-nowrap px-3 py-3 font-black uppercase tracking-wide text-kauvery-purple sm:px-4"
+                        title="Closure series assigned when the Kaizen is rewarded"
+                      >
+                        Kaizen series number
+                      </th>
+                    )}
+                    <th className="min-w-[12rem] px-3 py-3 font-black uppercase tracking-wide text-kauvery-purple sm:px-4">
+                      idea description
+                    </th>
+                    <th className="whitespace-nowrap px-3 py-3 font-black uppercase tracking-wide text-kauvery-purple sm:px-4">
+                      Submitted date
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200/80 text-slate-800">
+                  {summaryReportModalRows.length === 0 ? (
+                    <tr>
+                      <td
+                        colSpan={summaryReportKind === 'completed' ? 8 : 7}
+                        className="px-4 py-10 text-center font-semibold text-slate-400"
+                      >
+                        No rows for this category in the current scope.
+                      </td>
+                    </tr>
+                  ) : (
+                    summaryReportModalRows.map((row) => (
+                      <tr key={row.id} className="bg-white hover:bg-kauvery-purple/[0.04]">
+                        <td className="whitespace-nowrap px-3 py-2.5 font-mono font-bold tabular-nums text-slate-700 sm:px-4">
+                          {resolveOriginatorEmployeeCode(row) || '—'}
+                        </td>
+                        <td className="max-w-[10rem] truncate px-3 py-2.5 font-semibold sm:max-w-[12rem] sm:px-4">
+                          {normalizeText(row.employeeName) || '—'}
+                        </td>
+                        <td className="max-w-[8rem] truncate px-3 py-2.5 text-slate-700 sm:px-4">
+                          {normalizeText(row.unit) || '—'}
+                        </td>
+                        <td className="max-w-[10rem] truncate px-3 py-2.5 text-slate-700 sm:px-4">
+                          {normalizeText(row.department) || '—'}
+                        </td>
+                        <td className="whitespace-nowrap px-3 py-2.5 font-mono font-bold text-kauvery-peach/90 sm:px-4">
+                          {normalizeText(row.code) || row.id}
+                        </td>
+                        {summaryReportKind === 'completed' && (
+                          <td className="whitespace-nowrap px-3 py-2.5 font-mono font-bold text-emerald-800 sm:px-4">
+                            {resolveKaizenSeriesNumber(row) || '—'}
+                          </td>
+                        )}
+                        <td
+                          className="max-w-xs px-3 py-2.5 text-slate-700 sm:max-w-md sm:px-4"
+                          title={normalizeText(row.description)}
+                        >
+                          <span className="line-clamp-2">{normalizeText(row.description) || '—'}</span>
+                        </td>
+                        <td className="whitespace-nowrap px-3 py-2.5 font-semibold tabular-nums text-slate-600 sm:px-4">
+                          {normalizeText(row.dateSubmitted) || '—'}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>,
+      document.body,
+    );
+
+  const unitDistribution = useMemo(() => {
+    const acc = suggestions.reduce(
+      (m, s) => {
+        const u = normalizeText(s.unit) || 'Unknown';
+        m[u] = (m[u] || 0) + 1;
+        return m;
+      },
+      {} as Record<string, number>,
+    );
+    return Object.entries(acc)
+      .map(([name, value]) => ({ name, value: value as number }))
+      .sort((a, b) => b.value - a.value);
+  }, [suggestions]);
+
+  const adminStatusDonut = useMemo(() => {
+    const rows = Object.values(Status)
+      .map((st) => ({
+        name: st === Status.REWARDED ? 'Rewarded' : String(st),
+        value: suggestions.filter((s) => s.status === st).length,
+      }))
+      .filter((r) => r.value > 0)
+      .sort((a, b) => b.value - a.value);
+    const top = rows.slice(0, 10);
+    const rest = rows.slice(10).reduce((sum, r) => sum + r.value, 0);
+    if (rest > 0) top.push({ name: 'Other', value: rest });
+    return top;
+  }, [suggestions]);
+
+  const adminPqcdsemDashboard = useMemo(() => {
+    const dims = [
+      { key: 'productivity' as const, label: 'Productivity' },
+      { key: 'quality' as const, label: 'Quality' },
+      { key: 'cost' as const, label: 'Cost' },
+      { key: 'delivery' as const, label: 'Delivery' },
+      { key: 'safety' as const, label: 'Safety' },
+      { key: 'morale' as const, label: 'Morale' },
+      { key: 'environment' as const, label: 'Environment' },
+      { key: 'energy' as const, label: 'Energy' },
+    ];
+    const rows = dims.map(({ key, label }) => ({
+      name: label,
+      count: suggestions.filter((s) => {
+        const eb = normalizeExpectedBenefits(s.expectedBenefits);
+        return isPqcdsemBenefitSelected(readExpectedBenefitKey(eb, key));
+      }).length,
+    }));
+    const total = suggestions.length;
+    const ideasWithAnyTag = suggestions.filter(suggestionHasAnyPqcdsemTag).length;
+    return { rows, total, ideasWithAnyTag };
+  }, [suggestions]);
+
+  const adminClinicalSupportivePie = useMemo(() => {
+    let clinical = 0;
+    let supportive = 0;
+    let unspecified = 0;
+    for (const s of suggestions) {
+      const c = s.category;
+      if (c === 'Clinical') clinical += 1;
+      else if (c === 'Supportive') supportive += 1;
+      else unspecified += 1;
+    }
+    return [
+      { name: 'Clinical', value: clinical, fill: '#e879f9' },
+      { name: 'Supportive (non-clinical)', value: supportive, fill: '#F26522' },
+      { name: 'Not specified', value: unspecified, fill: '#64748b' },
+    ].filter((r) => r.value > 0);
+  }, [suggestions]);
+
+  const adminDepartmentImplementedSeries = useMemo(() => {
+    const implementedStatuses = [
+      Status.IMPLEMENTATION_DONE,
+      Status.VERIFIED_PENDING_APPROVAL,
+      Status.BE_EVALUATION_PENDING,
+      Status.REWARD_PENDING,
+      Status.REWARDED,
+    ];
+    const map = new Map<string, { total: number; implemented: number }>();
+    for (const s of suggestions) {
+      const raw = normalizeText(s.department);
+      const dept = raw || 'Unknown';
+      const cur = map.get(dept) || { total: 0, implemented: 0 };
+      cur.total += 1;
+      if (implementedStatuses.includes(s.status)) cur.implemented += 1;
+      map.set(dept, cur);
+    }
+    return [...map.entries()]
+      .map(([fullName, { total, implemented }]) => ({
+        fullName,
+        name: fullName.length > 20 ? `${fullName.slice(0, 18)}…` : fullName,
+        total,
+        implemented,
+        rate: total > 0 ? Math.round((implemented / total) * 1000) / 10 : 0,
+      }))
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 14);
+  }, [suggestions]);
 
   const roleHeader = useMemo(() => {
     if (role === Role.EMPLOYEE) return 'Employee Dashboard';
@@ -326,124 +960,6 @@ export const Dashboard: React.FC<DashboardProps> = ({
     if (role === Role.ADMIN) return 'Admin Dashboard';
     return 'Role Dashboard';
   }, [role]);
-
-  const roleKpis = useMemo(() => {
-    const submitted = suggestions.length;
-    const approved = suggestions.filter(s => approvedLikeStatuses.includes(s.status)).length;
-    const pending = suggestions.filter(s => pendingLikeStatuses.includes(s.status)).length;
-    const rewarded = suggestions.filter(s => s.status === Status.REWARDED).length;
-    const rejected = suggestions.filter(s => s.status === Status.IDEA_REJECTED).length;
-    const inReview = suggestions.filter(s => s.status === Status.VERIFIED_PENDING_APPROVAL).length;
-
-    if (role === Role.EMPLOYEE) {
-      return [
-        { label: 'Ideas Submitted', value: submitted, color: 'text-gray-900' },
-        { label: 'Approved', value: approved, color: 'text-blue-800' },
-        { label: 'Pending', value: pending, color: 'text-orange-700' },
-        { label: 'Rewards', value: rewarded, color: 'text-green-800' },
-      ];
-    }
-
-    if (role === Role.UNIT_COORDINATOR) {
-      const ideasReceived = submitted;
-      const approvedCount = suggestions.filter((s) =>
-        [
-          Status.APPROVED_FOR_ASSIGNMENT,
-          Status.ASSIGNED_FOR_IMPLEMENTATION,
-          Status.IMPLEMENTATION_DONE,
-          Status.BE_REVIEW_DONE,
-          Status.VERIFIED_PENDING_APPROVAL,
-          Status.BE_EVALUATION_PENDING,
-          Status.REWARD_PENDING,
-          Status.REWARDED,
-        ].includes(s.status),
-      ).length;
-      const balanceApproval = suggestions.filter((s) =>
-        [Status.IDEA_SUBMITTED, Status.BE_REVIEW_DONE, Status.IMPLEMENTATION_DONE].includes(
-          s.status,
-        ),
-      ).length;
-      return [
-        { label: 'Ideas in your unit scope', value: ideasReceived, color: 'text-gray-900' },
-        { label: 'Approved (moving forward)', value: approvedCount, color: 'text-blue-800' },
-        { label: 'Needs your approval / check', value: balanceApproval, color: 'text-orange-700' },
-      ];
-    }
-
-    if (role === Role.SELECTION_COMMITTEE) {
-      return [
-        { label: 'Ideas to Assign', value: suggestions.filter(s => s.status === Status.APPROVED_FOR_ASSIGNMENT).length, color: 'text-orange-700' },
-        { label: 'Assigned', value: suggestions.filter(s => s.status === Status.ASSIGNED_FOR_IMPLEMENTATION).length, color: 'text-blue-800' },
-        { label: 'In Progress', value: suggestions.filter(s => s.status === Status.ASSIGNED_FOR_IMPLEMENTATION || s.status === Status.IMPLEMENTATION_DONE).length, color: 'text-gray-900' },
-        { label: 'Closed', value: rewarded, color: 'text-green-800' },
-      ];
-    }
-
-    if (role === Role.IMPLEMENTER) {
-      return [
-        { label: 'Assigned Ideas', value: suggestions.filter(s => s.status === Status.ASSIGNED_FOR_IMPLEMENTATION).length, color: 'text-gray-900' },
-        { label: 'In Progress', value: suggestions.filter(s => s.implementationStage === 'In Progress').length, color: 'text-blue-800' },
-        { label: 'Started', value: suggestions.filter(s => s.implementationStage === 'Started').length, color: 'text-slate-800' },
-        { label: 'Submitted for Review', value: suggestions.filter(s => s.status === Status.IMPLEMENTATION_DONE).length, color: 'text-green-800' },
-      ];
-    }
-
-    if (role === Role.BUSINESS_EXCELLENCE) {
-      return [
-        {
-          label: 'Templates awaiting review',
-          value: suggestions.filter((s) => s.status === Status.IMPLEMENTATION_DONE).length,
-          color: 'text-orange-700',
-        },
-        {
-          label: 'Routed after BE review',
-          value: suggestions.filter((s) => s.status === Status.BE_REVIEW_DONE).length,
-          color: 'text-blue-800',
-        },
-        { label: 'Ideas in your scope (filtered)', value: submitted, color: 'text-gray-900' },
-        { label: 'Rewarded / closed', value: rewarded, color: 'text-green-800' },
-      ];
-    }
-
-    if (role === Role.BUSINESS_EXCELLENCE_HEAD) {
-      return [
-        {
-          label: 'Pending BE evaluation',
-          value: suggestions.filter((s) => s.status === Status.BE_EVALUATION_PENDING).length,
-          color: 'text-orange-700',
-        },
-        {
-          label: 'Reward processing',
-          value: suggestions.filter((s) => s.status === Status.REWARD_PENDING).length,
-          color: 'text-blue-800',
-        },
-        { label: 'Rewarded', value: rewarded, color: 'text-green-800' },
-        { label: 'All ideas visible', value: submitted, color: 'text-gray-900' },
-      ];
-    }
-
-    if (
-      role === Role.HR_HEAD ||
-      role === Role.QUALITY_HOD ||
-      role === Role.FINANCE_HOD ||
-      role === Role.OPS_HEAD ||
-      role === Role.NURSING_HEAD
-    ) {
-      return [
-        { label: 'Pending Functional Review', value: inReview, color: 'text-orange-700' },
-        { label: 'Approved Flow', value: approved, color: 'text-blue-800' },
-        { label: 'Pending Reward', value: suggestions.filter(s => s.status === Status.REWARD_PENDING).length, color: 'text-gray-900' },
-        { label: 'Closed', value: rewarded, color: 'text-green-800' },
-      ];
-    }
-
-    return [
-      { label: 'Total Ideas', value: submitted, color: 'text-gray-900' },
-      { label: 'Approved', value: approved, color: 'text-blue-800' },
-      { label: 'Pending', value: pending, color: 'text-orange-700' },
-      { label: 'Rejected', value: rejected, color: 'text-red-700' },
-    ];
-  }, [suggestions, role]);
 
   const statusBreakdown = useMemo(
     () =>
@@ -627,26 +1143,60 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const isBeTeam =
     role === Role.BUSINESS_EXCELLENCE || role === Role.BUSINESS_EXCELLENCE_HEAD;
   const isUnitCoordinator = role === Role.UNIT_COORDINATOR;
-  const spotlightDashboard = isBeTeam || isUnitCoordinator;
+
+  const clearScopeFilters = useCallback(() => {
+    setFilterMode('all');
+    setFromDate('');
+    setToDate('');
+    setSelectedUnit('');
+    setSelectedDepartment('');
+  }, []);
+
+  useEffect(() => {
+    if (!showScopeFilters) {
+      clearScopeFilters();
+      return;
+    }
+    const allowedModes = new Set(scopeFilterChipItems.map((item) => item.id));
+    if (!allowedModes.has(filterMode)) {
+      clearScopeFilters();
+    }
+  }, [showScopeFilters, scopeFilterChipItems, filterMode, clearScopeFilters]);
+
+  const dashboardUserInitials =
+    (userName || 'Member')
+      .split(/\s+/)
+      .filter(Boolean)
+      .map((p) => p[0])
+      .join('')
+      .slice(0, 2)
+      .toUpperCase() || 'ME';
+
+  const dashboardWelcomeTitle = userName ? `Welcome, ${userName}` : roleHeader;
+
+  const dashboardHeroSubtitle = isBeTeam
+    ? 'Templates, evaluations, and rewards in one workspace — consistent with the Kaizen Reports experience.'
+    : isUnitCoordinator
+      ? showMultiUnitScopeFilter
+        ? 'Approve ideas and verify implementation across your assigned units.'
+        : 'Approve ideas and verify implementation for your unit.'
+      : 'Track submissions, approvals, and progress for ideas in your scope.';
+
+  const compactFilterSelectInput =
+    'w-full rounded-md border border-gray-300 bg-white px-2 py-1.5 pr-7 text-[11px] font-semibold text-gray-900 outline-none focus:border-kauvery-violet focus:ring-1 focus:ring-kauvery-purple/25';
 
   const dashboardFilterControls = (
     <>
-      <div className="text-[11px] font-extrabold text-gray-600 uppercase tracking-wide">Filter mode</div>
-      <div className="grid grid-cols-2 gap-2 text-xs font-bold">
-        {[
-          { id: 'all', label: 'All' },
-          { id: 'date', label: 'Date' },
-          { id: 'unit', label: 'Unit' },
-          { id: 'department', label: 'Department' },
-        ].map((item) => (
+      <div className="inline-flex flex-wrap items-center gap-1 rounded-md border border-gray-200/90 bg-gray-100/90 p-[3px] shadow-sm">
+        {scopeFilterChipItems.map((item) => (
           <button
             key={item.id}
             type="button"
             onClick={() => setFilterMode(item.id as typeof filterMode)}
-            className={`px-2 py-2 rounded-lg border ${
+            className={`rounded px-2 py-1 text-[10px] font-black uppercase tracking-wide transition ${
               filterMode === item.id
-                ? 'bg-kauvery-purple text-white border-purple-800'
-                : 'bg-white text-gray-800 border-gray-300 hover:bg-gray-50'
+                ? 'bg-kauvery-purple text-white shadow-sm'
+                : 'text-gray-600 hover:bg-white/90'
             }`}
           >
             {item.label}
@@ -655,209 +1205,543 @@ export const Dashboard: React.FC<DashboardProps> = ({
       </div>
 
       {filterMode === 'date' && (
-        <div className="grid grid-cols-2 gap-2">
-          <div>
-            <label className="text-[10px] font-extrabold text-gray-600 uppercase mb-1 block">From</label>
+        <div className="mt-2 flex flex-wrap items-end gap-2">
+          <div className="flex flex-col gap-0.5">
+            <label className="text-[9px] font-bold uppercase tracking-wide text-gray-500">From</label>
             <input
               type="date"
               value={fromDate}
               onChange={(e) => setFromDate(e.target.value)}
-              className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-xs font-semibold bg-white"
+              className="w-[118px] rounded-md border border-gray-300 bg-white px-1.5 py-1 text-[11px] font-semibold text-gray-900"
             />
           </div>
-          <div>
-            <label className="text-[10px] font-extrabold text-gray-600 uppercase mb-1 block">To</label>
+          <div className="flex flex-col gap-0.5">
+            <label className="text-[9px] font-bold uppercase tracking-wide text-gray-500">To</label>
             <input
               type="date"
               value={toDate}
               onChange={(e) => setToDate(e.target.value)}
-              className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-xs font-semibold bg-white"
+              className="w-[118px] rounded-md border border-gray-300 bg-white px-1.5 py-1 text-[11px] font-semibold text-gray-900"
             />
           </div>
         </div>
       )}
 
       {filterMode === 'unit' && (
-        <div>
-          <label className="text-[10px] font-extrabold text-gray-600 uppercase mb-1 block">Unit</label>
-          <select
+        <div className="mt-2">
+          <label className="mb-0.5 block text-[9px] font-bold uppercase tracking-wide text-gray-500">Unit</label>
+          <SearchableSelect
+            aria-label="Filter by unit"
             value={selectedUnit}
-            onChange={(e) => setSelectedUnit(e.target.value)}
-            className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-xs font-semibold bg-white"
-          >
-            <option value="">All Units</option>
-            {unitOptions.map((u) => (
-              <option key={u} value={u}>
-                {u}
-              </option>
-            ))}
-          </select>
+            onChange={setSelectedUnit}
+            emptyOptionLabel="All Units"
+            options={unitOptions.map((u) => ({ value: u, label: u }))}
+            placeholder="Search…"
+            className="w-full"
+            listClassName="text-xs"
+            maxListHeightClass="max-h-44"
+            inputClassName={compactFilterSelectInput}
+          />
         </div>
       )}
 
       {filterMode === 'department' && (
-        <div>
-          <label className="text-[10px] font-extrabold text-gray-600 uppercase mb-1 block">Department</label>
-          <select
+        <div className="mt-2">
+          <label className="mb-0.5 block text-[9px] font-bold uppercase tracking-wide text-gray-500">Department</label>
+          <SearchableSelect
+            aria-label="Filter by department"
             value={selectedDepartment}
-            onChange={(e) => setSelectedDepartment(e.target.value)}
-            className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-xs font-semibold bg-white"
-          >
-            <option value="">All Departments</option>
-            {departmentOptions.map((d) => (
-              <option key={d} value={d}>
-                {d}
-              </option>
-            ))}
-          </select>
+            onChange={setSelectedDepartment}
+            emptyOptionLabel="All Departments"
+            options={departmentOptions.map((d) => ({ value: d, label: d }))}
+            placeholder="Search…"
+            className="w-full"
+            listClassName="text-xs"
+            maxListHeightClass="max-h-44"
+            inputClassName={compactFilterSelectInput}
+          />
         </div>
       )}
     </>
   );
 
-  return (
-    <div
-      className={`space-y-6 animate-fade-in w-full max-w-[100vw] mx-auto ${
-        spotlightDashboard ? 'px-1 sm:px-2' : ''
-      }`}
-    >
-      <div
-        className={`relative overflow-hidden rounded-3xl bg-gradient-to-br from-white via-purple-50/35 to-pink-50/25 p-6 sm:p-7 ${
-          spotlightDashboard
-            ? 'border border-kauvery-purple/20 shadow-kauvery-card'
-            : 'border border-purple-200/50 shadow-kauvery-soft'
-        }`}
-      >
-        <div className="pointer-events-none absolute -right-20 -top-20 h-56 w-56 rounded-full bg-kauvery-pink/10 blur-3xl" />
-        <div className="pointer-events-none absolute -left-16 bottom-0 h-44 w-44 rounded-full bg-kauvery-violet/10 blur-3xl" />
+  const dashboardScopePanel = showScopeFilters ? (
+    <div className="relative rounded-xl border border-kauvery-purple/15 bg-white/80 px-2.5 py-2 shadow-kauvery-soft sm:px-3 sm:py-2.5">
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
+        <div className="flex min-w-0 items-center gap-1.5 text-slate-400">
+          <span className="material-icons-round shrink-0 text-[15px] text-kauvery-peach/90">tune</span>
+          <span className="text-[10px] font-black uppercase tracking-wide">Scope</span>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <span className="text-[10px] font-bold tabular-nums text-slate-500">
+            <span className="text-kauvery-purple">{filteredSuggestions.length}</span> ideas
+          </span>
+          <button
+            type="button"
+            onClick={clearScopeFilters}
+            className="rounded-md border border-kauvery-purple/20 bg-white px-2 py-1 text-[10px] font-black uppercase tracking-wide text-slate-600 transition hover:border-kauvery-purple/35 hover:text-kauvery-purple"
+          >
+            Clear
+          </button>
+        </div>
+      </div>
+      <div className="rounded-lg border border-purple-200/15 bg-white/[0.93] px-2 py-2 text-gray-900 shadow-inner">
+        {dashboardFilterControls}
+      </div>
+    </div>
+  ) : null;
 
-        <div className="relative flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-          <div className="min-w-0 flex-1">
-            {spotlightDashboard && (
-              <div className="text-xs font-extrabold uppercase tracking-wide text-kauvery-purple">Kaizen dashboard</div>
-            )}
-            <h2
-              className={`mt-0.5 text-2xl sm:text-3xl font-black ${
-                spotlightDashboard
-                  ? 'text-gray-900'
-                  : 'bg-gradient-to-r from-kauvery-purple via-kauvery-violet to-kauvery-pink bg-clip-text text-transparent'
-              }`}
-            >
-              {userName ? `Welcome, ${userName}` : roleHeader}
-            </h2>
-            {spotlightDashboard && (
-              <p className="mt-2 max-w-3xl text-sm font-semibold text-gray-600">
-                {isBeTeam &&
-                  'Templates, evaluations, and rewards in one workspace — consistent with the Kaizen Reports experience.'}
-                {isUnitCoordinator &&
-                  'Approve ideas and verify implementation for your unit(s). Collapse filters when you want more vertical space for charts and queues.'}
-              </p>
-            )}
-            <p className={`font-semibold text-gray-700 ${spotlightDashboard ? 'mt-2 text-xs' : 'mt-1'}`}>
-              Signed in as <span className="font-extrabold text-kauvery-purple">{role}</span>.
-            </p>
+  if (useAdminDashboardLayout) {
+    const maxUnitVal = unitDistribution[0]?.value || 1;
+    const userInitials =
+      (userName || roleHeader)
+        .split(/\s+/)
+        .filter(Boolean)
+        .map((p) => p[0])
+        .join('')
+        .slice(0, 2)
+        .toUpperCase() || 'EX';
+
+    const trendPresets: Array<{ label: string; days: 7 | 30 | 90 | 365 }> = [
+      { label: '7 days', days: 7 },
+      { label: '30 days', days: 30 },
+      { label: '90 days', days: 90 },
+      { label: '1 year', days: 365 },
+    ];
+
+    return (
+      <div
+        className={`space-y-6 animate-fade-in relative w-full max-w-[100vw] mx-auto overflow-hidden rounded-3xl border border-kauvery-purple/30 px-3 py-5 text-slate-800 shadow-kauvery-card sm:px-6 sm:py-8 ${KAUVERY_PANEL_BG}`}
+      >
+        <div className="pointer-events-none absolute -right-24 -top-24 h-72 w-72 rounded-full bg-kauvery-pink/25 blur-3xl" />
+        <div className="pointer-events-none absolute -left-20 bottom-0 h-64 w-64 rounded-full bg-kauvery-violet/30 blur-3xl" />
+        <div className="pointer-events-none absolute left-1/2 top-1/3 h-48 w-96 -translate-x-1/2 rounded-full bg-kauvery-purple/20 blur-3xl" />
+
+        <div className="relative flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div className="flex min-w-0 items-start gap-3">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-kauvery-purple via-kauvery-violet to-fuchsia-500 text-white shadow-lg shadow-purple-900/50">
+              <span className="material-icons-round text-[22px]">insights</span>
+            </div>
+            <div className="min-w-0">
+              <div className="text-xs font-extrabold uppercase tracking-[0.2em] text-kauvery-peach/90">Kaizen Flow</div>
+              <h1 className="mt-0.5 text-2xl font-black tracking-tight text-slate-900 sm:text-3xl">{roleHeader}</h1>
+              {isBeTeam && (
+                <p className="mt-1 max-w-3xl text-sm font-semibold text-slate-400">{dashboardHeroSubtitle}</p>
+              )}
+            </div>
           </div>
-          <div className="flex shrink-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
-            {role === Role.EMPLOYEE && onNewIdea && (
+          <div className="flex flex-wrap items-center gap-3 md:justify-end">
+            {onNavigateToReports && (
               <button
                 type="button"
-                onClick={onNewIdea}
-                className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-kauvery-purple px-5 py-2.5 text-sm font-black text-white shadow-md shadow-purple-200 ring-1 ring-purple-900/10 transition hover:bg-kauvery-violet"
+                onClick={onNavigateToReports}
+                className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-kauvery-purple to-kauvery-violet px-5 py-2.5 text-sm font-black text-white shadow-md shadow-purple-900/30 transition-opacity hover:opacity-95"
               >
-                <span className="material-icons-round text-base">add_circle</span>
-                Submit an idea
+                <span className="material-icons-round text-[20px]">insert_chart_outlined</span>
+                Kaizen reports
               </button>
             )}
-            {spotlightDashboard && onNavigateToReports && (
+            <span className="rounded-full border border-kauvery-purple/25 bg-kauvery-purple/10 px-3 py-1.5 text-xs font-black text-kauvery-purple shadow-sm">
+              {fyLabel}
+            </span>
+            <div
+              className="flex h-11 w-11 items-center justify-center rounded-full bg-gradient-to-br from-kauvery-purple to-kauvery-violet text-sm font-black text-white ring-2 ring-purple-400/30"
+              title={userName || roleHeader}
+            >
+              {userInitials}
+            </div>
+          </div>
+        </div>
+
+        {dashboardScopePanel}
+
+        {summaryStatusCards}
+
+        <div className="relative grid grid-cols-1 gap-4 xl:grid-cols-2">
+          <div className={DASHBOARD_GLASS_CHART_CARD}>
+            <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h3 className="text-base font-black text-slate-900">Ideas submitted over time</h3>
+                <p className="text-xs font-semibold text-slate-500">By submission date in the selected window</p>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {trendPresets.map((p) => (
+                  <button
+                    key={p.days}
+                    type="button"
+                    onClick={() => setAdminTrendDays(p.days)}
+                    className={`rounded-lg px-2.5 py-1.5 text-[11px] font-black transition ${
+                      adminTrendDays === p.days
+                        ? 'bg-gradient-to-r from-kauvery-purple to-kauvery-violet text-white shadow-md'
+                        : 'border border-kauvery-purple/20 bg-white text-slate-600 hover:border-kauvery-purple/35 hover:bg-kauvery-purple/5'
+                    }`}
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="h-52 sm:h-56">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={adminSubmittedByDay} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                  <XAxis
+                    dataKey="day"
+                    tick={{ fill: '#64748b', fontSize: 11, fontWeight: 600 }}
+                    axisLine={false}
+                    tickLine={false}
+                  />
+                  <YAxis
+                    allowDecimals={false}
+                    tick={{ fill: '#64748b', fontSize: 11 }}
+                    axisLine={false}
+                    tickLine={false}
+                  />
+                  <Tooltip contentStyle={DASHBOARD_CHART_TOOLTIP} />
+                  <Line
+                    type="monotone"
+                    dataKey="count"
+                    name="Submitted"
+                    stroke="#e879f9"
+                    strokeWidth={2.5}
+                    dot={{ r: 3, fill: '#c084fc', strokeWidth: 0 }}
+                    activeDot={{ r: 5 }}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          <div className={DASHBOARD_GLASS_CHART_CARD}>
+            <h3 className="text-base font-black text-slate-900">Unit-wise distribution</h3>
+            <p className="mb-4 text-xs font-semibold text-slate-500">Top units by idea count</p>
+            <div className="h-52 sm:h-56">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart
+                  layout="vertical"
+                  data={unitDistribution.slice(0, 8)}
+                  margin={{ left: 4, right: 12, top: 4, bottom: 4 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#e2e8f0" />
+                  <XAxis type="number" tick={{ fill: '#64748b', fontSize: 11 }} axisLine={false} tickLine={false} />
+                  <YAxis
+                    type="category"
+                    dataKey="name"
+                    width={108}
+                    tick={{ fill: '#e2e8f0', fontSize: 11, fontWeight: 600 }}
+                    axisLine={false}
+                    tickLine={false}
+                  />
+                  <Tooltip contentStyle={DASHBOARD_CHART_TOOLTIP} />
+                  <Bar dataKey="value" radius={[0, 6, 6, 0]} barSize={14}>
+                    {unitDistribution.slice(0, 8).map((_, i) => (
+                      <Cell key={`u-${i}`} fill={COLORS[i % COLORS.length]} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          <div className={DASHBOARD_GLASS_CHART_CARD}>
+            <h3 className="text-base font-black text-slate-900">Status breakdown</h3>
+            <p className="mb-2 text-xs font-semibold text-slate-500">Share of ideas by workflow status</p>
+            <div className="h-52 sm:h-60">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={adminStatusDonut}
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={52}
+                    outerRadius={76}
+                    paddingAngle={2}
+                    dataKey="value"
+                  >
+                    {adminStatusDonut.map((_, index) => (
+                      <Cell key={`st-${index}`} fill={COLORS[index % COLORS.length]} />
+                    ))}
+                  </Pie>
+                  <Tooltip contentStyle={DASHBOARD_CHART_TOOLTIP} />
+                  <Legend
+                    verticalAlign="bottom"
+                    height={28}
+                    wrapperStyle={{ color: '#cbd5e1', fontSize: 11, fontWeight: 700 }}
+                  />
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          <div className={DASHBOARD_GLASS_CHART_CARD}>
+            <h3 className="text-base font-black text-slate-900">Top units</h3>
+            <p className="mb-4 text-xs font-semibold text-slate-500">Relative volume within filtered data</p>
+            <div className="space-y-3.5">
+              {unitDistribution.slice(0, 6).map((row) => (
+                <div key={row.name}>
+                  <div className="mb-1 flex items-center justify-between text-xs font-bold text-slate-300">
+                    <span className="truncate pr-2">{row.name}</span>
+                    <span className="tabular-nums text-slate-400">{row.value}</span>
+                  </div>
+                  <div className="h-2 overflow-hidden rounded-full bg-kauvery-purple/25 ring-1 ring-kauvery-violet/20">
+                    <div
+                      className="h-full rounded-full bg-gradient-to-r from-kauvery-purple via-fuchsia-500 to-kauvery-violet"
+                      style={{ width: `${Math.min(100, Math.round((row.value / maxUnitVal) * 100))}%` }}
+                    />
+                  </div>
+                </div>
+              ))}
+              {unitDistribution.length === 0 && (
+                <p className="text-sm font-semibold text-slate-500">No unit data in the current scope.</p>
+              )}
+            </div>
+          </div>
+
+          <div className={DASHBOARD_GLASS_CHART_CARD}>
+            <h3 className="text-base font-black text-slate-900">PQCDSEM</h3>
+            <p className="mt-1 text-xs font-semibold text-slate-500">
+              <span className="text-slate-400">
+                Ideas with any PQCDSEM selection:{' '}
+                <span className="font-black text-kauvery-peach/95 tabular-nums">
+                  {adminPqcdsemDashboard.ideasWithAnyTag}
+                </span>
+                <span className="text-slate-500"> / </span>
+                <span className="font-black text-slate-900 tabular-nums">{adminPqcdsemDashboard.total}</span>
+                {adminPqcdsemDashboard.total > 0 && adminPqcdsemDashboard.ideasWithAnyTag < adminPqcdsemDashboard.total && (
+                  <span className="text-slate-500">
+                    {' '}
+                    — {adminPqcdsemDashboard.total - adminPqcdsemDashboard.ideasWithAnyTag} have no dimension stored
+                    (often older or out-of-band imports).
+                  </span>
+                )}
+              </span>
+            </p>
+            <p className="mb-4 text-xs font-semibold text-slate-500">
+              Each bar counts ideas where that dimension is on (submit picks{' '}
+              <span className="font-black text-slate-300">one</span> primary benefit; the Kaizen template can add more
+              primary/secondary). So bars are usually <span className="font-black text-slate-300">well below</span> total
+              ideas, and bar heights can sum to more than idea count once the template marks several dimensions.
+            </p>
+            <div className="h-56 sm:h-64">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={adminPqcdsemDashboard.rows} margin={{ top: 8, right: 6, left: -18, bottom: 4 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                  <XAxis
+                    dataKey="name"
+                    tick={{ fill: '#64748b', fontSize: 10, fontWeight: 600 }}
+                    axisLine={false}
+                    tickLine={false}
+                    interval={0}
+                    angle={-28}
+                    textAnchor="end"
+                    height={64}
+                  />
+                  <YAxis
+                    allowDecimals={false}
+                    tick={{ fill: '#64748b', fontSize: 11 }}
+                    axisLine={false}
+                    tickLine={false}
+                  />
+                  <Tooltip contentStyle={DASHBOARD_CHART_TOOLTIP} />
+                  <Bar dataKey="count" name="Ideas" radius={[6, 6, 0, 0]} maxBarSize={36}>
+                    {adminPqcdsemDashboard.rows.map((_, i) => (
+                      <Cell key={`pq-${i}`} fill={COLORS[i % COLORS.length]} />
+                    ))}
+                    <LabelList
+                      dataKey="count"
+                      position="top"
+                      fill="#e2e8f0"
+                      fontSize={11}
+                      fontWeight={800}
+                    />
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          <div className={DASHBOARD_GLASS_CHART_CARD}>
+            <h3 className="text-base font-black text-slate-900">Clinical vs supportive</h3>
+            <p className="mb-2 text-xs font-semibold text-slate-500">
+              Kaizen template category (clinical / supportive non-clinical), same filtered scope.
+            </p>
+            <div className="h-52 sm:h-60">
+              {adminClinicalSupportivePie.length === 0 ? (
+                <div className="flex h-full items-center justify-center text-sm font-semibold text-slate-500">
+                  No ideas in the current scope.
+                </div>
+              ) : (
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={adminClinicalSupportivePie}
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={48}
+                      outerRadius={78}
+                      paddingAngle={2}
+                      dataKey="value"
+                    >
+                      {adminClinicalSupportivePie.map((entry, index) => (
+                        <Cell key={`cs-${index}`} fill={entry.fill} />
+                      ))}
+                    </Pie>
+                    <Tooltip contentStyle={DASHBOARD_CHART_TOOLTIP} />
+                    <Legend
+                      verticalAlign="bottom"
+                      height={32}
+                      wrapperStyle={{ color: '#cbd5e1', fontSize: 11, fontWeight: 700 }}
+                    />
+                  </PieChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="relative overflow-hidden rounded-2xl border border-kauvery-purple/25 bg-gradient-to-br from-white/[0.08] via-kauvery-purple/[0.12] to-kauvery-violet/[0.16] p-5 shadow-kauvery-card backdrop-blur-md">
+          <div className="mb-4">
+            <h3 className="text-lg font-black text-slate-900">Department-wise ideas & implementation rate</h3>
+            <p className="mt-1 max-w-4xl text-xs font-semibold text-slate-500">
+              Top departments by idea count in the filtered scope. Bars: total ideas vs ideas that reached implementation
+              milestones (done, verified, evaluation, reward pending, or rewarded). Orange line: implementation rate (% of
+              total in that department).
+            </p>
+          </div>
+          {adminDepartmentImplementedSeries.length === 0 ? (
+            <div className="py-14 text-center text-sm font-semibold text-slate-500">
+              No department data in the current scope.
+            </div>
+          ) : (
+            <div className="h-80 w-full sm:h-96">
+              <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart
+                  data={adminDepartmentImplementedSeries}
+                  margin={{ top: 8, right: 8, left: -14, bottom: 4 }}
+                  barGap={2}
+                >
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                  <XAxis
+                    dataKey="name"
+                    tick={{ fill: '#64748b', fontSize: 10, fontWeight: 600 }}
+                    axisLine={false}
+                    tickLine={false}
+                    interval={0}
+                    angle={-26}
+                    textAnchor="end"
+                    height={76}
+                  />
+                  <YAxis
+                    yAxisId="left"
+                    allowDecimals={false}
+                    tick={{ fill: '#64748b', fontSize: 11 }}
+                    axisLine={false}
+                    tickLine={false}
+                  />
+                  <YAxis
+                    yAxisId="right"
+                    orientation="right"
+                    domain={[0, 100]}
+                    tick={{ fill: '#cbd5e1', fontSize: 10 }}
+                    axisLine={false}
+                    tickLine={false}
+                    tickFormatter={(v) => `${v}%`}
+                  />
+                  <Tooltip contentStyle={DASHBOARD_CHART_TOOLTIP} />
+                  <Legend wrapperStyle={{ color: '#cbd5e1', fontSize: 11, fontWeight: 700 }} />
+                  <Bar
+                    yAxisId="left"
+                    dataKey="total"
+                    name="Total ideas"
+                    fill="#962067"
+                    radius={[4, 4, 0, 0]}
+                    maxBarSize={44}
+                  />
+                  <Bar
+                    yAxisId="left"
+                    dataKey="implemented"
+                    name="Implemented"
+                    fill="#F26522"
+                    radius={[4, 4, 0, 0]}
+                    maxBarSize={44}
+                  />
+                  <Line
+                    yAxisId="right"
+                    type="monotone"
+                    dataKey="rate"
+                    name="Impl. rate %"
+                    stroke="#FAA85F"
+                    strokeWidth={2.5}
+                    dot={{ r: 3, fill: '#FAA85F', strokeWidth: 0 }}
+                    activeDot={{ r: 5 }}
+                  />
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+        </div>
+
+        {summaryReportModal}
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className={`space-y-6 animate-fade-in relative w-full max-w-[100vw] mx-auto overflow-hidden rounded-3xl border border-kauvery-purple/30 px-3 py-5 text-slate-800 shadow-kauvery-card sm:px-6 sm:py-8 ${KAUVERY_PANEL_BG}`}
+    >
+      <div className="pointer-events-none absolute -right-24 -top-24 h-72 w-72 rounded-full bg-kauvery-pink/25 blur-3xl" />
+      <div className="pointer-events-none absolute -left-20 bottom-0 h-64 w-64 rounded-full bg-kauvery-violet/30 blur-3xl" />
+      <div className="pointer-events-none absolute left-1/2 top-1/3 h-48 w-96 -translate-x-1/2 rounded-full bg-kauvery-purple/20 blur-3xl" />
+
+      <div className="relative flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+        <div className="flex min-w-0 items-start gap-3">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-kauvery-purple via-kauvery-violet to-fuchsia-500 text-white shadow-lg shadow-purple-900/50">
+            <span className="material-icons-round text-[22px]">dashboard</span>
+          </div>
+          <div className="min-w-0">
+            <div className="text-xs font-extrabold uppercase tracking-[0.2em] text-kauvery-peach/90">Kaizen Flow</div>
+            <h1 className="mt-0.5 text-2xl font-black tracking-tight text-slate-900 sm:text-3xl">{dashboardWelcomeTitle}</h1>
+            <p className="mt-1 max-w-3xl text-sm font-semibold text-slate-400">{dashboardHeroSubtitle}</p>
+            <p className="mt-2 text-[11px] font-semibold text-slate-500">
+              Signed in as <span className="font-extrabold text-kauvery-peach">{role}</span>
+            </p>
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-3 md:justify-end">
+          {role === Role.EMPLOYEE && onNewIdea && (
+            <button
+              type="button"
+              onClick={onNewIdea}
+              className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-kauvery-purple px-5 py-2.5 text-sm font-black text-white shadow-md shadow-purple-900/30 ring-1 ring-purple-400/20 transition hover:bg-kauvery-violet"
+            >
+              <span className="material-icons-round text-base">add_circle</span>
+              Submit an idea
+            </button>
+          )}
+          {onNavigateToReports && (
             <button
               type="button"
               onClick={onNavigateToReports}
-              className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-kauvery-purple to-kauvery-violet px-5 py-2.5 text-sm font-black text-white shadow-md shadow-purple-200/60 transition-opacity hover:opacity-95"
+              className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-kauvery-purple to-kauvery-violet px-5 py-2.5 text-sm font-black text-white shadow-md shadow-purple-900/30 transition-opacity hover:opacity-95"
             >
               <span className="material-icons-round text-[20px]">insert_chart_outlined</span>
               Kaizen reports
             </button>
-            )}
-          </div>
-        </div>
-
-        <div className="mt-4 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
-          {spotlightDashboard ? (
-            <details className="group relative z-10 w-full rounded-2xl border border-gray-200 bg-white/90 shadow-sm open:shadow-md md:max-w-xl [&_summary::-webkit-details-marker]:hidden">
-              <summary className="flex cursor-pointer list-none items-center justify-between gap-3 rounded-2xl px-4 py-3.5 text-sm font-black text-gray-900 hover:bg-gray-50/80">
-                <span className="inline-flex items-center gap-2">
-                  <span className="material-icons-round text-[22px] text-kauvery-purple">tune</span>
-                  Filters <span className="font-semibold text-gray-500">(optional)</span>
-                </span>
-                <span className="material-icons-round text-gray-400 transition-transform group-open:rotate-180">
-                  expand_more
-                </span>
-              </summary>
-              <div className="space-y-3 border-t border-gray-100 px-4 pb-4 pt-3">
-                {dashboardFilterControls}
-                <div className="flex justify-end pt-1">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setFilterMode('all');
-                      setFromDate('');
-                      setToDate('');
-                      setSelectedUnit('');
-                      setSelectedDepartment('');
-                    }}
-                    className="rounded-md border border-gray-300 px-2.5 py-1.5 text-xs font-bold text-gray-700 hover:bg-gray-50"
-                  >
-                    Clear filters
-                  </button>
-                </div>
-              </div>
-            </details>
-          ) : (
-            <div className="relative">
-              <button
-                type="button"
-                onClick={() => setShowFilterMenu((v) => !v)}
-                className="inline-flex items-center gap-2 rounded-xl border border-purple-200 bg-white/80 px-3 py-2 text-sm font-black text-kauvery-purple shadow-sm transition-colors hover:bg-purple-50"
-              >
-                <span className="material-icons-round text-base">filter_alt</span>
-                Filter
-              </button>
-
-              {showFilterMenu && (
-                <div className="absolute z-20 mt-2 w-[320px] space-y-3 rounded-xl border border-gray-200 bg-white p-3 shadow-xl">
-                  {dashboardFilterControls}
-                  <div className="flex justify-end gap-2 pt-1">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setFilterMode('all');
-                        setFromDate('');
-                        setToDate('');
-                        setSelectedUnit('');
-                        setSelectedDepartment('');
-                      }}
-                      className="rounded-md border border-gray-300 px-2.5 py-1.5 text-xs font-bold text-gray-700 hover:bg-gray-50"
-                    >
-                      Clear
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setShowFilterMenu(false)}
-                      className="rounded-md border border-purple-800 bg-kauvery-purple px-2.5 py-1.5 text-xs font-bold text-white"
-                    >
-                      Apply
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
           )}
-          <div className="text-xs font-bold text-gray-600 md:text-right">
-            Mode: <span className="capitalize text-gray-900">{filterMode}</span> · Showing{' '}
-            <span className="text-gray-900">{filteredSuggestions.length}</span> ideas
+          <span className="rounded-full border border-kauvery-purple/25 bg-kauvery-purple/10 px-3 py-1.5 text-xs font-black text-kauvery-purple shadow-sm">
+            {fyLabel}
+          </span>
+          <div
+            className="flex h-11 w-11 items-center justify-center rounded-full bg-gradient-to-br from-kauvery-purple to-kauvery-violet text-sm font-black text-white ring-2 ring-purple-400/30"
+            title={userName || role}
+          >
+            {dashboardUserInitials}
           </div>
         </div>
       </div>
+
+      {dashboardScopePanel}
 
       {employeeAttentionNotes.length > 0 && (
         <div className="space-y-2">
@@ -878,134 +1762,107 @@ export const Dashboard: React.FC<DashboardProps> = ({
         </div>
       )}
 
-      {/* KPI Cards */}
-      <div
-        className={`grid grid-cols-1 gap-6 ${
-          roleKpis.length === 3
-            ? 'md:grid-cols-3'
-            : roleKpis.length === 2
-              ? 'md:grid-cols-2'
-              : 'md:grid-cols-4'
-        }`}
-      >
-        {roleKpis.map((kpi, idx) => (
-          <div
-            key={kpi.label}
-            className={`flex items-center justify-between rounded-2xl border p-6 ${
-              spotlightDashboard
-                ? 'border-gray-200 bg-gradient-to-br from-white to-purple-50/40 shadow-kauvery-card'
-                : 'border-gray-200 bg-white shadow-sm'
-            }`}
-          >
-              <div>
-                  <p className="text-sm text-gray-700 font-bold mb-1">{kpi.label}</p>
-                  <h3 className={`text-3xl font-extrabold ${kpi.color}`}>{kpi.value}</h3>
-              </div>
-              <div
-                className={`flex h-12 w-12 items-center justify-center rounded-full border ${
-                  spotlightDashboard
-                    ? 'border-purple-200/60 bg-white text-kauvery-purple'
-                    : 'border-gray-200 bg-gray-50 text-gray-700'
-                }`}
-              >
-                 <span className="material-icons-round">
-                  {idx === 0 ? 'insights' : idx === 1 ? 'check_circle' : idx === 2 ? 'hourglass_top' : 'workspace_premium'}
-                 </span>
-              </div>
-          </div>
-        ))}
-      </div>
+      {summaryStatusCards}
 
-      <div
-        className={spotlightDashboard ? 'flex min-w-0 flex-col gap-6' : 'contents'}
-      >
+      <div className="flex min-w-0 flex-col gap-6">
       <div
         className={
-          spotlightDashboard
-            ? isUnitCoordinator
+          isUnitCoordinator
+            ? 'order-2 min-w-0 w-full'
+            : isBeTeam
               ? 'order-2 min-w-0 w-full'
-              : isBeTeam
-                ? 'order-2 min-w-0 w-full'
-                : 'order-1 min-w-0 w-full'
-            : 'contents'
+              : 'order-1 min-w-0 w-full'
         }
       >
-      <div
-        className={`rounded-2xl border overflow-hidden ${
-          spotlightDashboard
-            ? 'border-gray-200 bg-white shadow-kauvery-card'
-            : 'border-gray-200 bg-white shadow-sm'
-        }`}
-      >
-        <div className="p-6 border-b border-gray-200 flex flex-wrap items-start justify-between gap-4">
+      <div className={`${DASHBOARD_GLASS_CHART_CARD} overflow-hidden`}>
+        <div className="border-b border-purple-500/15 p-5 sm:p-6 flex flex-wrap items-start justify-between gap-4">
           <div>
-            <h3 className="text-lg font-black text-gray-900">Activity trend</h3>
-            <p className="text-xs text-gray-600 font-semibold mt-1">
-              {spotlightDashboard
-                ? 'Submitted vs implemented in the range below — same filtered scope as the rest of the dashboard.'
-                : 'Choose a date range to see submitted vs implemented.'}
+            <h3 className="text-base font-black text-slate-900">Activity trend</h3>
+            <p className="text-xs font-semibold text-slate-500 mt-1 max-w-xl">
+              Submitted vs implemented in the range below — same filtered scope as the rest of the dashboard.
             </p>
-            <div className="mt-2 text-[11px] text-gray-500 font-bold uppercase tracking-wide">
+            <div className="mt-2 text-[11px] font-bold uppercase tracking-wide text-slate-400">
               {activityTrend.rangeLabel} · {activityTrend.days} days
             </div>
           </div>
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2">
-              <div className="rounded-xl border border-gray-200 bg-white px-3 py-2">
-                <div className="text-[10px] font-black uppercase tracking-wide text-gray-600">From</div>
-                <input
-                  type="date"
-                  value={trendFrom}
-                  onChange={(e) => setTrendFrom(e.target.value)}
-                  className="mt-1 w-[140px] text-sm font-extrabold text-gray-900 outline-none"
-                />
-              </div>
-              <div className="rounded-xl border border-gray-200 bg-white px-3 py-2">
-                <div className="text-[10px] font-black uppercase tracking-wide text-gray-600">To</div>
-                <input
-                  type="date"
-                  value={trendTo}
-                  onChange={(e) => setTrendTo(e.target.value)}
-                  className="mt-1 w-[140px] text-sm font-extrabold text-gray-900 outline-none"
-                />
-              </div>
-              {(trendFrom || trendTo) && (
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex min-w-0 max-w-full flex-col items-stretch gap-2.5 sm:max-w-[min(100%,28rem)] sm:items-end">
+              <div
+                className="flex flex-wrap items-center justify-end gap-1 rounded-2xl border border-kauvery-purple/15 bg-slate-50 p-1 shadow-inner"
+                role="group"
+                aria-label="Quick range"
+              >
+                {ACTIVITY_TREND_RANGE_PRESETS.map(({ label, shortLabel, days }) => {
+                  const active = activityTrendActivePresetDays === days;
+                  return (
+                    <button
+                      key={days}
+                      type="button"
+                      onClick={() => setActivityTrendPreset(days)}
+                      title={label}
+                      className={`rounded-xl px-2.5 py-2 text-[11px] font-black uppercase tracking-wide transition sm:px-3 ${
+                        active
+                          ? 'bg-gradient-to-r from-kauvery-purple to-kauvery-violet text-white shadow-md shadow-purple-900/40'
+                          : 'text-slate-500 hover:bg-kauvery-purple/8 hover:text-kauvery-purple'
+                      }`}
+                    >
+                      <span className="sm:hidden">{shortLabel}</span>
+                      <span className="hidden sm:inline">{label}</span>
+                    </button>
+                  );
+                })}
                 <button
                   type="button"
                   onClick={() => {
                     setTrendFrom('');
                     setTrendTo('');
                   }}
-                  className="h-[54px] px-3 rounded-xl border border-gray-200 bg-white hover:bg-gray-50 text-gray-900 font-extrabold text-xs"
-                  title="Reset to last 14 days"
+                  className="rounded-xl px-2.5 py-2 text-[11px] font-black uppercase tracking-wide text-slate-500 transition hover:bg-kauvery-purple/8 hover:text-kauvery-purple sm:px-3"
+                  title="Default window (last 14 days to today)"
                 >
-                  Reset
+                  Auto
                 </button>
+              </div>
+              <DateRangePicker
+                from={trendFrom}
+                to={trendTo}
+                onChange={(from, to) => {
+                  setTrendFrom(from);
+                  setTrendTo(to);
+                }}
+                emptyLabel="Last 14 days (default)"
+                align="right"
+                className="w-full min-w-[14rem]"
+              />
+              {activityTrendActivePresetDays === null && (trendFrom || trendTo) && (
+                <span className="text-right text-[10px] font-bold uppercase tracking-wide text-kauvery-peach/85">
+                  Custom range
+                </span>
               )}
             </div>
-            <div className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-2">
-              <div className="text-[10px] font-black uppercase tracking-wide text-gray-600">Submitted</div>
-              <div className="text-lg font-black text-gray-900 tabular-nums">
+            <div className="rounded-xl border border-kauvery-purple/25 bg-white/[0.06] px-3 py-2 backdrop-blur-sm">
+              <div className="text-[10px] font-black uppercase tracking-wide text-slate-400">Submitted</div>
+              <div className="text-lg font-black tabular-nums text-slate-900">
                 {activityTrend.submitted.selectedTotal}
               </div>
-              <div className="text-[11px] font-black tabular-nums text-gray-600">
+              <div className="text-[11px] font-black tabular-nums text-slate-400">
                 {activityTrend.submitted.delta > 0 ? '+' : ''}
                 {activityTrend.submitted.delta} ({activityTrend.submitted.deltaPct > 0 ? '+' : ''}
                 {activityTrend.submitted.deltaPct}%)
               </div>
             </div>
-            <div className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-2">
-              <div className="text-[10px] font-black uppercase tracking-wide text-gray-600">Implemented</div>
-              <div className="text-lg font-black text-gray-900 tabular-nums">
+            <div className="rounded-xl border border-kauvery-purple/25 bg-white/[0.06] px-3 py-2 backdrop-blur-sm">
+              <div className="text-[10px] font-black uppercase tracking-wide text-slate-400">Implemented</div>
+              <div className="text-lg font-black tabular-nums text-slate-900">
                 {activityTrend.implemented.selectedTotal}
               </div>
               <div
                 className={`text-[11px] font-black tabular-nums ${
                   activityTrend.implemented.delta > 0
-                    ? 'text-emerald-700'
+                    ? 'text-emerald-400/90'
                     : activityTrend.implemented.delta < 0
-                      ? 'text-rose-700'
-                      : 'text-gray-600'
+                      ? 'text-rose-300/90'
+                      : 'text-slate-400'
                 }`}
                 title="Selected range vs previous equal-length range"
               >
@@ -1016,49 +1873,54 @@ export const Dashboard: React.FC<DashboardProps> = ({
             </div>
           </div>
         </div>
-        <div className="p-6">
-          <div className="h-40">
+        <div className="px-4 pb-5 pt-2 sm:px-6 sm:pb-6">
+          <div className="h-44 sm:h-52">
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={activityTrend.series} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+              <AreaChart data={activityTrend.series} margin={{ top: 10, right: 10, left: -12, bottom: 0 }}>
                 <defs>
-                  <linearGradient id="trendFill" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#962067" stopOpacity={0.25} />
-                    <stop offset="100%" stopColor="#962067" stopOpacity={0.03} />
+                  <linearGradient id="activityTrendFill" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#e879f9" stopOpacity={0.35} />
+                    <stop offset="100%" stopColor="#962067" stopOpacity={0.05} />
                   </linearGradient>
-                  <linearGradient id="implFill" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#F26522" stopOpacity={0.22} />
-                    <stop offset="100%" stopColor="#F26522" stopOpacity={0.03} />
+                  <linearGradient id="activityImplFill" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#fb923c" stopOpacity={0.32} />
+                    <stop offset="100%" stopColor="#F26522" stopOpacity={0.06} />
                   </linearGradient>
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                <XAxis dataKey="day" axisLine={false} tickLine={false} tick={{ fill: '#475569', fontSize: 12, fontWeight: 700 }} />
-                <YAxis allowDecimals={false} axisLine={false} tickLine={false} tick={{ fill: '#475569', fontSize: 12, fontWeight: 700 }} />
-                <Tooltip
-                  cursor={{ fill: '#f1f5f9' }}
-                  contentStyle={{
-                    borderRadius: '12px',
-                    border: '1px solid #e2e8f0',
-                    boxShadow: '0 10px 25px -10px rgba(15,23,42,0.25)',
-                    color: '#0f172a',
-                    fontWeight: 'bold',
-                  }}
+                <XAxis
+                  dataKey="day"
+                  axisLine={false}
+                  tickLine={false}
+                  tick={{ fill: '#64748b', fontSize: 11, fontWeight: 600 }}
                 />
-                <Legend verticalAlign="top" height={20} wrapperStyle={{ fontWeight: 800, color: '#0f172a' }} />
+                <YAxis
+                  allowDecimals={false}
+                  axisLine={false}
+                  tickLine={false}
+                  tick={{ fill: '#64748b', fontSize: 11, fontWeight: 600 }}
+                />
+                <Tooltip cursor={{ fill: 'rgba(248, 250, 252, 0.06)' }} contentStyle={DASHBOARD_CHART_TOOLTIP} />
+                <Legend
+                  verticalAlign="top"
+                  height={22}
+                  wrapperStyle={{ fontWeight: 800, color: '#cbd5e1', fontSize: 12 }}
+                />
                 <Area
                   type="monotone"
                   dataKey="submitted"
                   name="Submitted"
-                  stroke="#962067"
-                  strokeWidth={2}
-                  fill="url(#trendFill)"
+                  stroke="#e879f9"
+                  strokeWidth={2.5}
+                  fill="url(#activityTrendFill)"
                 />
                 <Area
                   type="monotone"
                   dataKey="implemented"
                   name="Implemented"
                   stroke="#F26522"
-                  strokeWidth={2}
-                  fill="url(#implFill)"
+                  strokeWidth={2.5}
+                  fill="url(#activityImplFill)"
                 />
               </AreaChart>
             </ResponsiveContainer>
@@ -1067,15 +1929,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
       </div>
       </div>
 
-      <div
-        className={
-          spotlightDashboard
-            ? isBeTeam
-              ? 'order-1 min-w-0 w-full'
-              : 'hidden'
-            : 'contents'
-        }
-      >
+      <div className={isBeTeam ? 'order-1 min-w-0 w-full' : 'hidden'}>
       {beWorkbench && (
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
           <div className="xl:col-span-2 bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
@@ -1296,13 +2150,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
       </div>
 
       <div
-        className={
-          spotlightDashboard
-            ? isUnitCoordinator
-              ? 'order-1 min-w-0 w-full'
-              : 'order-3 min-w-0 w-full'
-            : 'contents'
-        }
+        className={isUnitCoordinator ? 'order-1 min-w-0 w-full' : 'order-3 min-w-0 w-full'}
       >
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Action Queue */}
@@ -1458,30 +2306,44 @@ export const Dashboard: React.FC<DashboardProps> = ({
       </div>
 
       {showInsightsCharts && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Main Chart */}
-          <div className="lg:col-span-2 bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
-            <h3 className="text-lg font-bold text-gray-900 mb-6">Department Participation</h3>
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+          <div className={`lg:col-span-2 ${DASHBOARD_GLASS_CHART_CARD}`}>
+            <h3 className="text-base font-black text-slate-900">Department participation</h3>
+            <p className="mb-4 text-xs font-semibold text-slate-500">Idea count by department in your filtered scope</p>
             <div className="h-72">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={departmentData}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#cbd5e1" />
-                  <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#1e293b', fontSize: 12, fontWeight: 700 }} />
-                  <YAxis axisLine={false} tickLine={false} tick={{ fill: '#1e293b', fontSize: 12, fontWeight: 700 }} />
-                  <Tooltip
-                    cursor={{ fill: '#f1f5f9' }}
-                    contentStyle={{ borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)', color: '#0f172a', fontWeight: 'bold' }}
-                    itemStyle={{ color: '#0f172a' }}
+                <BarChart data={departmentData} margin={{ top: 4, right: 8, left: -12, bottom: 4 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                  <XAxis
+                    dataKey="name"
+                    axisLine={false}
+                    tickLine={false}
+                    tick={{ fill: '#64748b', fontSize: 10, fontWeight: 600 }}
+                    angle={-22}
+                    textAnchor="end"
+                    height={68}
+                    interval={0}
                   />
-                  <Bar dataKey="value" fill="#962067" radius={[4, 4, 0, 0]} barSize={40} />
+                  <YAxis
+                    axisLine={false}
+                    tickLine={false}
+                    tick={{ fill: '#64748b', fontSize: 11, fontWeight: 600 }}
+                    allowDecimals={false}
+                  />
+                  <Tooltip cursor={{ fill: 'rgba(248, 250, 252, 0.06)' }} contentStyle={DASHBOARD_CHART_TOOLTIP} />
+                  <Bar dataKey="value" name="Ideas" radius={[4, 4, 0, 0]} barSize={38}>
+                    {departmentData.map((_, index) => (
+                      <Cell key={`dept-bar-${index}`} fill={COLORS[index % COLORS.length]} />
+                    ))}
+                  </Bar>
                 </BarChart>
               </ResponsiveContainer>
             </div>
           </div>
 
-          {/* Pie Chart */}
-          <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
-            <h3 className="text-lg font-bold text-gray-900 mb-6">Impact Categories</h3>
+          <div className={DASHBOARD_GLASS_CHART_CARD}>
+            <h3 className="text-base font-black text-slate-900">Impact categories</h3>
+            <p className="mb-2 text-xs font-semibold text-slate-500">Share of ideas by AI / process category</p>
             <div className="h-72">
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
@@ -1489,17 +2351,21 @@ export const Dashboard: React.FC<DashboardProps> = ({
                     data={categoryData}
                     cx="50%"
                     cy="50%"
-                    innerRadius={60}
-                    outerRadius={80}
-                    paddingAngle={5}
+                    innerRadius={52}
+                    outerRadius={76}
+                    paddingAngle={2}
                     dataKey="value"
                   >
-                    {categoryData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                    {categoryData.map((_, index) => (
+                      <Cell key={`cat-${index}`} fill={COLORS[index % COLORS.length]} />
                     ))}
                   </Pie>
-                  <Tooltip contentStyle={{ borderRadius: '8px', border: '1px solid #e2e8f0', color: '#0f172a', fontWeight: 'bold' }} />
-                  <Legend verticalAlign="bottom" height={36} wrapperStyle={{ color: '#0f172a', fontWeight: '600' }} />
+                  <Tooltip contentStyle={DASHBOARD_CHART_TOOLTIP} />
+                  <Legend
+                    verticalAlign="bottom"
+                    height={32}
+                    wrapperStyle={{ color: '#cbd5e1', fontSize: 11, fontWeight: 700 }}
+                  />
                 </PieChart>
               </ResponsiveContainer>
             </div>
@@ -1586,6 +2452,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
           </div>
         )}
       </div>
+
+      {summaryReportModal}
 
       {showAllParticipants && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">

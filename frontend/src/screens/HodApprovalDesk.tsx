@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { Role, Suggestion, Status } from '../types';
 import { STATUS_COLORS } from '../constants';
 import { isL2ApprovalPhase } from '../utils/phasedApproval';
+import { SearchableSelect } from '../components/SearchableSelect';
 
 export interface HodApprovalDeskProps {
   suggestions: Suggestion[];
@@ -206,15 +207,8 @@ export const HodApprovalDesk: React.FC<HodApprovalDeskProps> = ({
             <span className="h-1.5 w-1.5 rounded-full bg-kauvery-pink shadow-[0_0_8px_#EE2D67]" />
             {roleTitle} workspace
           </div>
-          <h1 className="mt-3 text-2xl sm:text-3xl font-black bg-gradient-to-r from-kauvery-purple via-kauvery-violet to-kauvery-pink bg-clip-text text-transparent">
-            Approval desk
-          </h1>
-          <p className="text-sm text-gray-700 font-semibold mt-2 max-w-2xl leading-relaxed">
-            Ideas routed to you appear here. Open one for a full summary, the submitted Kaizen template,
-            and your approval decision.
-          </p>
           <div
-            className="mt-5 inline-flex rounded-2xl border border-purple-200/70 bg-white/70 p-1 shadow-inner backdrop-blur-sm"
+            className="mt-4 inline-flex rounded-2xl border border-purple-200/70 bg-white/70 p-1 shadow-inner backdrop-blur-sm"
             role="group"
             aria-label="Queue filter"
           >
@@ -268,35 +262,29 @@ export const HodApprovalDesk: React.FC<HodApprovalDeskProps> = ({
             <label className="text-[11px] font-black text-kauvery-purple/90 uppercase tracking-wide block mb-1">
               Unit
             </label>
-            <select
+            <SearchableSelect
+              aria-label="Filter by unit"
               value={unitFilter}
-              onChange={(e) => setUnitFilter(e.target.value)}
-              className="w-full border border-purple-200 rounded-xl px-3 py-2 text-sm font-semibold text-gray-900 bg-white shadow-sm focus:ring-2 focus:ring-kauvery-purple/25 outline-none"
-            >
-              <option value="">All units</option>
-              {units.map((u) => (
-                <option key={u} value={u}>
-                  {u}
-                </option>
-              ))}
-            </select>
+              onChange={setUnitFilter}
+              emptyOptionLabel="All units"
+              options={units.map((u) => ({ value: u, label: u }))}
+              placeholder="Search units…"
+              inputClassName="w-full border border-purple-200 rounded-xl px-3 py-2 text-sm font-semibold text-gray-900 bg-white shadow-sm focus:ring-2 focus:ring-kauvery-purple/25 outline-none"
+            />
           </div>
           <div>
             <label className="text-[11px] font-black text-kauvery-purple/90 uppercase tracking-wide block mb-1">
               Department
             </label>
-            <select
+            <SearchableSelect
+              aria-label="Filter by department"
               value={deptFilter}
-              onChange={(e) => setDeptFilter(e.target.value)}
-              className="w-full border border-purple-200 rounded-xl px-3 py-2 text-sm font-semibold text-gray-900 bg-white shadow-sm focus:ring-2 focus:ring-kauvery-purple/25 outline-none"
-            >
-              <option value="">All departments</option>
-              {departments.map((d) => (
-                <option key={d} value={d}>
-                  {d}
-                </option>
-              ))}
-            </select>
+              onChange={setDeptFilter}
+              emptyOptionLabel="All departments"
+              options={departments.map((d) => ({ value: d, label: d }))}
+              placeholder="Search departments…"
+              inputClassName="w-full border border-purple-200 rounded-xl px-3 py-2 text-sm font-semibold text-gray-900 bg-white shadow-sm focus:ring-2 focus:ring-kauvery-purple/25 outline-none"
+            />
           </div>
         </div>
       </div>
