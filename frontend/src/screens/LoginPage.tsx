@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from 'react';
+import { PORTAL_NAME } from '../constants';
 import { Role, User, type UserUnitScopes } from '../types';
 import { KAUVERY_CARD_SURFACE, KAUVERY_PAGE_BG } from '../theme/kauverySurfaces';
 
@@ -269,7 +270,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                   <BrandLogo className="max-h-12 max-w-14 object-contain" />
                 </div>
                 <div className="mt-4 text-xs uppercase tracking-widest text-kauvery-peach/90 font-extrabold">
-                  Kaizen Workflow
+                  {PORTAL_NAME}
                 </div>
                 <h1 className="text-2xl sm:text-3xl font-black text-slate-900 mt-1">
                   Sign in to continue

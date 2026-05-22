@@ -1,8 +1,11 @@
 import React, { useMemo, useState } from 'react';
 import { Role, ViewType } from '../types';
+import { PORTAL_NAME, PORTAL_NAME_SHORT, PORTAL_TAGLINE } from '../constants';
 import { KAUVERY_SIDEBAR_BG } from '../theme/kauverySurfaces';
 
 interface SidebarProps {
+  collapsed?: boolean;
+  onToggleCollapsed?: () => void;
   currentView: ViewType;
   onViewChange: (view: ViewType) => void;
   currentRole: Role;
@@ -14,6 +17,8 @@ interface SidebarProps {
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
+  collapsed = false,
+  onToggleCollapsed,
   currentView,
   onViewChange,
   currentRole,
@@ -151,10 +156,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <div className="px-6 py-5 border-b border-kauvery-purple/15 flex items-start justify-between bg-gradient-to-r from-kauvery-purple/8 via-kauvery-violet/5 to-transparent">
                 <div>
                   <div className="text-xs uppercase tracking-wide text-kauvery-peach/90 font-extrabold">
-                    Kaizen Flow
+                    {PORTAL_NAME_SHORT}
                   </div>
                   <h2 className="text-2xl font-black text-slate-900 mt-1">
-                    Who’s using Kaizen?
+                    Who’s using the portal?
                   </h2>
                   <p className="text-sm text-slate-400 font-semibold mt-1">
                     Choose a role to continue.
@@ -254,46 +259,71 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
       )}
 
-      <aside className={`fixed left-0 top-0 z-40 flex h-screen w-64 flex-col border-r border-kauvery-purple/15 ${KAUVERY_SIDEBAR_BG} shadow-[8px_0_32px_-8px_rgba(150,32,103,0.12)]`}>
-        {/* Brand */}
-        <div className="relative h-[4.25rem] flex items-center px-5 border-b border-kauvery-purple/15 bg-gradient-to-r from-kauvery-purple/8 via-transparent to-kauvery-pink/8 overflow-hidden">
+      <aside
+        className={`fixed left-0 top-0 z-40 flex h-screen flex-col overflow-hidden border-r border-kauvery-purple/15 ${KAUVERY_SIDEBAR_BG} shadow-[8px_0_32px_-8px_rgba(150,32,103,0.12)] transition-[width] duration-300 ease-in-out ${
+          collapsed ? 'w-[4.5rem]' : 'w-64'
+        }`}
+      >
+        {/* Brand — K toggles collapse */}
+        <div
+          className={`relative flex h-[4.25rem] shrink-0 items-center border-b border-kauvery-purple/15 bg-gradient-to-r from-kauvery-purple/8 via-transparent to-kauvery-pink/8 ${
+            collapsed ? 'justify-center px-2' : 'px-5'
+          }`}
+        >
           <div className="pointer-events-none absolute inset-0 bg-gradient-to-r from-kauvery-purple/[0.12] via-transparent to-kauvery-pink/[0.08]" />
-          <div className="relative w-10 h-10 bg-gradient-to-br from-kauvery-purple via-kauvery-violet to-kauvery-pink rounded-2xl flex items-center justify-center text-white text-sm font-black mr-3 shadow-lg shadow-kauvery-soft ring-2 ring-white/20">
+          <button
+            type="button"
+            onClick={onToggleCollapsed}
+            aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            aria-expanded={!collapsed}
+            title={collapsed ? 'Expand menu' : 'Collapse menu'}
+            className={`relative z-10 flex shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-kauvery-purple via-kauvery-violet to-kauvery-pink text-sm font-black text-white shadow-lg shadow-kauvery-soft ring-2 ring-white/20 transition-transform hover:scale-[1.03] active:scale-[0.98] ${
+              collapsed ? 'h-10 w-10' : 'mr-3 h-10 w-10'
+            }`}
+          >
             K
-          </div>
-          <div className="relative min-w-0">
-            <div className="truncate font-black leading-tight text-slate-900">
-              Kaizen Flow
+          </button>
+          {!collapsed && (
+            <div className="relative min-w-0 flex-1">
+              <div className="truncate font-black leading-tight text-slate-900">
+                {PORTAL_NAME_SHORT}
+              </div>
+              <div className="truncate text-[10px] font-bold uppercase tracking-[0.12em] text-kauvery-purple/70">
+                {PORTAL_TAGLINE}
+              </div>
             </div>
-            <div className="truncate text-[10px] font-bold uppercase tracking-[0.12em] text-kauvery-purple/70">
-              Kauvery · Workflow
-            </div>
-          </div>
+          )}
         </div>
 
         {/* Nav */}
-        <div className="px-4 py-4">
-          <div className="mb-2 px-2 text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">
-            Main menu
-          </div>
+        <div className={`py-4 ${collapsed ? 'px-2' : 'px-4'}`}>
+          {!collapsed && (
+            <div className="mb-2 px-2 text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">
+              Main menu
+            </div>
+          )}
           <nav className="space-y-1.5">
             {menuItems.map((item) => {
               const active = currentView === item.id;
               return (
                 <button
                   key={item.id}
+                  type="button"
+                  title={collapsed ? item.label : undefined}
                   onClick={() => onViewChange(item.id as ViewType)}
-                  className={`group relative flex w-full items-center gap-3 rounded-xl px-3.5 py-2.5 text-sm font-extrabold transition-all ${
+                  className={`group relative flex w-full items-center rounded-xl text-sm font-extrabold transition-all ${
+                    collapsed ? 'justify-center px-0 py-2.5' : 'gap-3 px-3.5 py-2.5'
+                  } ${
                     active
                       ? 'border border-kauvery-purple/30 bg-gradient-to-r from-kauvery-purple to-kauvery-violet text-white shadow-kauvery-card'
                       : 'border border-transparent text-slate-600 hover:border-kauvery-purple/25 hover:bg-kauvery-purple/8 hover:text-kauvery-purple'
                   }`}
                 >
-                  {active && (
+                  {active && !collapsed && (
                     <span className="absolute left-0 top-1.5 bottom-1.5 w-1 rounded-r-full bg-gradient-to-b from-kauvery-purple via-kauvery-violet to-kauvery-pink shadow-sm" />
                   )}
                   <span
-                    className={`material-icons-round text-[18px] ${
+                    className={`material-icons-round text-[20px] ${
                       active
                         ? 'text-kauvery-peach'
                         : 'text-slate-500 group-hover:text-kauvery-peach'
@@ -301,7 +331,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   >
                     {item.icon}
                   </span>
-                  <span className="truncate">{item.label}</span>
+                  {!collapsed && <span className="truncate">{item.label}</span>}
                 </button>
               );
             })}
@@ -309,52 +339,79 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
 
         {/* Footer / Profile */}
-        <div className="mt-auto border-t border-kauvery-purple/20 bg-gradient-to-t from-kauvery-purple/10 to-transparent p-4">
-          <div className="rounded-2xl border border-kauvery-purple/15 bg-white p-4 shadow-kauvery-card">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-kauvery-purple to-kauvery-violet flex items-center justify-center text-white text-sm font-black border border-white/25 shadow-md shadow-purple-900/40">
-                {currentRole.charAt(0)}
+        <div
+          className={`mt-auto border-t border-kauvery-purple/20 bg-gradient-to-t from-kauvery-purple/10 to-transparent ${
+            collapsed ? 'p-2' : 'p-4'
+          }`}
+        >
+          <div
+            className={`rounded-2xl border border-kauvery-purple/15 bg-white shadow-kauvery-card ${
+              collapsed ? 'flex flex-col items-center gap-2 p-2' : 'p-4'
+            }`}
+          >
+            <div
+              className={`flex items-center ${collapsed ? 'justify-center' : 'gap-3'}`}
+              title={collapsed ? `${currentUserName || currentRole} · ${currentRole}` : undefined}
+            >
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-white/25 bg-gradient-to-br from-kauvery-purple to-kauvery-violet text-sm font-black text-white shadow-md shadow-purple-900/40">
+                {(currentUserName || currentRole).charAt(0)}
               </div>
-              <div className="min-w-0 flex-1">
-                <div className="text-[11px] font-extrabold uppercase tracking-wide text-slate-400">
-                  Logged in as
+              {!collapsed && (
+                <div className="min-w-0 flex-1">
+                  <div className="text-[11px] font-extrabold uppercase tracking-wide text-slate-400">
+                    Logged in as
+                  </div>
+                  <div
+                    className="truncate text-sm font-black text-slate-900"
+                    title={currentUserName || currentRole}
+                  >
+                    {currentUserName || currentRole}
+                  </div>
+                  <div className="truncate text-[10px] font-semibold text-slate-400">
+                    {currentRole}
+                  </div>
                 </div>
-                <div
-                  className="truncate text-sm font-black text-slate-900"
-                  title={currentUserName || currentRole}
-                >
-                  {currentUserName || currentRole}
-                </div>
-                <div className="text-[10px] text-slate-400 font-semibold truncate">
-                  {currentRole}
-                </div>
-              </div>
+              )}
             </div>
 
             {canSwitchRole && (
               <button
+                type="button"
+                title="Switch role"
                 onClick={() => setIsRoleSwitcherOpen(true)}
-                className="mt-3 flex w-full items-center justify-between rounded-xl border border-kauvery-purple/25 bg-kauvery-purple/10 px-3 py-2.5 text-xs font-extrabold text-kauvery-purple shadow-sm transition-colors hover:bg-kauvery-purple/15"
+                className={`flex items-center rounded-xl border border-kauvery-purple/25 bg-kauvery-purple/10 font-extrabold text-kauvery-purple shadow-sm transition-colors hover:bg-kauvery-purple/15 ${
+                  collapsed
+                    ? 'h-9 w-9 justify-center'
+                    : 'mt-3 w-full justify-between px-3 py-2.5 text-xs'
+                }`}
               >
-                <span className="flex items-center gap-2">
-                  <span className="material-icons-round text-base text-kauvery-peach">
-                    switch_account
-                  </span>
-                  Switch role
+                <span className="material-icons-round text-base text-kauvery-peach">
+                  switch_account
                 </span>
-                <span className="text-[10px] text-slate-300 font-black truncate max-w-[88px]">
-                  {currentRole}
-                </span>
+                {!collapsed && (
+                  <>
+                    <span className="flex-1 text-left pl-2">Switch role</span>
+                    <span className="max-w-[88px] truncate text-[10px] font-black text-slate-300">
+                      {currentRole}
+                    </span>
+                  </>
+                )}
               </button>
             )}
 
             {onLogout && (
               <button
+                type="button"
+                title="Logout"
                 onClick={onLogout}
-                className="mt-2 flex w-full items-center justify-center gap-2 rounded-xl border border-kauvery-purple/20 bg-transparent px-3 py-2.5 text-xs font-extrabold text-slate-600 transition-colors hover:border-red-300 hover:bg-red-50 hover:text-red-600"
+                className={`flex items-center rounded-xl border border-kauvery-purple/20 bg-transparent font-extrabold text-slate-600 transition-colors hover:border-red-300 hover:bg-red-50 hover:text-red-600 ${
+                  collapsed
+                    ? 'h-9 w-9 justify-center'
+                    : 'mt-2 w-full justify-center gap-2 px-3 py-2.5 text-xs'
+                }`}
               >
                 <span className="material-icons-round text-base">logout</span>
-                Logout
+                {!collapsed && <span>Logout</span>}
               </button>
             )}
           </div>

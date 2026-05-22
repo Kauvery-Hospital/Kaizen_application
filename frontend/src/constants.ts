@@ -164,3 +164,10 @@ export const GRADE_THRESHOLDS = [
   { grade: 'Grade C (26~50)', min: 26, value: 2000, color: 'bg-yellow-50 text-yellow-900 border border-yellow-200' },
   { grade: 'Grade D (<25)', min: 0, value: 1000, color: 'bg-red-50 text-red-900 border border-red-200' },
 ];
+
+/** Official product name shown in chrome, login, and browser title. */
+export const PORTAL_NAME = 'Kaizen Ideas Management Portal';
+export const PORTAL_DOCUMENT_TITLE = 'Kaizen Ideas Management Portal | Kauvery';
+/** Compact label for sidebar and tight headers. */
+export const PORTAL_NAME_SHORT = 'Kaizen Ideas';
+export const PORTAL_TAGLINE = 'Kauvery · Ideas management';
