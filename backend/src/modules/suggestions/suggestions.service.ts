@@ -1314,7 +1314,55 @@ export class SuggestionsService {
           );
         }
       }
-      // 4) Functional approver sends back during approvals (VERIFIED -> BE_REVIEW_DONE)
+      // 4) Implementer declines assignment (ASSIGNED -> APPROVED_FOR_ASSIGNMENT)
+      if (
+        current.status === AppStatus.ASSIGNED_FOR_IMPLEMENTATION &&
+        dto.status === AppStatus.APPROVED_FOR_ASSIGNMENT
+      ) {
+        const remark = String((safeExtra as any).assignmentDenialNotes ?? '').trim();
+        if (!remark) {
+          throw new BadRequestException(
+            'A description is required when declining the assignment.',
+          );
+        }
+        const assigneeCode = String(current.assignedImplementerCode ?? '')
+          .trim()
+          .toLowerCase();
+        const actorCode = String(dto.actor.employeeCode ?? '')
+          .trim()
+          .toLowerCase();
+        const assigneeName = String(current.assignedImplementer ?? '')
+          .trim()
+          .toLowerCase();
+        const actorName = String(dto.actor.name ?? '').trim().toLowerCase();
+        let isAssignedImplementer = false;
+        if (dto.actor.role === AppRole.IMPLEMENTER) {
+          if (assigneeCode && actorCode) {
+            isAssignedImplementer = assigneeCode === actorCode;
+          } else if (assigneeName && actorName) {
+            isAssignedImplementer = assigneeName === actorName;
+          }
+        }
+        if (!isAssignedImplementer && dto.actor.role !== AppRole.ADMIN) {
+          throw new BadRequestException(
+            'Only the assigned implementer can decline this assignment.',
+          );
+        }
+        (safeExtra as any).assignmentDenialNotes = remark;
+        (safeExtra as any).assignedImplementer = null;
+        (safeExtra as any).assignedImplementerCode = null;
+        (safeExtra as any).assignedUnit = null;
+        (safeExtra as any).assignedDepartment = null;
+        (safeExtra as any).implementationDeadline = null;
+        (safeExtra as any).implementationAssignedDate = null;
+        (safeExtra as any).implementationStage = null;
+        (safeExtra as any).implementationProgress = null;
+        (safeExtra as any).implementationUpdate = null;
+        (safeExtra as any).implementationUpdateDate = null;
+        (safeExtra as any).deadlineChangeRemark = null;
+      }
+
+      // 5) Functional approver sends back during approvals (VERIFIED -> BE_REVIEW_DONE)
       if (
         current.status === AppStatus.VERIFIED_PENDING_APPROVAL &&
         dto.status === AppStatus.BE_REVIEW_DONE
@@ -1409,6 +1457,14 @@ export class SuggestionsService {
           workflowThread: workflowThread as any,
         },
       });
+
+      // New assignment clears a prior implementer decline note.
+      if (
+        dto.status === AppStatus.ASSIGNED_FOR_IMPLEMENTATION &&
+        current.status === AppStatus.APPROVED_FOR_ASSIGNMENT
+      ) {
+        (safeExtra as any).assignmentDenialNotes = null;
+      }
 
       // When Selection Committee assigns implementer, ensure the assignee gets IMPLEMENTER role.
       if (
@@ -1582,6 +1638,7 @@ export class SuggestionsService {
       'implementationUpdateDate',
       'screeningNotes',
       'coordinatorSuggestion',
+      'assignmentDenialNotes',
       'requiredApprovals',
       'hodApproverNames',
       'approvalPhase',
@@ -1926,6 +1983,8 @@ export class SuggestionsService {
       ],
       [`${AppStatus.APPROVED_FOR_ASSIGNMENT}->${AppStatus.ASSIGNED_FOR_IMPLEMENTATION}`]:
         [AppRole.SELECTION_COMMITTEE, AppRole.ADMIN],
+      [`${AppStatus.ASSIGNED_FOR_IMPLEMENTATION}->${AppStatus.APPROVED_FOR_ASSIGNMENT}`]:
+        [AppRole.IMPLEMENTER, AppRole.ADMIN],
       [`${AppStatus.ASSIGNED_FOR_IMPLEMENTATION}->${AppStatus.IMPLEMENTATION_DONE}`]:
         [AppRole.IMPLEMENTER, AppRole.BUSINESS_EXCELLENCE, AppRole.ADMIN],
       [`${AppStatus.IMPLEMENTATION_DONE}->${AppStatus.BE_REVIEW_DONE}`]: [
@@ -2000,6 +2059,13 @@ export class SuggestionsService {
     actor: string,
   ) {
     if (prev.status !== nextStatus) {
+      if (
+        nextStatus === AppStatus.APPROVED_FOR_ASSIGNMENT &&
+        prev.status === AppStatus.ASSIGNED_FOR_IMPLEMENTATION &&
+        extraData.assignmentDenialNotes
+      ) {
+        return `${actor} declined the assignment and returned it to Selection Committee. Reason: ${extraData.assignmentDenialNotes}`;
+      }
       if (
         nextStatus === AppStatus.ASSIGNED_FOR_IMPLEMENTATION &&
         extraData.assignedImplementer

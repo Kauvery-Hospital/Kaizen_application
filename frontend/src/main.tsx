@@ -1,7 +1,10 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
+import { initMixpanel } from './analytics/mixpanel';
 import App from './App';
 import { ErrorBoundary } from './components/ErrorBoundary';
+
+initMixpanel();
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {
