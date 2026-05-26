@@ -14,6 +14,7 @@ import { Reports } from './screens/Reports';
 import { RoleListView } from './screens/RoleListView';
 import { HodApprovalDesk } from './screens/HodApprovalDesk';
 import { KAUVERY_SHELL_MESH } from './theme/kauverySurfaces';
+import { identifyUser, resetAnalytics, track } from './analytics/mixpanel';
 import { PORTAL_NAME } from './constants';
 import { Role, Suggestion, Status, ViewType, User, type UserUnitScopes } from './types';
 import {
@@ -244,9 +245,19 @@ const App: React.FC = () => {
     }
     touchSessionActivity();
     setCurrentUser(stored);
+    identifyUser({
+      id: stored.id,
+      name: stored.name,
+      role: stored.role,
+      employeeCode: stored.employeeCode,
+      roles: stored.roles,
+    });
+    track('Session Restored', { role: stored.role });
   }, []);
 
   const handleSessionExpire = useCallback(() => {
+    track('Session Expired');
+    resetAnalytics();
     clearSession();
     markSessionExpired();
     setSelectedSuggestion(null);
@@ -262,6 +273,14 @@ const App: React.FC = () => {
     saveSession(user);
     setSessionExpired(false);
     setCurrentUser(user);
+    identifyUser({
+      id: user.id,
+      name: user.name,
+      role: user.role,
+      employeeCode: user.employeeCode,
+      roles: user.roles,
+    });
+    track('Login Success', { role: user.role });
   }, []);
 
   const handleRoleChange = useCallback(
@@ -273,6 +292,14 @@ const App: React.FC = () => {
         if (!roles.includes(nextRole)) return prev;
         const updated: User = { ...prev, role: nextRole, roles };
         saveSession(updated);
+        identifyUser({
+          id: updated.id,
+          name: updated.name,
+          role: updated.role,
+          employeeCode: updated.employeeCode,
+          roles: updated.roles,
+        });
+        track('Role Switched', { role: nextRole });
         return updated;
       });
       setSelectedSuggestion(null);
@@ -509,6 +536,12 @@ const App: React.FC = () => {
       if (!res.ok) throw new Error(await res.text());
       const created = (await res.json()) as Suggestion;
       setSuggestions((prev) => [created, ...prev]);
+      track('Idea Submitted', {
+        role: currentUser?.role,
+        unit: created.unit,
+        department: created.department,
+        status: created.status,
+      });
       setCurrentView('dashboard');
     } catch (err) {
       console.error('Failed to create suggestion', err);
@@ -542,6 +575,11 @@ const App: React.FC = () => {
       const updated = (await res.json()) as Suggestion;
       setSuggestions((prev) => prev.map((s) => (s.id === id ? updated : s)));
       setSelectedSuggestion((prev) => (prev && prev.id === id ? updated : prev));
+      track('Idea Status Updated', {
+        role: actorRole,
+        status,
+        suggestion_id: id,
+      });
     } catch (err) {
       console.error('Failed to update status', err);
       throw err;
@@ -579,6 +617,11 @@ const App: React.FC = () => {
       setCurrentView('dashboard');
     }
   }, [currentView, currentRole]);
+
+  useEffect(() => {
+    if (!currentUser) return;
+    track('Page Viewed', { view: currentView, role: currentRole });
+  }, [currentView, currentUser, currentRole]);
 
   const renderContent = () => {
     if (currentView === 'suggestion-detail' && selectedSuggestion) {
@@ -883,6 +926,8 @@ const App: React.FC = () => {
         onRoleChange={handleRoleChange}
         currentUserName={currentUser.name}
         onLogout={() => {
+          track('Logout');
+          resetAnalytics();
           clearSession();
           setSessionExpired(false);
           setSelectedSuggestion(null);

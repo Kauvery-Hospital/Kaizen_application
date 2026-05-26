@@ -148,6 +148,8 @@ model Suggestion {
   implementationUpdateDate    String?            @map("implementation_update_date") @db.VarChar(20)
   screeningNotes              String?            @map("screening_notes")
   coordinatorSuggestion       String?            @map("coordinator_suggestion")
+  /// Implementer declined SC assignment — returned to Selection Committee for reassignment.
+  assignmentDenialNotes       String?            @map("assignment_denial_notes")
   requiredApprovals           Json?              @map("required_approvals")
   hodApproverNames            Json?              @map("hod_approver_names")
   /// L1 = department named sign-offs; L2 = functional heads (`requiredApprovals` / `approvals`). Legacy rows: null.

@@ -29,6 +29,7 @@ stateDiagram-v2
   IdeaSubmitted --> Approved : UC screening
   IdeaSubmitted --> IdeaRejected : UC reject
   Approved --> Assigned : Selection Committee
+  Assigned --> Approved : Implementer declines (with reason)
   Assigned --> ImplementationSubmitted : Implementer
   ImplementationSubmitted --> BEReviewed : BE member
   BEReviewed --> Verified : UC verify and pick approvers
@@ -63,6 +64,7 @@ The following **from → to** transitions are registered there (subject to addit
 | Implementation Submitted | Assigned | Business Excellence Member, Admin (BE send-back) |
 | BE Reviewed | Implementation Submitted | Unit Coordinator, Implementer, Admin (rework / UC send-back) |
 | Approved | Assigned | Selection Committee, Admin |
+| Assigned | Approved | Implementer (assigned only), Admin — requires `assignmentDenialNotes`; clears assignee fields |
 | Assigned | Implementation Submitted | Implementer, Business Excellence Member, Admin |
 | Implementation Submitted | BE Reviewed | Business Excellence Member, Admin |
 | BE Reviewed | Verified | Unit Coordinator, Admin |

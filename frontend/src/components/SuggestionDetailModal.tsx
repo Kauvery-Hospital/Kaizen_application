@@ -201,6 +201,7 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
   const [selectedLevel2Role, setSelectedLevel2Role] = useState<Role | ''>('');
   const [selectedHodEmpCodeL2, setSelectedHodEmpCodeL2] = useState('');
   const [coordinatorSuggestion, setCoordinatorSuggestion] = useState('');
+  const [assignmentDenialReason, setAssignmentDenialReason] = useState('');
   /** Required UC-entered title when approving/rejecting screening or routing after BE review. */
   const [ucApprovalHeading, setUcApprovalHeading] = useState('');
   /** Clinical / Supportive — mandatory at UC idea screening; persisted on `suggestion.category`. */
@@ -262,6 +263,7 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
       setSelectedLevel2Role('');
       setSelectedHodEmpCodeL2('');
       setCoordinatorSuggestion(suggestion.coordinatorSuggestion || '');
+      setAssignmentDenialReason('');
       setFinalGenerated(null);
     }
   }, [suggestion, isOpen, initialView]);
@@ -530,6 +532,33 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
       if (!approved) onClose();
     } catch (e: any) {
       showToast('error', 'Failed to update');
+    }
+  };
+
+  const handleDenyAssignment = async () => {
+    const remark = assignmentDenialReason.trim();
+    if (!remark) {
+      return alert('Please describe why you are declining this assignment.');
+    }
+    if (
+      !window.confirm(
+        'Decline this assignment? The idea will return to the Selection Committee for reassignment.',
+      )
+    ) {
+      return;
+    }
+    try {
+      await onUpdateStatus(
+        suggestion.id,
+        Status.APPROVED_FOR_ASSIGNMENT,
+        { assignmentDenialNotes: remark },
+        Role.IMPLEMENTER,
+      );
+      showToast('success', 'Assignment declined — returned to Selection Committee');
+      onClose();
+    } catch (e: any) {
+      const msg = String(e?.message || '').trim();
+      showToast('error', msg || 'Failed to decline assignment');
     }
   };
 
@@ -1618,8 +1647,11 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
   const roleActionState = getRoleActionState();
   const assigneeNorm = (suggestion.assignedImplementer || '').trim().toLowerCase();
   const actorNorm = (currentUserName || '').trim().toLowerCase();
+  const assigneeCodeNorm = (suggestion.assignedImplementerCode || '').trim().toLowerCase();
+  const actorCodeNorm = (implementationActorUser?.employeeCode || '').trim().toLowerCase();
   const isAssignedImplementerUser =
-    !assigneeNorm || (Boolean(actorNorm) && assigneeNorm === actorNorm);
+    (assigneeCodeNorm && actorCodeNorm && assigneeCodeNorm === actorCodeNorm) ||
+    (assigneeNorm && actorNorm && assigneeNorm === actorNorm);
   const canImplementerUpdateWorkingStatus =
     role === Role.IMPLEMENTER &&
     suggestion.status === Status.ASSIGNED_FOR_IMPLEMENTATION &&
@@ -1653,6 +1685,14 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
       return { id, actor: actor || 'System', role: roleSafe, text: text || '-', date: date || new Date().toISOString() };
     })
     .filter(Boolean) as { id: string; actor: string; role: Role; text: string; date: string }[];
+  const hideAssignmentDenialFromViewer =
+    role === Role.EMPLOYEE || role === Role.IMPLEMENTER;
+  const showAssignmentDenialNotes =
+    !hideAssignmentDenialFromViewer &&
+    Boolean(String(suggestion.assignmentDenialNotes ?? '').trim());
+  const visibleWorkflowThread = hideAssignmentDenialFromViewer
+    ? workflowThread.filter((item) => !/declined the assignment/i.test(item.text))
+    : workflowThread;
   const templatePaths: string[] = Array.isArray(suggestion?.templateAttachmentPaths)
     ? (suggestion.templateAttachmentPaths as any)
     : [];
@@ -2323,7 +2363,10 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
                   </div>
 
                   {/* Remarks / updates */}
-                  {(suggestion.screeningNotes || suggestion.coordinatorSuggestion || suggestion.implementationUpdate) && (
+                  {(suggestion.screeningNotes ||
+                    suggestion.coordinatorSuggestion ||
+                    showAssignmentDenialNotes ||
+                    suggestion.implementationUpdate) && (
                     <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
                       <div className="text-xs uppercase tracking-wide text-gray-500 font-extrabold mb-3">
                         Remarks & updates
@@ -2339,6 +2382,16 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
                           <div className="bg-orange-50 border border-orange-200 rounded-xl p-4 text-sm text-gray-900">
                             <div className="text-[11px] uppercase font-extrabold text-orange-900 mb-1">Coordinator note</div>
                             <div className="font-semibold whitespace-pre-wrap">{suggestion.coordinatorSuggestion}</div>
+                          </div>
+                        )}
+                        {showAssignmentDenialNotes && (
+                          <div className="bg-rose-50 border border-rose-200 rounded-xl p-4 text-sm text-gray-900">
+                            <div className="text-[11px] uppercase font-extrabold text-rose-900 mb-1">
+                              Implementer declined assignment
+                            </div>
+                            <div className="font-semibold whitespace-pre-wrap">
+                              {suggestion.assignmentDenialNotes}
+                            </div>
                           </div>
                         )}
                         {suggestion.implementationUpdate && (
@@ -2590,7 +2643,10 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
                           </div>
                         </div>
 
-                        {(suggestion.screeningNotes || suggestion.coordinatorSuggestion || suggestion.implementationUpdate) && (
+                        {(suggestion.screeningNotes ||
+                    suggestion.coordinatorSuggestion ||
+                    showAssignmentDenialNotes ||
+                    suggestion.implementationUpdate) && (
                           <div className="space-y-2 mb-4">
                             {suggestion.screeningNotes && (
                               <div className="text-xs text-gray-700 bg-amber-50 border border-amber-200 rounded-lg p-2.5">
@@ -2600,6 +2656,12 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
                             {suggestion.coordinatorSuggestion && (
                               <div className="text-xs text-gray-700 bg-orange-50 border border-orange-200 rounded-lg p-2.5">
                                 <span className="font-bold text-orange-900">Coordinator Suggestion:</span> {suggestion.coordinatorSuggestion}
+                              </div>
+                            )}
+                            {showAssignmentDenialNotes && (
+                              <div className="text-xs text-gray-700 bg-rose-50 border border-rose-200 rounded-lg p-2.5">
+                                <span className="font-bold text-rose-900">Implementer declined assignment:</span>{' '}
+                                {suggestion.assignmentDenialNotes}
                               </div>
                             )}
                             {suggestion.implementationUpdate && (
@@ -2619,10 +2681,10 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
                               isPageLayout ? 'max-h-[min(42vh,22rem)] xl:max-h-[min(50vh,28rem)]' : 'max-h-56'
                             }`}
                           >
-                            {workflowThread.length === 0 ? (
+                            {visibleWorkflowThread.length === 0 ? (
                               <div className="text-xs font-medium text-slate-500">No workflow updates yet.</div>
                             ) : (
-                              workflowThread.map(item => (
+                              visibleWorkflowThread.map(item => (
                                 <div key={item.id} className="relative flex gap-3">
                                   <div className="absolute bottom-[-12px] left-[11px] top-7 w-px bg-slate-200" />
                                   <div className="z-10 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-[10px] font-bold text-kauvery-purple">
@@ -2995,6 +3057,19 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
                 {role === Role.SELECTION_COMMITTEE && suggestion.status === Status.APPROVED_FOR_ASSIGNMENT && (
                   <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
                     <h4 className="text-sm font-black text-gray-900 mb-2">Implementation Assignment</h4>
+                    {suggestion.assignmentDenialNotes && (
+                      <div className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-950">
+                        <div className="text-[11px] font-black uppercase tracking-wide text-rose-800">
+                          Previous implementer declined
+                        </div>
+                        <p className="mt-1 font-semibold whitespace-pre-wrap">
+                          {suggestion.assignmentDenialNotes}
+                        </p>
+                        <p className="mt-2 text-xs font-semibold text-rose-800/90">
+                          Assign a different implementer or follow up with the unit before reassigning.
+                        </p>
+                      </div>
+                    )}
                     <p className="text-xs text-gray-600 mb-4 font-semibold">
                       Select unit and department first, then choose the implementer from the list.
                     </p>
@@ -3074,6 +3149,30 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
 
                 {/* 3. IMPLEMENTER: Submit Report */}
                 {role === Role.IMPLEMENTER && suggestion.status === Status.ASSIGNED_FOR_IMPLEMENTATION && (
+                  <div className="space-y-4">
+                  {canImplementerUpdateWorkingStatus && (
+                    <div className="rounded-xl border border-rose-200 bg-rose-50/80 p-4">
+                      <h4 className="text-sm font-black text-rose-950 mb-1">Decline assignment</h4>
+                      <p className="text-xs font-semibold text-rose-900/90 mb-3">
+                        If you cannot take this work, explain why. The idea returns to the Selection Committee
+                        for reassignment.
+                      </p>
+                      <textarea
+                        rows={3}
+                        value={assignmentDenialReason}
+                        onChange={(e) => setAssignmentDenialReason(e.target.value)}
+                        placeholder="Reason for declining (required)..."
+                        className="w-full rounded-lg border border-rose-200 bg-white p-3 text-sm text-gray-900 font-medium outline-none focus:ring-2 focus:ring-rose-300"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleDenyAssignment}
+                        className="mt-3 rounded-lg border border-rose-300 bg-white px-4 py-2 text-sm font-black text-rose-800 hover:bg-rose-100"
+                      >
+                        Decline & return to Selection Committee
+                      </button>
+                    </div>
+                  )}
                   <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
                     <h4 className="text-lg font-black text-gray-900 mb-2">Implementation Progress</h4>
                     <p className="text-sm text-gray-600 mb-4 font-semibold">
@@ -3236,6 +3335,7 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
                       )}
                     </div>
                       )}
+                  </div>
                   </div>
                 )}
 

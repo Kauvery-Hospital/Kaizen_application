@@ -234,6 +234,8 @@ export interface Suggestion {
   
   // Internal Notes
   screeningNotes?: string;
+  /** Implementer declined assignment; idea returned to Selection Committee. */
+  assignmentDenialNotes?: string;
   rewardEvaluation?: RewardEvaluation;
   /** Relative path under upload root — HR reward proof photo before final closure */
   hrRewardValidationImagePath?: string | null;

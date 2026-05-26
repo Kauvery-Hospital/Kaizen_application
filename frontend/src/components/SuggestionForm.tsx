@@ -489,7 +489,7 @@ function serializePqcdsemLevel(level: PqcdsemLevel): boolean | 'primary' | 'seco
   return 'secondary';
 }
 
-/** Idea submission chips (includes separate Energy; template sheet uses 7 letters only). */
+/** Idea submission chips (same dimensions as template). */
 const IDEA_SUBMISSION_PQCDSEM_KEYS = [
   'productivity',
   'quality',
@@ -498,7 +498,6 @@ const IDEA_SUBMISSION_PQCDSEM_KEYS = [
   'safety',
   'morale',
   'environment',
-  'energy',
 ] as const;
 
 const PQCDSEM_TEMPLATE_KEYS = [
@@ -655,7 +654,7 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
     description: '',
     expectedBenefits: {
       productivity: false, quality: false, cost: false, delivery: false,
-      safety: false, energy: false, environment: false, morale: false
+      safety: false, environment: false, morale: false
     },
     employeeName: '',
     // Implementation Fields (Full Kaizen)
@@ -3326,7 +3325,7 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                     <span className="font-bold text-kauvery-purple">D</span> Delivery ·{' '}
                     <span className="font-bold text-kauvery-purple">S</span> Safety ·{' '}
                     <span className="font-bold text-kauvery-purple">M</span> Morale ·{' '}
-                    <span className="font-bold text-kauvery-purple">E</span> Environment/Energy
+                    <span className="font-bold text-kauvery-purple">E</span> Environment
                   </div>
                   <div className="grid grid-cols-7 text-[11px] font-black border-b border-black bg-white">
                     {(
