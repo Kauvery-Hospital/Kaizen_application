@@ -2374,6 +2374,26 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
     };
   }, []);
 
+  /** New-idea submission: all fields required except attachments. */
+  const collectCreateModeErrors = useCallback((fd: any): string[] => {
+    const errs: string[] = [];
+    if (!String(fd.unit ?? '').trim()) errs.push('Unit is required.');
+    if (!String(fd.department ?? '').trim()) errs.push('Department is required.');
+    if (!String(fd.area ?? '').trim()) errs.push('Area / Location is required.');
+    if (!String(fd.theme ?? '').trim()) {
+      errs.push('Idea Title / Short Description is required.');
+    }
+    if (!String(fd.description ?? '').trim()) {
+      errs.push('Detailed Description is required.');
+    }
+    const benefits = (fd.expectedBenefits || {}) as Record<string, boolean | string>;
+    const pqcdsemSelected = IDEA_SUBMISSION_PQCDSEM_KEYS.filter((k) => benefits[k] === true);
+    if (pqcdsemSelected.length !== 1) {
+      errs.push('Expected Benefits (PQCDSEM) — select exactly one option.');
+    }
+    return errs;
+  }, []);
+
   /** Full-template validation (implement mode). Each slide mounts alone, so HTML `required` is insufficient. */
   const collectImplementationTemplateErrors = useCallback(
     (fd: any): string[] => {
@@ -2536,6 +2556,18 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
     const dynamicFlowFields = getDynamicFlowFields();
     const mergedForSubmit = { ...formData, ...dynamicFlowFields };
 
+    if (isCreateMode) {
+      const createErrors = collectCreateModeErrors(mergedForSubmit);
+      if (createErrors.length) {
+        window.alert(
+          `Please complete all required fields before submitting:\n\n${createErrors
+            .map((line) => `• ${line}`)
+            .join('\n')}`,
+        );
+        return;
+      }
+    }
+
     if (!isCreateMode && !isTemplatePreview) {
       const validationErrors = collectImplementationTemplateErrors(mergedForSubmit);
       if (validationErrors.length) {
@@ -2690,7 +2722,9 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                 <div className="p-5">
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                     <div>
-                      <label className="block text-[11px] font-extrabold text-gray-700 uppercase tracking-wide mb-1">Unit</label>
+                      <label className="block text-[11px] font-extrabold text-gray-700 uppercase tracking-wide mb-1">
+                        Unit <span className="text-red-600">*</span>
+                      </label>
                       <SearchableSelect
                         aria-label="Unit"
                         disabled={!isCreateMode || lockUnitDepartment}
@@ -2703,7 +2737,9 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                       />
                     </div>
                     <div>
-                      <label className="block text-[11px] font-extrabold text-gray-700 uppercase tracking-wide mb-1">Department</label>
+                      <label className="block text-[11px] font-extrabold text-gray-700 uppercase tracking-wide mb-1">
+                        Department <span className="text-red-600">*</span>
+                      </label>
                       <SearchableSelect
                         aria-label="Department"
                         disabled={!isCreateMode || lockUnitDepartment}
@@ -2718,7 +2754,9 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                   </div>
 
                   <div className="mb-4">
-                    <label className="block text-[11px] font-extrabold text-gray-700 uppercase tracking-wide mb-1">Area / Location</label>
+                    <label className="block text-[11px] font-extrabold text-gray-700 uppercase tracking-wide mb-1">
+                      Area / Location <span className="text-red-600">*</span>
+                    </label>
                     <textarea
                       required
                       rows={2}
@@ -2730,7 +2768,9 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                   </div>
 
                   <div className="mb-4">
-                    <label className="block text-[11px] font-extrabold text-gray-700 uppercase tracking-wide mb-1">Idea Title / Short Description</label>
+                    <label className="block text-[11px] font-extrabold text-gray-700 uppercase tracking-wide mb-1">
+                      Idea Title / Short Description <span className="text-red-600">*</span>
+                    </label>
                     <textarea
                       required
                       rows={2}
@@ -2743,7 +2783,9 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
                   </div>
 
                   <div className="mb-4">
-                    <label className="block text-[11px] font-extrabold text-gray-700 uppercase tracking-wide mb-1">Detailed Description</label>
+                    <label className="block text-[11px] font-extrabold text-gray-700 uppercase tracking-wide mb-1">
+                      Detailed Description <span className="text-red-600">*</span>
+                    </label>
                     <textarea
                       className="w-full border border-gray-300 rounded-md px-3 py-2.5 text-sm focus:ring-2 focus:ring-kauvery-purple outline-none text-gray-900 font-medium"
                       rows={3}
@@ -2756,8 +2798,10 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
 
                   <div className="mb-4">
                     <div className="flex items-center gap-2 mb-2">
-                      <h3 className="text-[11px] font-extrabold text-gray-700 uppercase">Expected Benefits (PQCDSEM)</h3>
-                      <span className="text-[10px] text-gray-500 font-semibold">Select one</span>
+                      <h3 className="text-[11px] font-extrabold text-gray-700 uppercase">
+                        Expected Benefits (PQCDSEM) <span className="text-red-600">*</span>
+                      </h3>
+                      <span className="text-[10px] text-gray-500 font-semibold">Required — select one</span>
                     </div>
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
                       {IDEA_SUBMISSION_PQCDSEM_KEYS.map((key) => {
@@ -4327,6 +4371,8 @@ export const SuggestionForm = React.forwardRef<SuggestionFormHandle, SuggestionF
           </button>
           {isCreateMode && (
             <p className="text-[10px] text-gray-400 text-center mt-2 font-medium">
+              Fields marked <span className="text-red-600">*</span> are required. Attachments are optional.
+              <br />
               By submitting, you agree that this idea is original and complies with hospital policy.
             </p>
           )}

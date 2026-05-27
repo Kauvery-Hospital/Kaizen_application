@@ -1710,16 +1710,6 @@ export const Dashboard: React.FC<DashboardProps> = ({
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-3 md:justify-end">
-          {role === Role.EMPLOYEE && onNewIdea && (
-            <button
-              type="button"
-              onClick={onNewIdea}
-              className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-kauvery-purple px-5 py-2.5 text-sm font-black text-white shadow-md shadow-purple-900/30 ring-1 ring-purple-400/20 transition hover:bg-kauvery-violet"
-            >
-              <span className="material-icons-round text-base">add_circle</span>
-              Submit an idea
-            </button>
-          )}
           {onNavigateToReports && (
             <button
               type="button"
