@@ -10,6 +10,7 @@ import type { Express } from 'express';
 import { mapTokenRolesToAppRoles } from '../auth/auth-role-mapping';
 import { AttachmentsService } from '../attachments/attachments.service';
 import { CodeSequenceService } from '../../database/code-sequence.service';
+import { isUniqueConstraintOnSuggestionCode } from '../../database/prisma-errors';
 import { PrismaService } from '../../database/prisma.service';
 import { BeReportQueryDto } from './dto/be-report-query.dto';
 import { CreateSuggestionDto } from './dto/create-suggestion.dto';
@@ -480,12 +481,9 @@ export class SuggestionsService {
           },
           { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
         );
-      } catch (e: any) {
-        if (
-          e?.code === 'P2002' &&
-          Array.isArray(e?.meta?.target) &&
-          e.meta.target.includes('code')
-        ) {
+      } catch (e: unknown) {
+        if (isUniqueConstraintOnSuggestionCode(e)) {
+          await this.codeSequence.reconcileCounter(IDEA_PREFIX, year);
           continue;
         }
         throw e;

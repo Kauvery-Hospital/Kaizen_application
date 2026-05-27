@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { Cron } from '@nestjs/schedule';
 import { Pool } from 'pg';
 import { CodeSequenceService } from '../../database/code-sequence.service';
+import { isUniqueConstraintOnSuggestionCode } from '../../database/prisma-errors';
 import { PrismaService } from '../../database/prisma.service';
 import { Prisma, SuggestionSource, SyncStatus } from '@prisma/client';
 
@@ -314,8 +315,11 @@ export class MobileIdeasSyncService {
               );
               inserted += 1;
               break;
-            } catch (e: any) {
-              if (e?.code === 'P2002') continue;
+            } catch (e: unknown) {
+              if (isUniqueConstraintOnSuggestionCode(e)) {
+                await this.codeSequence.reconcileCounter(IDEA_PREFIX, year);
+                continue;
+              }
               throw e;
             }
           }
