@@ -109,27 +109,33 @@ export class CodeSequenceService implements OnModuleInit {
     );
     const floor = maxFromDb + 1;
 
-    const row = await tx.codeCounter.upsert({
+    // Ensure counter row exists (create with floor when missing).
+    await tx.codeCounter.upsert({
       where: { prefix_year: { prefix, year } },
       update: {},
       create: { prefix, year, next: floor },
     });
 
-    let seq = row.next;
-    if (seq < floor) seq = floor;
-    if (seq > floor) {
-      this.logger.warn(
-        `Code counter ${prefix}-${year} was ahead (counter=${row.next}, floor=${floor}); realigning`,
-      );
-      seq = floor;
+    /**
+     * Atomic allocation:
+     * - Advance `next` to at least `floor`
+     * - Increment by 1
+     * - Return allocated sequence = new_next - 1
+     *
+     * This prevents duplicates under concurrency (single row update).
+     */
+    const rows = await tx.$queryRaw<{ allocated: number | null }[]>`
+      UPDATE code_counters
+      SET next = GREATEST(next, ${floor}) + 1
+      WHERE prefix = ${prefix} AND year = ${year}
+      RETURNING (next - 1) AS allocated
+    `;
+
+    const allocated = Number(rows?.[0]?.allocated ?? 0);
+    if (!Number.isFinite(allocated) || allocated <= 0) {
+      throw new Error(`Failed to allocate code for ${prefix}-${year}`);
     }
-
-    await tx.codeCounter.update({
-      where: { prefix_year: { prefix, year } },
-      data: { next: seq + 1 },
-    });
-
-    return this.formatCode(prefix, year, seq);
+    return this.formatCode(prefix, year, allocated);
   }
 
   /** Standalone allocate (own transaction). Prefer {@link allocate} inside create tx. */
