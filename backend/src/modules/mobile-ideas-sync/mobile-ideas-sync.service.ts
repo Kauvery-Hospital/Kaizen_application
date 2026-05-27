@@ -2,8 +2,9 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Cron } from '@nestjs/schedule';
 import { Pool } from 'pg';
+import { CodeSequenceService } from '../../database/code-sequence.service';
 import { PrismaService } from '../../database/prisma.service';
-import { SuggestionSource, SyncStatus } from '@prisma/client';
+import { Prisma, SuggestionSource, SyncStatus } from '@prisma/client';
 
 const IDEA_PREFIX = 'KH';
 const DEFAULT_MOBILE_IDEA_SYNC_START_DATE = '2026-05-10';
@@ -28,6 +29,7 @@ export class MobileIdeasSyncService {
 
   constructor(
     private readonly prisma: PrismaService,
+    private readonly codeSequence: CodeSequenceService,
     private readonly config: ConfigService,
   ) {}
 
@@ -86,15 +88,6 @@ export class MobileIdeasSyncService {
       const err = e as Error;
       this.logger.error(`Scheduled mobile-ideas sync failed: ${err.message}`);
     }
-  }
-
-  private async nextSequence(prefix: string, year: number) {
-    const row = await this.prisma.codeCounter.upsert({
-      where: { prefix_year: { prefix, year } },
-      update: { next: { increment: 1 } },
-      create: { prefix, year, next: 1 },
-    });
-    return row.next;
   }
 
   /**
@@ -301,18 +294,27 @@ export class MobileIdeasSyncService {
 
         if (!existing) {
           const year = new Date().getFullYear();
-          // Use same code series as portal ideas.
           for (let attempt = 0; attempt < 5; attempt++) {
-            const seq = await this.nextSequence(IDEA_PREFIX, year);
-            const code = `${IDEA_PREFIX}-${year}-${String(seq).padStart(4, '0')}`;
             try {
-              await this.prisma.suggestion.create({
-                data: { ...payload, code },
-              });
+              await this.prisma.$transaction(
+                async (tx) => {
+                  const code = await this.codeSequence.allocate(
+                    tx,
+                    IDEA_PREFIX,
+                    year,
+                  );
+                  await tx.suggestion.create({
+                    data: { ...payload, code },
+                  });
+                },
+                {
+                  isolationLevel:
+                    Prisma.TransactionIsolationLevel.Serializable,
+                },
+              );
               inserted += 1;
               break;
             } catch (e: any) {
-              // Unique conflict on code — retry
               if (e?.code === 'P2002') continue;
               throw e;
             }
