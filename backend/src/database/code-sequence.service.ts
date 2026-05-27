@@ -4,6 +4,8 @@ import { PrismaService } from './prisma.service';
 
 type TxClient = Prisma.TransactionClient;
 
+const ALLOCATE_SCAN_LIMIT = 500;
+
 /**
  * Allocates Kaizen idea / implemented codes from `code_counters` while staying
  * aligned with the highest code already stored in `suggestions` (or implemented_kaizen).
@@ -121,53 +123,32 @@ export class CodeSequenceService implements OnModuleInit {
 
   /**
    * Reserve the next unused code inside an open transaction.
-   * Syncs counter to DB max, atomically increments, and skips any code that already exists.
+   * Walks forward from max(DB)+1 (and stored counter) until a free code is found.
    */
   async allocate(tx: TxClient, prefix: string, year: number): Promise<string> {
-    for (let attempt = 0; attempt < 25; attempt++) {
-      const floor = await this.floorSeq(tx, prefix, year);
+    const floor = await this.floorSeq(tx, prefix, year);
+    const counter = await tx.codeCounter.findUnique({
+      where: { prefix_year: { prefix, year } },
+      select: { next: true },
+    });
+    let seq = Math.max(floor, counter?.next ?? 1);
 
-      await tx.codeCounter.upsert({
-        where: { prefix_year: { prefix, year } },
-        update: {},
-        create: { prefix, year, next: floor },
-      });
-
-      await tx.$executeRaw`
-        UPDATE code_counters
-        SET next = GREATEST(next, ${floor})
-        WHERE prefix = ${prefix} AND year = ${year}
-      `;
-
-      const rows = await tx.$queryRaw<{ allocated: number | null }[]>`
-        UPDATE code_counters
-        SET next = next + 1
-        WHERE prefix = ${prefix} AND year = ${year}
-        RETURNING (next - 1) AS allocated
-      `;
-
-      const allocated = Number(rows?.[0]?.allocated ?? 0);
-      if (!Number.isFinite(allocated) || allocated <= 0) {
-        throw new Error(`Failed to allocate code for ${prefix}-${year}`);
-      }
-
-      const code = this.formatCode(prefix, year, allocated);
+    for (let step = 0; step < ALLOCATE_SCAN_LIMIT; step++) {
+      const code = this.formatCode(prefix, year, seq);
       const exists = await tx.suggestion.count({ where: { code } });
       if (exists === 0) {
+        await tx.codeCounter.upsert({
+          where: { prefix_year: { prefix, year } },
+          update: { next: seq + 1 },
+          create: { prefix, year, next: seq + 1 },
+        });
         return code;
       }
-
-      this.logger.warn(
-        `Code ${code} already exists; bumping counter (attempt ${attempt + 1})`,
-      );
-      await tx.codeCounter.update({
-        where: { prefix_year: { prefix, year } },
-        data: { next: allocated + 1 },
-      });
+      seq++;
     }
 
     throw new Error(
-      `Unable to allocate unique code for ${prefix}-${year} after retries`,
+      `Unable to allocate unique code for ${prefix}-${year} after scanning ${ALLOCATE_SCAN_LIMIT} values from seq ${floor}`,
     );
   }
 
