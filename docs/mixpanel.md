@@ -11,13 +11,9 @@ The Kaizen portal sends **frontend-only** events to [Mixpanel](https://mixpanel.
    VITE_MIXPANEL_TOKEN=your_project_token_here
    ```
 
-3. Install dependencies (from `frontend/`):
+3. Restart the dev server: `npm run dev`.
 
-   ```bash
-   npm install
-   ```
-
-4. Restart the dev server: `npm run dev`.
+   The Mixpanel browser SDK is loaded from Mixpanel’s CDN at runtime (no extra npm package).
 
 If `VITE_MIXPANEL_TOKEN` is empty, analytics are disabled (no errors).
 

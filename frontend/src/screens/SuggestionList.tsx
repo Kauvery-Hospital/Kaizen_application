@@ -77,7 +77,31 @@ export const SuggestionList: React.FC<SuggestionListProps> = ({
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState<number>(MIN_PAGE_SIZE);
   const [filterStatus, setFilterStatus] = useState<Status | 'all'>('all');
+  const [filterUnit, setFilterUnit] = useState<string>('all');
+  const [filterDepartment, setFilterDepartment] = useState<string>('all');
   const [sortKey, setSortKey] = useState<SortKey>('newest');
+
+  const units = useMemo(
+    () =>
+      Array.from(new Set(suggestions.map((s) => s.unit).filter(Boolean))).sort() as string[],
+    [suggestions],
+  );
+
+  const departments = useMemo(() => {
+    const pool =
+      filterUnit === 'all'
+        ? suggestions
+        : suggestions.filter((s) => s.unit === filterUnit);
+    return Array.from(
+      new Set(pool.map((s) => s.department).filter(Boolean)),
+    ).sort() as string[];
+  }, [suggestions, filterUnit]);
+
+  useEffect(() => {
+    if (filterDepartment !== 'all' && !departments.includes(filterDepartment)) {
+      setFilterDepartment('all');
+    }
+  }, [filterUnit, departments, filterDepartment]);
 
   const stats = useMemo(() => {
     const total = suggestions.length;
@@ -103,6 +127,13 @@ export const SuggestionList: React.FC<SuggestionListProps> = ({
   const filteredSuggestions = useMemo(() => {
     let list =
       filterStatus === 'all' ? [...suggestions] : suggestions.filter((s) => s.status === filterStatus);
+
+    if (filterUnit !== 'all') {
+      list = list.filter((s) => s.unit === filterUnit);
+    }
+    if (filterDepartment !== 'all') {
+      list = list.filter((s) => s.department === filterDepartment);
+    }
 
     const q = normSearch(originatorSearch);
     if (q) {
@@ -136,7 +167,7 @@ export const SuggestionList: React.FC<SuggestionListProps> = ({
     });
 
     return list;
-  }, [suggestions, originatorSearch, filterStatus, sortKey]);
+  }, [suggestions, originatorSearch, filterStatus, filterUnit, filterDepartment, sortKey]);
 
   const totalFiltered = filteredSuggestions.length;
   const safePageSize = Math.max(MIN_PAGE_SIZE, pageSize);
@@ -144,7 +175,7 @@ export const SuggestionList: React.FC<SuggestionListProps> = ({
 
   useEffect(() => {
     setPage(0);
-  }, [originatorSearch, pageSize, filterStatus, sortKey, suggestions.length]);
+  }, [originatorSearch, pageSize, filterStatus, filterUnit, filterDepartment, sortKey, suggestions.length]);
 
   useEffect(() => {
     setPage((prev) => Math.min(prev, Math.max(0, totalPages - 1)));
@@ -180,6 +211,19 @@ export const SuggestionList: React.FC<SuggestionListProps> = ({
   const pageSizeSelectOptions = useMemo(
     () => PAGE_SIZE_OPTIONS.map((n) => ({ value: String(n), label: `${n} per page` })),
     [],
+  );
+
+  const unitSelectOptions = useMemo(
+    () => [{ value: 'all', label: 'All units' }, ...units.map((u) => ({ value: u, label: u }))],
+    [units],
+  );
+
+  const departmentSelectOptions = useMemo(
+    () => [
+      { value: 'all', label: 'All departments' },
+      ...departments.map((d) => ({ value: d, label: d })),
+    ],
+    [departments],
   );
 
   const pageIndices = visiblePageIndices(page, totalPages);
@@ -234,8 +278,38 @@ export const SuggestionList: React.FC<SuggestionListProps> = ({
         </div>
 
         <div className="flex flex-wrap items-end gap-2 sm:gap-3">
+          {units.length > 0 && (
+            <label className="flex flex-col gap-1">
+              <span className="text-[10px] font-black uppercase tracking-wide text-slate-500">Unit</span>
+              <SearchableSelect
+                aria-label="Filter by unit"
+                value={filterUnit}
+                onChange={setFilterUnit}
+                options={unitSelectOptions}
+                placeholder="Search units…"
+                inputClassName={selectShell}
+                className="min-w-[10rem]"
+              />
+            </label>
+          )}
+
+          {departments.length > 0 && (
+            <label className="flex flex-col gap-1">
+              <span className="text-[10px] font-black uppercase tracking-wide text-slate-500">Department</span>
+              <SearchableSelect
+                aria-label="Filter by department"
+                value={filterDepartment}
+                onChange={setFilterDepartment}
+                options={departmentSelectOptions}
+                placeholder="Search departments…"
+                inputClassName={selectShell}
+                className="min-w-[11rem]"
+              />
+            </label>
+          )}
+
           <label className="flex flex-col gap-1">
-            <span className="text-[10px] font-black uppercase tracking-wide text-slate-500">Filter</span>
+            <span className="text-[10px] font-black uppercase tracking-wide text-slate-500">Status</span>
             <SearchableSelect
               aria-label="Filter by status"
               value={filterStatus}
@@ -422,7 +496,10 @@ export const SuggestionList: React.FC<SuggestionListProps> = ({
             Showing <span className="tabular-nums text-gray-900">{rangeFrom}</span> to{' '}
             <span className="tabular-nums text-gray-900">{rangeTo}</span> of{' '}
             <span className="tabular-nums text-gray-900">{totalFiltered}</span> entries
-            {originatorSearch.trim() || filterStatus !== 'all' ? (
+            {originatorSearch.trim() ||
+            filterStatus !== 'all' ||
+            filterUnit !== 'all' ||
+            filterDepartment !== 'all' ? (
               <span className="text-gray-500"> · {suggestions.length} loaded</span>
             ) : null}
           </div>
