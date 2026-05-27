@@ -111,7 +111,7 @@ function resolveKaizenSeriesNumber(s: Suggestion): string {
   );
 }
 
-/** Keys used for admin PQCDSEM chart (idea submission + template). */
+/** Keys used for PQCDSEM chart (matches New Idea selection). */
 const ADMIN_PQCDSEM_DIM_KEYS = [
   'productivity',
   'quality',
@@ -120,12 +120,11 @@ const ADMIN_PQCDSEM_DIM_KEYS = [
   'safety',
   'morale',
   'environment',
-  'energy',
 ] as const;
 
-/** True when a PQCDSEM cell is active (matches Kaizen form `readPqcdsemLevel` !== 'none'). */
+/** True when the employee selected this in New Idea (boolean-only). */
 function isPqcdsemBenefitSelected(v: unknown): boolean {
-  return v === true || v === 'primary' || v === 'secondary';
+  return v === true;
 }
 
 /** API / DB may return JSON object or (rarely) a JSON string. */
@@ -883,7 +882,6 @@ export const Dashboard: React.FC<DashboardProps> = ({
       { key: 'safety' as const, label: 'Safety' },
       { key: 'morale' as const, label: 'Morale' },
       { key: 'environment' as const, label: 'Environment' },
-      { key: 'energy' as const, label: 'Energy' },
     ];
     const rows = dims.map(({ key, label }) => ({
       name: label,
@@ -1518,10 +1516,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
               </span>
             </p>
             <p className="mb-4 text-xs font-semibold text-slate-500">
-              Each bar counts ideas where that dimension is on (submit picks{' '}
-              <span className="font-black text-slate-300">one</span> primary benefit; the Kaizen template can add more
-              primary/secondary). So bars are usually <span className="font-black text-slate-300">well below</span> total
-              ideas, and bar heights can sum to more than idea count once the template marks several dimensions.
+              Each bar shows the benefit employees selected on the <span className="font-black text-slate-300">New Idea</span>{' '}
+              page. Exactly <span className="font-black text-slate-300">one</span> selection is stored per idea, so bar
+              totals won’t exceed the idea count.
             </p>
             <div className="h-56 sm:h-64">
               <ResponsiveContainer width="100%" height="100%">
