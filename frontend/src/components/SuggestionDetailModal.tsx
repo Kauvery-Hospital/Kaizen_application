@@ -24,7 +24,6 @@ import {
   pendingDepartmentL1ForUser,
   userMatchesDepartmentSlot,
 } from '../utils/phasedApproval';
-import { analyzeSuggestion } from '../services/geminiService';
 import { RewardEvaluationForm } from './RewardEvaluationForm';
 import { SuggestionForm, type SuggestionFormHandle } from './SuggestionForm';
 import { SearchableSelect } from './SearchableSelect';
@@ -107,8 +106,6 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
   const [activeTab, setActiveTab] = useState<
     'overview' | 'analysis' | 'review' | 'template' | 'discussion'
   >('overview');
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [aiAnalysis, setAiAnalysis] = useState<any>(null);
   const [notes, setNotes] = useState('');
   const [commentDraft, setCommentDraft] = useState('');
   const [approvalRemarks, setApprovalRemarks] = useState('');
@@ -219,7 +216,6 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
       setUcScreeningCategory(
         c === 'Clinical' || c === 'Supportive' ? c : '',
       );
-      setAiAnalysis(null);
       setActiveTab(initialView === 'tracking' ? 'review' : 'overview');
       setCommentDraft('');
       setIsImplementationMode(false);
@@ -481,25 +477,6 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
     `${suggestion.code || suggestion.id}`;
 
   // implementerOptions is rendered directly in the select
-
-  const handleAnalyze = async () => {
-    setIsAnalyzing(true);
-    try {
-      const context = suggestion.problem 
-          ? `Problem: ${suggestion.problem.what} Root Cause: ${suggestion.analysis?.rootCause} Solution: ${suggestion.counterMeasure}`
-          : `Idea: ${suggestion.description}`;
-          
-      const result = await analyzeSuggestion(
-        apiBase,
-        () => ({ Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' }),
-        displayHeading,
-        context,
-      );
-      setAiAnalysis(result);
-    } finally {
-      setIsAnalyzing(false);
-    }
-  };
 
   // --- WORKFLOW ACTIONS ---
 
@@ -2404,49 +2381,6 @@ export const SuggestionDetailModal: React.FC<ModalProps> = ({
                     </div>
                   )}
 
-                  {/* AI Insight Widget */}
-                  <div className="border border-indigo-200 bg-indigo-50 rounded-2xl p-6 shadow-sm">
-                    <div className="flex justify-between items-center mb-3 gap-3">
-                      <div className="flex items-center gap-2">
-                        <div className="w-9 h-9 rounded-2xl bg-white border border-indigo-200 flex items-center justify-center text-indigo-800 shadow-sm">
-                          <span className="material-icons-round text-lg">auto_awesome</span>
-                        </div>
-                        <div>
-                          <div className="text-xs uppercase tracking-wide text-indigo-900/80 font-extrabold">
-                            AI impact analysis
-                          </div>
-                          <div className="text-sm font-black text-indigo-950">Optional decision support</div>
-                        </div>
-                      </div>
-                      <button
-                        onClick={handleAnalyze}
-                        disabled={isAnalyzing}
-                        className="text-xs bg-white text-indigo-800 px-3 py-2 rounded-lg shadow-sm border border-indigo-300 font-black hover:bg-indigo-100 disabled:opacity-50"
-                      >
-                        {isAnalyzing ? 'Analyzing...' : aiAnalysis ? 'Re-Analyze' : 'Run Analysis'}
-                      </button>
-                    </div>
-                    {aiAnalysis ? (
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                        <div className="bg-white p-4 rounded-xl border border-indigo-200 text-center shadow-sm">
-                          <div className="text-3xl font-black text-indigo-800">{aiAnalysis.impactScore}/100</div>
-                          <div className="text-xs text-gray-700 font-bold uppercase mt-1">Impact score</div>
-                        </div>
-                        <div className="md:col-span-2 space-y-2">
-                          <div className="flex gap-2">
-                            <span className="text-xs font-black px-2 py-0.5 bg-indigo-100 text-indigo-900 border border-indigo-300 rounded">
-                              {aiAnalysis.category}
-                            </span>
-                          </div>
-                          <p className="text-sm text-gray-900 leading-relaxed font-semibold">{aiAnalysis.feedback}</p>
-                        </div>
-                      </div>
-                    ) : (
-                      <p className="text-sm text-indigo-900 italic font-medium opacity-80">
-                        Generate insights to see potential impact scoring and categorization.
-                      </p>
-                    )}
-                  </div>
                 </div>
             )}
 
