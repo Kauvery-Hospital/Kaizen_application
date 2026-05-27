@@ -7,9 +7,6 @@ type TxClient = Prisma.TransactionClient;
 /**
  * Allocates Kaizen idea / implemented codes from `code_counters` while staying
  * aligned with the highest code already stored in `suggestions` (or implemented_kaizen).
- *
- * Prevents "jumped" series when creates fail after incrementing the counter, and
- * heals counters that ran ahead of real rows after manual DB fixes.
  */
 @Injectable()
 export class CodeSequenceService implements OnModuleInit {
@@ -50,11 +47,19 @@ export class CodeSequenceService implements OnModuleInit {
     const fromIndex = head.length + 1;
     const rows = await tx.$queryRaw<{ max_seq: number | null }[]>`
       SELECT COALESCE(
-        MAX(CAST(SUBSTRING(code FROM ${fromIndex}) AS INTEGER)),
+        MAX(
+          CAST(
+            NULLIF(
+              TRIM(SUBSTRING(code FROM ${fromIndex})),
+              ''
+            ) AS INTEGER
+          )
+        ),
         0
       ) AS max_seq
       FROM suggestions
       WHERE code LIKE ${like}
+        AND SUBSTRING(code FROM ${fromIndex}) ~ '^[0-9]+$'
     `;
     return Number(rows[0]?.max_seq ?? 0);
   }
@@ -69,13 +74,35 @@ export class CodeSequenceService implements OnModuleInit {
     const fromIndex = head.length + 1;
     const rows = await tx.$queryRaw<{ max_seq: number | null }[]>`
       SELECT COALESCE(
-        MAX(CAST(SUBSTRING(implemented_code FROM ${fromIndex}) AS INTEGER)),
+        MAX(
+          CAST(
+            NULLIF(
+              TRIM(SUBSTRING(implemented_code FROM ${fromIndex})),
+              ''
+            ) AS INTEGER
+          )
+        ),
         0
       ) AS max_seq
       FROM implemented_kaizen
       WHERE implemented_code LIKE ${like}
+        AND SUBSTRING(implemented_code FROM ${fromIndex}) ~ '^[0-9]+$'
     `;
     return Number(rows[0]?.max_seq ?? 0);
+  }
+
+  private async floorSeq(
+    tx: TxClient,
+    prefix: string,
+    year: number,
+  ): Promise<number> {
+    const maxFromDb = Math.max(
+      await this.maxSeqFromSuggestions(tx, prefix, year),
+      prefix === 'KH-KZ'
+        ? await this.maxSeqFromImplementedKaizen(tx, prefix, year)
+        : 0,
+    );
+    return maxFromDb + 1;
   }
 
   /**
@@ -83,11 +110,7 @@ export class CodeSequenceService implements OnModuleInit {
    */
   async reconcileCounter(prefix: string, year: number): Promise<void> {
     await this.prisma.$transaction(async (tx) => {
-      const maxFromDb = Math.max(
-        await this.maxSeqFromSuggestions(tx, prefix, year),
-        await this.maxSeqFromImplementedKaizen(tx, prefix, year),
-      );
-      const next = maxFromDb + 1;
+      const next = await this.floorSeq(tx, prefix, year);
       await tx.codeCounter.upsert({
         where: { prefix_year: { prefix, year } },
         update: { next },
@@ -97,45 +120,55 @@ export class CodeSequenceService implements OnModuleInit {
   }
 
   /**
-   * Reserve the next code inside an open transaction. Counter is only advanced if the
-   * caller commits (e.g. suggestion.create in the same transaction).
+   * Reserve the next unused code inside an open transaction.
+   * Syncs counter to DB max, atomically increments, and skips any code that already exists.
    */
   async allocate(tx: TxClient, prefix: string, year: number): Promise<string> {
-    const maxFromDb = Math.max(
-      await this.maxSeqFromSuggestions(tx, prefix, year),
-      prefix === 'KH-KZ'
-        ? await this.maxSeqFromImplementedKaizen(tx, prefix, year)
-        : 0,
-    );
-    const floor = maxFromDb + 1;
+    for (let attempt = 0; attempt < 25; attempt++) {
+      const floor = await this.floorSeq(tx, prefix, year);
 
-    // Ensure counter row exists (create with floor when missing).
-    await tx.codeCounter.upsert({
-      where: { prefix_year: { prefix, year } },
-      update: {},
-      create: { prefix, year, next: floor },
-    });
+      await tx.codeCounter.upsert({
+        where: { prefix_year: { prefix, year } },
+        update: {},
+        create: { prefix, year, next: floor },
+      });
 
-    /**
-     * Atomic allocation:
-     * - Advance `next` to at least `floor`
-     * - Increment by 1
-     * - Return allocated sequence = new_next - 1
-     *
-     * This prevents duplicates under concurrency (single row update).
-     */
-    const rows = await tx.$queryRaw<{ allocated: number | null }[]>`
-      UPDATE code_counters
-      SET next = GREATEST(next, ${floor}) + 1
-      WHERE prefix = ${prefix} AND year = ${year}
-      RETURNING (next - 1) AS allocated
-    `;
+      await tx.$executeRaw`
+        UPDATE code_counters
+        SET next = GREATEST(next, ${floor})
+        WHERE prefix = ${prefix} AND year = ${year}
+      `;
 
-    const allocated = Number(rows?.[0]?.allocated ?? 0);
-    if (!Number.isFinite(allocated) || allocated <= 0) {
-      throw new Error(`Failed to allocate code for ${prefix}-${year}`);
+      const rows = await tx.$queryRaw<{ allocated: number | null }[]>`
+        UPDATE code_counters
+        SET next = next + 1
+        WHERE prefix = ${prefix} AND year = ${year}
+        RETURNING (next - 1) AS allocated
+      `;
+
+      const allocated = Number(rows?.[0]?.allocated ?? 0);
+      if (!Number.isFinite(allocated) || allocated <= 0) {
+        throw new Error(`Failed to allocate code for ${prefix}-${year}`);
+      }
+
+      const code = this.formatCode(prefix, year, allocated);
+      const exists = await tx.suggestion.count({ where: { code } });
+      if (exists === 0) {
+        return code;
+      }
+
+      this.logger.warn(
+        `Code ${code} already exists; bumping counter (attempt ${attempt + 1})`,
+      );
+      await tx.codeCounter.update({
+        where: { prefix_year: { prefix, year } },
+        data: { next: allocated + 1 },
+      });
     }
-    return this.formatCode(prefix, year, allocated);
+
+    throw new Error(
+      `Unable to allocate unique code for ${prefix}-${year} after retries`,
+    );
   }
 
   /** Standalone allocate (own transaction). Prefer {@link allocate} inside create tx. */
