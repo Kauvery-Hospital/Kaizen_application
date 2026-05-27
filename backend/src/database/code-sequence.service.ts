@@ -34,34 +34,28 @@ export class CodeSequenceService implements OnModuleInit {
     return `${prefix}-${year}-${String(seq).padStart(4, '0')}`;
   }
 
-  private codePrefixForQuery(prefix: string, year: number): string {
-    return `${prefix}-${year}-`;
+  /** `KH-2026-0001` → part 3; `KH-KZ-2026-0001` → part 4 */
+  private seqSplitPartIndex(prefix: string): number {
+    const segments = prefix.split('-').filter(Boolean).length;
+    return segments + 2;
   }
 
-  /** Highest numeric suffix for codes like `PREFIX-YEAR-0001`. */
+  /** Highest numeric suffix (same logic as manual SQL: split_part on code). */
   async maxSeqFromSuggestions(
     tx: TxClient,
     prefix: string,
     year: number,
   ): Promise<number> {
-    const head = this.codePrefixForQuery(prefix, year);
-    const like = `${head}%`;
-    const fromIndex = head.length + 1;
+    const like = `${prefix}-${year}-%`;
+    const partIdx = this.seqSplitPartIndex(prefix);
     const rows = await tx.$queryRaw<{ max_seq: number | null }[]>`
       SELECT COALESCE(
-        MAX(
-          CAST(
-            NULLIF(
-              TRIM(SUBSTRING(code FROM ${fromIndex})),
-              ''
-            ) AS INTEGER
-          )
-        ),
+        MAX(CAST(NULLIF(TRIM(split_part(code, '-', ${partIdx})), '') AS INTEGER)),
         0
       ) AS max_seq
       FROM suggestions
       WHERE code LIKE ${like}
-        AND SUBSTRING(code FROM ${fromIndex}) ~ '^[0-9]+$'
+        AND split_part(code, '-', ${partIdx}) ~ '^[0-9]+$'
     `;
     return Number(rows[0]?.max_seq ?? 0);
   }
@@ -71,24 +65,21 @@ export class CodeSequenceService implements OnModuleInit {
     prefix: string,
     year: number,
   ): Promise<number> {
-    const head = this.codePrefixForQuery(prefix, year);
-    const like = `${head}%`;
-    const fromIndex = head.length + 1;
+    const like = `${prefix}-${year}-%`;
+    const partIdx = this.seqSplitPartIndex(prefix);
     const rows = await tx.$queryRaw<{ max_seq: number | null }[]>`
       SELECT COALESCE(
         MAX(
           CAST(
-            NULLIF(
-              TRIM(SUBSTRING(implemented_code FROM ${fromIndex})),
-              ''
-            ) AS INTEGER
+            NULLIF(TRIM(split_part(implemented_code, '-', ${partIdx})), '')
+            AS INTEGER
           )
         ),
         0
       ) AS max_seq
       FROM implemented_kaizen
       WHERE implemented_code LIKE ${like}
-        AND SUBSTRING(implemented_code FROM ${fromIndex}) ~ '^[0-9]+$'
+        AND split_part(implemented_code, '-', ${partIdx}) ~ '^[0-9]+$'
     `;
     return Number(rows[0]?.max_seq ?? 0);
   }
@@ -118,20 +109,28 @@ export class CodeSequenceService implements OnModuleInit {
         update: { next },
         create: { prefix, year, next },
       });
+      this.logger.log(`Reconciled ${prefix}-${year} counter → next=${next}`);
     });
   }
 
   /**
    * Reserve the next unused code inside an open transaction.
-   * Walks forward from max(DB)+1 (and stored counter) until a free code is found.
+   * Always starts at max(DB)+1 (never a stale low counter).
    */
   async allocate(tx: TxClient, prefix: string, year: number): Promise<string> {
     const floor = await this.floorSeq(tx, prefix, year);
-    const counter = await tx.codeCounter.findUnique({
+    const counterBefore = await tx.codeCounter.findUnique({
       where: { prefix_year: { prefix, year } },
       select: { next: true },
     });
-    let seq = Math.max(floor, counter?.next ?? 1);
+
+    if ((counterBefore?.next ?? 0) < floor) {
+      this.logger.warn(
+        `Code counter ${prefix}-${year} was behind DB (counter=${counterBefore?.next ?? 'none'}, floor=${floor}); using DB max`,
+      );
+    }
+
+    let seq = floor;
 
     for (let step = 0; step < ALLOCATE_SCAN_LIMIT; step++) {
       const code = this.formatCode(prefix, year, seq);
@@ -142,6 +141,9 @@ export class CodeSequenceService implements OnModuleInit {
           update: { next: seq + 1 },
           create: { prefix, year, next: seq + 1 },
         });
+        this.logger.debug(
+          `Allocated ${code} for ${prefix}-${year} (floor=${floor})`,
+        );
         return code;
       }
       seq++;
