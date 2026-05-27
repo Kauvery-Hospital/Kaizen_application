@@ -9,6 +9,7 @@ import { Prisma, RoleCode } from '@prisma/client';
 import type { Express } from 'express';
 import { mapTokenRolesToAppRoles } from '../auth/auth-role-mapping';
 import { AttachmentsService } from '../attachments/attachments.service';
+import { CodeSequenceService } from '../../database/code-sequence.service';
 import { PrismaService } from '../../database/prisma.service';
 import { BeReportQueryDto } from './dto/be-report-query.dto';
 import { CreateSuggestionDto } from './dto/create-suggestion.dto';
@@ -27,6 +28,7 @@ export class SuggestionsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly attachmentsService: AttachmentsService,
+    private readonly codeSequence: CodeSequenceService,
   ) {}
 
   private normalizeUnitCode(v?: string | null): string {
@@ -450,28 +452,34 @@ export class SuggestionsService {
       workflowThread: workflowThread as any,
     };
 
-    // Defensive retry: if code counters were reset or concurrent inserts happen,
-    // regenerate a new code and try again.
+    // Allocate code in the same transaction as create so failed inserts do not burn numbers.
     for (let attempt = 0; attempt < 5; attempt++) {
-      const seq = await this.nextSequence(IDEA_PREFIX, year);
-      const code = `${IDEA_PREFIX}-${year}-${String(seq).padStart(4, '0')}`;
-      const row = { ...baseRow, code };
       const originCode = String(ctx.employeeCode ?? '').trim();
       try {
-        return await this.prisma.suggestion.create({
-          data: {
-            ...row,
-            ...(originCode
-              ? { originatorEmployeeCode: this.sanitizeEmployeeCodeForPath(originCode) }
-              : {}),
-            ideaAttachmentsFolder: ideaFolder ?? undefined,
-            ideaAttachmentPaths: ideaPaths ?? undefined,
-            currentStageRole: this.deriveCurrentStageRole(
-              AppStatus.IDEA_SUBMITTED,
-              row as any,
-            ),
+        return await this.prisma.$transaction(
+          async (tx) => {
+            const code = await this.codeSequence.allocate(tx, IDEA_PREFIX, year);
+            const row = { ...baseRow, code };
+            return tx.suggestion.create({
+              data: {
+                ...row,
+                ...(originCode
+                  ? {
+                      originatorEmployeeCode:
+                        this.sanitizeEmployeeCodeForPath(originCode),
+                    }
+                  : {}),
+                ideaAttachmentsFolder: ideaFolder ?? undefined,
+                ideaAttachmentPaths: ideaPaths ?? undefined,
+                currentStageRole: this.deriveCurrentStageRole(
+                  AppStatus.IDEA_SUBMITTED,
+                  row as any,
+                ),
+              },
+            });
           },
-        });
+          { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+        );
       } catch (e: any) {
         if (
           e?.code === 'P2002' &&
@@ -1537,7 +1545,7 @@ export class SuggestionsService {
         const year = new Date().getFullYear();
         const implementedCode =
           existing?.implementedCode ||
-          `${IMPLEMENTED_PREFIX}-${year}-${String(await this.nextSequence(IMPLEMENTED_PREFIX, year, tx)).padStart(4, '0')}`;
+          (await this.codeSequence.allocate(tx, IMPLEMENTED_PREFIX, year));
 
         await tx.implementedKaizen.upsert({
           where: { suggestionId: updated.id },
@@ -1558,19 +1566,6 @@ export class SuggestionsService {
 
       return updated;
     });
-  }
-
-  private async nextSequence(
-    prefix: string,
-    year: number,
-    prisma: PrismaService | any = this.prisma,
-  ) {
-    const row = await prisma.codeCounter.upsert({
-      where: { prefix_year: { prefix, year } },
-      update: { next: { increment: 1 } },
-      create: { prefix, year, next: 1 },
-    });
-    return row.next;
   }
 
   /** Which AppRole primarily owns the next inbox action for this status (denormalized on the row). */

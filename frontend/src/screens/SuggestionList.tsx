@@ -68,10 +68,10 @@ interface SuggestionListProps {
 
 export const SuggestionList: React.FC<SuggestionListProps> = ({
   suggestions,
-  role: _role,
+  role,
   onSelect,
-  currentUserName: _currentUserName,
-  onQuickUpdate: _onQuickUpdate,
+  currentUserName,
+  onQuickUpdate,
 }) => {
   const [originatorSearch, setOriginatorSearch] = useState('');
   const [page, setPage] = useState(0);
@@ -372,8 +372,18 @@ export const SuggestionList: React.FC<SuggestionListProps> = ({
                 title="Open idea details"
               >
                 <div className="lg:col-span-4 min-w-0">
-                  <h3 className="text-base font-black leading-snug text-gray-900 line-clamp-2">{s.theme}</h3>
-                  <p className="mt-1 text-sm text-gray-600 font-medium leading-relaxed line-clamp-2">{s.description}</p>
+                  <h3
+                    className="text-base font-black leading-snug text-gray-900 line-clamp-3"
+                    title={String(s.theme || '').trim()}
+                  >
+                    {s.theme}
+                  </h3>
+                  <p
+                    className="mt-1 text-sm text-gray-600 font-medium leading-relaxed line-clamp-3"
+                    title={String(s.description || '').trim()}
+                  >
+                    {s.description}
+                  </p>
                 </div>
 
                 <div className="lg:col-span-3 text-sm space-y-1.5 border-t border-gray-100 pt-3 lg:border-t-0 lg:pt-0">
