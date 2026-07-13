@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { Cron } from '@nestjs/schedule';
 import { Pool } from 'pg';
 import { CodeSequenceService } from '../../database/code-sequence.service';
+import { isUniqueConstraintOnSuggestionCode } from '../../database/prisma-errors';
 import { PrismaService } from '../../database/prisma.service';
 import { Prisma, SuggestionSource, SyncStatus } from '@prisma/client';
 
@@ -228,6 +229,9 @@ export class MobileIdeasSyncService {
         select: { code: true, name: true },
       });
 
+      const syncYear = new Date().getFullYear();
+      await this.codeSequence.reconcileCounter(IDEA_PREFIX, syncYear);
+
       for (const r of rows) {
         const sourceId = String(r.id);
         const employeeCode = String(r.employee_id || '').trim();
@@ -293,7 +297,7 @@ export class MobileIdeasSyncService {
         };
 
         if (!existing) {
-          const year = new Date().getFullYear();
+          let insertedRow = false;
           for (let attempt = 0; attempt < 5; attempt++) {
             try {
               await this.prisma.$transaction(
@@ -301,7 +305,7 @@ export class MobileIdeasSyncService {
                   const code = await this.codeSequence.allocate(
                     tx,
                     IDEA_PREFIX,
-                    year,
+                    syncYear,
                   );
                   await tx.suggestion.create({
                     data: { ...payload, code },
@@ -313,11 +317,28 @@ export class MobileIdeasSyncService {
                 },
               );
               inserted += 1;
+              insertedRow = true;
               break;
-            } catch (e: any) {
-              if (e?.code === 'P2002') continue;
+            } catch (e: unknown) {
+              if (isUniqueConstraintOnSuggestionCode(e)) {
+                await this.codeSequence.reconcileCounter(IDEA_PREFIX, syncYear);
+                continue;
+              }
+              const msg = e instanceof Error ? e.message : String(e);
+              if (msg.includes('Unable to allocate unique code')) {
+                this.logger.error(
+                  `Skip mobile idea ${sourceId} (${employeeCode}): ${msg}`,
+                );
+                await this.codeSequence.reconcileCounter(IDEA_PREFIX, syncYear);
+                break;
+              }
               throw e;
             }
+          }
+          if (!insertedRow) {
+            this.logger.warn(
+              `Mobile idea ${sourceId} not inserted after code allocation retries`,
+            );
           }
         } else {
           // Only update basic fields if the idea is still at the first stage.
